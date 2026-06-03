@@ -1,0 +1,202 @@
+# ============================================================
+# ScanStruct 全栈编排
+#
+# 首次部署:
+#   1. 编辑 .env.docker，修改凭据
+#   2. docker compose --env-file .env.docker up -d --build
+#   3. docker compose --env-file .env.docker exec api python scripts/init_db.py
+#
+# 日常使用:
+#   docker compose --env-file .env.docker up -d        # 启动
+#   docker compose --env-file .env.docker down          # 停止
+#   docker compose --env-file .env.docker logs -f       # 查看日志
+# ============================================================
+
+x-common-env: &common-env
+  APP_ENV: ${APP_ENV:-development}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scanstruct}:${POSTGRES_PASSWORD:-scanstruct123}@postgres:5432/${POSTGRES_DB:-scanstruct}
+  DATABASE_URL_SYNC: postgresql+psycopg2://${POSTGRES_USER:-scanstruct}:${POSTGRES_PASSWORD:-scanstruct123}@postgres:5432/${POSTGRES_DB:-scanstruct}
+  REDIS_URL: redis://:${REDIS_PASSWORD:-scanstruct_redis}@redis:6379/0
+  REDIS_BROKER_URL: redis://:${REDIS_PASSWORD:-scanstruct_redis}@redis:6379/1
+  REDIS_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-scanstruct_redis}@redis:6379/2
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-scanstruct_redis}
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+  MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+  MINIO_SECURE: "false"
+  API_KEY: ${API_KEY:-}
+  OCR_ENGINE_TYPE: ${OCR_ENGINE_TYPE:-bailian}
+  OCR_USE_GPU: ${OCR_USE_GPU:-false}
+  OCR_BATCH_SIZE: ${OCR_BATCH_SIZE:-100}
+  BAILIAN_API_KEY: ${BAILIAN_API_KEY:-}
+  BAILIAN_OCR_BASE_URL: ${BAILIAN_OCR_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  BAILIAN_OCR_MODEL: ${BAILIAN_OCR_MODEL:-qwen-vl-ocr-latest}
+  BAILIAN_TEXT_BASE_URL: ${BAILIAN_TEXT_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  BAILIAN_TEXT_MODEL: ${BAILIAN_TEXT_MODEL:-qwen-plus-latest}
+  MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-524288000}
+  MAX_BATCH_UPLOAD_SIZE: ${MAX_BATCH_UPLOAD_SIZE:-5368709120}
+  CELERY_QUEUE_NAME: ${CELERY_QUEUE_NAME:-scanstruct}
+  CELERY_TASK_TIMEOUT_SECONDS: ${CELERY_TASK_TIMEOUT_SECONDS:-7200}
+  PREPROCESS_DPI: ${PREPROCESS_DPI:-200}
+  PREPROCESS_DESKEW: ${PREPROCESS_DESKEW:-false}
+  PREPROCESS_DENOISE: ${PREPROCESS_DENOISE:-false}
+  PREPROCESS_BINARY: ${PREPROCESS_BINARY:-false}
+  PREPROCESS_CROP_BORDER: ${PREPROCESS_CROP_BORDER:-true}
+  SKIP_CLASSIFY: ${SKIP_CLASSIFY:-true}
+  MAX_RETRY_COUNT: ${MAX_RETRY_COUNT:-3}
+  RETENTION_DAYS: ${RETENTION_DAYS:-30}
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: scanstruct-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-scanstruct}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scanstruct123}
+      POSTGRES_DB: ${POSTGRES_DB:-scanstruct}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - scanstruct_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scanstruct} -d ${POSTGRES_DB:-scanstruct}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - scanstruct-net
+
+  redis:
+    image: redis:6-alpine
+    container_name: scanstruct-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-scanstruct_redis}
+    ports:
+      - "${REDIS_HOST_PORT:-6380}:6379"
+    volumes:
+      - scanstruct_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-scanstruct_redis}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - scanstruct-net
+
+  minio:
+    image: minio/minio:latest
+    container_name: scanstruct-minio
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "${MINIO_HOST_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+    volumes:
+      - scanstruct_miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - scanstruct-net
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scanstruct-api
+    image: scanstruct-api:latest
+    environment:
+      <<: *common-env
+      STORAGE_BACKEND: minio
+      TEMPLATE_OUTPUT_DIR: ${TEMPLATE_OUTPUT_DIR:-/app/template_output}
+    ports:
+      - "${API_HOST_PORT:-8900}:8900"
+    volumes:
+      - scanstruct_templates:/app/template_output
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - scanstruct-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8900/api/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: scanstruct-worker
+    image: scanstruct-worker:latest
+    environment:
+      <<: *common-env
+      STORAGE_BACKEND: minio
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - scanstruct-net
+    healthcheck:
+      test: ["CMD", "celery", "-A", "worker.celery_app", "inspect", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: scanstruct-minio-init
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin123}; do
+        echo 'Waiting for MinIO...'; sleep 2;
+      done;
+      mc mb --ignore-existing local/scan-raw;
+      mc mb --ignore-existing local/scan-processed;
+      mc mb --ignore-existing local/scan-ocr;
+      mc mb --ignore-existing local/scan-layout;
+      mc mb --ignore-existing local/scan-result;
+      echo 'MinIO buckets ready';
+      "
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - scanstruct-net
+
+volumes:
+  scanstruct_pgdata:
+    external: true
+    name: ocrscanstruct_scanstruct_pgdata
+  scanstruct_redisdata:
+    external: true
+    name: ocrscanstruct_scanstruct_redisdata
+  scanstruct_miniodata:
+    external: true
+    name: ocrscanstruct_scanstruct_miniodata
+  scanstruct_templates:
+    name: ocrscanstruct_scanstruct_templates
+
+networks:
+  scanstruct-net:
+    driver: bridge
+    name: scanstruct-net

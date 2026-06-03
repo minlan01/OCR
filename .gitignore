@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.env
+.env.docker
+.env.production
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project data
+scan_input/
+scan_error/
+scan_archive/
+*.log
+
+# Docker
+docker-data/
+
+# Test
+.pytest_cache/
+htmlcov/
+.coverage
+
+# OCR models
+models/
+*.onnx
+*.pdmodel
+*.pdiparams
+
+# Node.js
+static/node_modules/
+
+# WorkBuddy / Qoder
+.workbuddy/
+.qoder/
+
+# Start scripts (local-only)
+start_docker.bat
+
+# Windows reserved name
+nul
+
+# Local binaries (development only)
+UnRAR.exe
+minio/minio.exe
+*.exe
+
+# Local state files
+.file_monitor_state.json
+monitor_files.ps1
+monitor_files.py

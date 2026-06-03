@@ -1,0 +1,63 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.workbuddy/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+scan_input/
+scan_error/
+scan_archive/
+local_storage/
+logs/
+minio/
+*.env
+!docker-compose.yml
+*.bat
+nul
+UnRAR.exe
+license.txt
+
+# Frontend source (dist is built into image, source not needed)
+static/src/
+static/node_modules/
+static/package-lock.json
+static/tsconfig*.json
+static/env.d.ts
+static/vite.config.ts
+
+# Docs
+docs/
+*.md
+!requirements.txt
+
+# Tests
+tests/
+conftest.py
+pytest.ini
+
+# Deploy scripts (not needed in container)
+deploy_templates/check_db.py
+deploy_templates/test_placeholder.py

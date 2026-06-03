@@ -1,0 +1,496 @@
+{
+  "type": "object",
+  "title": "医疗损害责任纠纷民事起诉状输入数据结构",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "required": [
+    "case_type",
+    "plaintiffs",
+    "defendants",
+    "patient",
+    "adm_info",
+    "medical_process",
+    "result",
+    "court"
+  ],
+  "properties": {
+    "court": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "受理法院全称，如：兴义市人民法院"
+        },
+        "basis": {
+          "type": "string",
+          "default": "被告所在地"
+        }
+      }
+    },
+    "mother": {
+      "type": "object",
+      "properties": {
+        "age": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "aux_exam": {
+          "type": "string"
+        },
+        "delivery_info": {
+          "type": "string",
+          "description": "分娩信息：日期、方式、婴儿性别、体重、Apgar评分等"
+        },
+        "exam_findings": {
+          "type": "string"
+        },
+        "admission_date": {
+          "type": "string",
+          "description": "入院日期，中文格式"
+        },
+        "discharge_info": {
+          "type": "string"
+        },
+        "chief_complaint": {
+          "type": "string"
+        },
+        "admission_diagnosis": {
+          "type": "string"
+        }
+      },
+      "description": "产妇信息（新生儿案件必填）"
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "death",
+            "disability",
+            "ongoing_treatment"
+          ],
+          "type": "string"
+        },
+        "death_date": {
+          "type": "string",
+          "description": "死亡日期，格式：XXXX年X月X日"
+        },
+        "death_diagnosis": {
+          "type": "string",
+          "description": "死亡诊断"
+        },
+        "death_description": {
+          "type": "string",
+          "description": "死亡过程描述"
+        },
+        "is_death_on_discharge_day": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "lawyers": {
+      "type": "object",
+      "properties": {
+        "phone1": {
+          "type": "string"
+        },
+        "phone2": {
+          "type": "string"
+        },
+        "lawyer1": {
+          "type": "string",
+          "description": "第一代理律师姓名"
+        },
+        "lawyer2": {
+          "type": "string",
+          "description": "第二代理律师姓名"
+        }
+      }
+    },
+    "patient": {
+      "type": "object",
+      "required": [
+        "name",
+        "gender",
+        "birth_date"
+      ],
+      "properties": {
+        "age": {
+          "type": "integer",
+          "description": "年龄"
+        },
+        "name": {
+          "type": "string",
+          "description": "患者姓名"
+        },
+        "gender": {
+          "enum": [
+            "男",
+            "女"
+          ],
+          "type": "string"
+        },
+        "birth_date": {
+          "type": "string",
+          "description": "出生日期，格式：XXXX年X月X日"
+        }
+      }
+    },
+    "adm_info": {
+      "type": "object",
+      "required": [
+        "admission_date",
+        "chief_complaint",
+        "admission_diagnosis"
+      ],
+      "properties": {
+        "department": {
+          "type": "string",
+          "description": "入院科室"
+        },
+        "past_history": {
+          "type": "string",
+          "description": "既往病史（如与本案相关）"
+        },
+        "physical_exam": {
+          "type": "string",
+          "description": "专科检查/体格检查，仅引用与过错直接相关的关键异常指标，删除中性描述（如'心律齐'、'腹平软'、'敷料干燥'等正常体征）"
+        },
+        "admission_date": {
+          "type": "string",
+          "description": "入院日期，格式：XXXX年X月X日"
+        },
+        "chief_complaint": {
+          "type": "string",
+          "description": "主诉，用双引号包裹原文"
+        },
+        "aux_exam_summary": {
+          "type": "string",
+          "description": "辅助检查精炼概括，仅概括性描述高危异常指标类别（如'心肌损伤、电解质紊乱、低氧血症、肝肾功能异常等多项高危异常指标'），不得罗列具体数值，不得包含对医方有利的检查描述（如'完善心脏彩超'、'予以冠脉造影'等）。生成时自动添加'但被告未充分评估、未及时有效干预'的过错表述。"
+        },
+        "admission_diagnosis": {
+          "type": "string",
+          "description": "入院诊断/初步诊断，用顿号分隔（如：缺血性心肌病、冠状动脉粥样硬化性心脏病、高血压病3级（极高危）、心力衰竭等多项严重病症），生成时自动格式化为'入院诊断为……'"
+        },
+        "present_illness_summary": {
+          "type": "string",
+          "description": "现病史精炼概括（2-3句话），不得直接粘贴原文，必须提炼核心症状和时间线"
+        }
+      }
+    },
+    "appraisal": {
+      "type": "object",
+      "properties": {
+        "fee": {
+          "type": "number",
+          "description": "鉴定费金额"
+        },
+        "subject": {
+          "type": "string",
+          "description": "鉴定对象"
+        },
+        "conclusion": {
+          "type": "string",
+          "description": "鉴定结论"
+        },
+        "institution": {
+          "type": "string",
+          "description": "鉴定机构"
+        },
+        "report_date": {
+          "type": "string",
+          "description": "报告出具日期，中文格式"
+        },
+        "has_appraisal": {
+          "type": "boolean",
+          "default": false
+        },
+        "report_number": {
+          "type": "string",
+          "description": "鉴定文书号"
+        },
+        "appraisal_date": {
+          "type": "string",
+          "description": "鉴定日期，中文格式"
+        }
+      },
+      "description": "司法鉴定信息（如有）"
+    },
+    "case_type": {
+      "enum": [
+        "adult_death",
+        "adult_disability",
+        "neonatal_death",
+        "neonatal_disability"
+      ],
+      "type": "string",
+      "description": "案件类型：成年患者死亡/残疾；新生儿死亡/残疾"
+    },
+    "defendants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "hospital_name",
+          "legal_rep",
+          "credit_code",
+          "address",
+          "phone"
+        ],
+        "properties": {
+          "alias": {
+            "type": "string",
+            "description": "别名/挂牌名称（如有）"
+          },
+          "phone": {
+            "type": "string",
+            "description": "医院联系电话，含区号，如：0859-6223999"
+          },
+          "address": {
+            "type": "string",
+            "description": "医院完整地址，含省市区街道门牌号"
+          },
+          "legal_rep": {
+            "type": "string",
+            "description": "法定代表人姓名及职务，如：XXX（院长）。必须从病历封面或企查查等渠道获取实际姓名，不得填写'[待补充]'或'[未知]'"
+          },
+          "credit_code": {
+            "type": "string",
+            "description": "统一社会信用代码（18位），必须从病历封面或企查查等渠道获取实际代码，不得填写'[待补充]'或'[未知]'"
+          },
+          "hospital_name": {
+            "type": "string",
+            "description": "医院中文全称，如：兴义市人民医院。不得使用英文名或拼音。"
+          }
+        }
+      },
+      "minItems": 1,
+      "description": "被告列表。必须从病历封面/首页提取完整信息，不得使用英文名或缩写。所有字段必须填写实际内容，不得使用'[待补充]'、'[未知]'等占位符，如无法从病历获取应从企查查等公开渠道查询。"
+    },
+    "plaintiffs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "relationship",
+          "gender",
+          "ethnicity",
+          "birth_date",
+          "address",
+          "id_number",
+          "phone"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "原告姓名"
+          },
+          "phone": {
+            "type": "string",
+            "description": "联系电话，必须注明律师姓名，格式：{电话}（{律师姓名}律师），如：18084295520（赵怀勇律师）。不得使用'医生'等非律师称谓。"
+          },
+          "gender": {
+            "enum": [
+              "男",
+              "女"
+            ],
+            "type": "string"
+          },
+          "address": {
+            "type": "string",
+            "description": "住址，完整到门牌号"
+          },
+          "ethnicity": {
+            "type": "string",
+            "description": "民族，如：汉族"
+          },
+          "id_number": {
+            "type": "string",
+            "description": "公民身份号码（18位）"
+          },
+          "ward_name": {
+            "type": "string",
+            "description": "被代理人姓名（法定代理人时必填）"
+          },
+          "birth_date": {
+            "type": "string",
+            "description": "出生日期，格式：XXXX年XX月XX日"
+          },
+          "relationship": {
+            "type": "string",
+            "description": "与患者关系。死亡案件填：配偶/儿子/女儿/父亲/母亲等近亲属关系（生成时自动格式化为'系死者XX之配偶'）。患者本人为原告时填'患者本人'（生成时不再显示关系后缀）。近亲属为原告时必须标注关系。"
+          },
+          "is_legal_guardian": {
+            "type": "boolean",
+            "description": "是否为法定代理人（原告未成年时使用）"
+          }
+        }
+      },
+      "minItems": 1,
+      "description": "原告列表。患者已死亡时，原告为近亲属（配偶→子女→父母），绝不能将患者本人列为原告。患者存活且为未成年人时，原告为患儿本人+法定代理人。患者存活且为成年人时，原告为患者本人。"
+    },
+    "compensation": {
+      "type": "object",
+      "required": [
+        "items",
+        "total_amount"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "赔偿项目名称"
+              },
+              "amount": {
+                "type": "number",
+                "description": "该项赔偿金额（元），暂无具体金额时不填"
+              }
+            }
+          },
+          "description": "赔偿项目列表，每项须包含名称，尽量填写金额。死亡案件必须包含：医疗费、误工费、护理费、住院伙食补助费、营养费、死亡赔偿金、被扶养人生活费、丧葬费、交通费、住宿费、精神损害抚慰金（死亡赔偿金与被扶养人生活费分开列项）。残疾案件必须包含：医疗费、护理费、住院伙食补助费、营养费、残疾赔偿金、交通住宿费、精神损害抚慰金。"
+        },
+        "amount_type": {
+          "enum": [
+            "暂计",
+            "共计"
+          ],
+          "type": "string",
+          "default": "暂计"
+        },
+        "total_amount": {
+          "type": "number",
+          "minimum": 1,
+          "description": "暂计/共计金额（元），不得为0，必须根据赔偿项目计算实际金额"
+        },
+        "appraisal_fee": {
+          "type": "number",
+          "description": "鉴定费金额"
+        },
+        "supplement_note": {
+          "type": "string",
+          "description": "补充说明（如：待鉴定后变更）"
+        },
+        "has_appraisal_fee": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "medical_process": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "date",
+          "description"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "事件日期，格式：XXXX年X月X日"
+          },
+          "type": {
+            "enum": [
+              "examination",
+              "surgery",
+              "deterioration",
+              "rescue",
+              "transfer",
+              "discharge",
+              "death",
+              "other"
+            ],
+            "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "properties": {
+              "anesthesia": {
+                "type": "string",
+                "description": "麻醉方式"
+              },
+              "death_time": {
+                "type": "string"
+              },
+              "transfer_to": {
+                "type": "string"
+              },
+              "surgery_name": {
+                "type": "string",
+                "description": "手术全称，加引号"
+              },
+              "death_diagnosis": {
+                "type": "string"
+              },
+              "transfer_reason": {
+                "type": "string"
+              },
+              "post_op_condition": {
+                "type": "string",
+                "description": "术后情况精炼概括，不得以'术后'开头（避免与前置'术后'重复）"
+              },
+              "discharge_condition": {
+                "type": "string",
+                "description": "出院时情况精炼概括。死亡案件仅描述严重状态（如'深昏迷'、'瞳孔散大'），不得描述正常体征（如'敷料干燥'、'心律齐'、'腹平软'）"
+              },
+              "discharge_diagnosis": {
+                "type": "string",
+                "description": "出院诊断，编号列表"
+              }
+            },
+            "description": "针对不同事件类型的详细字段"
+          },
+          "description": {
+            "type": "string",
+            "description": "事件精炼描述，概括核心事实，不得粘贴原文"
+          }
+        }
+      },
+      "minItems": 1,
+      "description": "诊疗过程事件列表，按时间顺序排列。每个事件描述必须精炼概括，不得直接粘贴病历原文。策略要求：（1）删除对医方有利的表述如'完善检查'、'予以相关辅助检查'等；（2）删除中性或偏好的出院体征描述如'敷料干燥'、'心律齐'、'腹平软'等；（3）突出医方过错，使用'违反诊疗常规'、'疏忽大意'、'未尽到诊疗义务'等定性词汇；（4）死亡案件出院情况应直接描述严重状态如'深昏迷'，不得描述正常体征；（5）生成文本中不得出现重复语句如'术后。术后'，需去重处理。"
+    },
+    "additional_claims": {
+      "type": "string",
+      "description": "其他补充法律论点或事实陈述（如资质异议之外的额外主张），留空则不生成此段"
+    },
+    "qualification_issue": {
+      "type": "object",
+      "properties": {
+        "has_issue": {
+          "type": "boolean",
+          "default": false
+        },
+        "is_confirmed": {
+          "type": "boolean",
+          "description": "是否确认（true=确认式，false=存疑式）"
+        },
+        "personnel_list": {
+          "type": "string",
+          "description": "无资质人员名单及职务，如：张明浩1名医生"
+        }
+      },
+      "description": "医务人员资质问题（重要法律论点，如有线索必须提取）"
+    },
+    "filing_date": {
+      "type": "string",
+      "description": "起诉日期，格式：XXXX年XX月XX日。起诉日期不得早于或等于患者死亡日期，必须为实际立案日期。如不填则留空待打印后手写。"
+    }
+  },
+  "description": "从病历中提取并结构化后的数据，用于驱动诉状自动生成"
+}
