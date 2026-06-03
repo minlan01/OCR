@@ -235,13 +235,10 @@ services:
 
 volumes:
   scanstruct_pgdata:
-    external: true
     name: ocrscanstruct_scanstruct_pgdata
   scanstruct_redisdata:
-    external: true
     name: ocrscanstruct_scanstruct_redisdata
   scanstruct_miniodata:
-    external: true
     name: ocrscanstruct_scanstruct_miniodata
   scanstruct_templates:
     name: ocrscanstruct_scanstruct_templates
