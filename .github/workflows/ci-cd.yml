@@ -1,0 +1,199 @@
+# ============================================================
+# ScanStruct CI/CD 工作流
+#
+# 触发: push 到 main 分支 或 手动触发
+#
+# CI 阶段 (在 GitHub Actions runner 上):
+#   1. 检出代码
+#   2. 后端语法检查 + 测试（轻量级，不需要数据库）
+#   3. 前端构建验证
+#   4. 构建 Docker 镜像
+#   5. 推送镜像到 GHCR (GitHub Container Registry)
+#
+# CD 阶段 (通过 SSH 在阿里云服务器执行):
+#   6. 拉取最新代码 + 镜像
+#   7. docker compose 滚动更新 API + Worker
+#   8. 健康检查验证
+#
+# 需要在 GitHub 仓库 Settings → Secrets 中配置:
+#   SERVER_HOST       — 服务器公网 IP (如 121.40.53.229)
+#   SERVER_USER       — SSH 用户名 (如 root)
+#   SERVER_SSH_KEY    — SSH 私钥
+#   SERVER_PORT       — SSH 端口 (默认 22)
+# ============================================================
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # 支持手动触发
+
+env:
+  REGISTRY: ghcr.io
+  API_IMAGE_NAME: ${{ github.repository }}/scanstruct-api
+  WORKER_IMAGE_NAME: ${{ github.repository }}/scanstruct-worker
+
+jobs:
+  # ============================================================
+  # Job 1: CI — 测试 + 构建
+  # ============================================================
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # ---------- 后端: 语法检查 ----------
+      - name: 设置 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt 2>/dev/null || true
+
+      - name: Python 语法检查
+        run: |
+          python -m py_compile api/main.py
+          python -m py_compile worker/celery_app.py
+          python -m py_compile config/settings.py
+          echo "✅ Python 语法检查通过"
+
+      # ---------- 前端: 构建验证 ----------
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: static/package-lock.json
+
+      - name: 安装前端依赖
+        working-directory: static
+        run: npm ci
+
+      - name: 前端构建
+        working-directory: static
+        run: npm run build
+
+      # ---------- Docker: 构建镜像 ----------
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 提取 Docker metadata (API)
+        id: meta-api
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.API_IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 提取 Docker metadata (Worker)
+        id: meta-worker
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.WORKER_IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 构建 API 镜像
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta-api.outputs.tags }}
+          labels: ${{ steps.meta-api.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 构建 Worker 镜像
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.worker
+          push: true
+          tags: ${{ steps.meta-worker.outputs.tags }}
+          labels: ${{ steps.meta-worker.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================================
+  # Job 2: CD — 部署到阿里云服务器
+  # ============================================================
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: 通过 SSH 部署
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            set -e
+            echo "=========================================="
+            echo "  ScanStruct CI/CD 自动部署"
+            echo "=========================================="
+
+            cd /opt/scanstruct
+
+            # 1. 拉取最新代码
+            echo "==> 拉取最新代码..."
+            git pull origin main
+
+            # 2. 登录 GHCR 拉取镜像
+            echo "==> 登录镜像仓库..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin 2>/dev/null || true
+
+            # 3. 拉取最新镜像
+            echo "==> 拉取最新镜像..."
+            docker compose --env-file .env.production pull api worker 2>/dev/null || true
+
+            # 4. 重建并重启 API + Worker
+            echo "==> 更新服务..."
+            docker compose --env-file .env.production up -d --build --no-deps api worker
+
+            # 5. 等待服务就绪
+            echo "==> 等待服务启动..."
+            sleep 15
+
+            # 6. 健康检查
+            echo "==> 健康检查..."
+            HEALTH=$(curl -sf http://localhost:8900/api/v1/health 2>/dev/null || echo '{"status":"error"}')
+            echo "  API Health: $HEALTH"
+
+            if echo "$HEALTH" | grep -q '"ok"'; then
+              echo "✅ 部署成功! API 健康"
+            else
+              echo "❌ 部署后健康检查失败!"
+              echo "  最近日志:"
+              docker compose --env-file .env.production logs --tail=30 api
+              exit 1
+            fi
+
+            # 7. 清理旧镜像
+            echo "==> 清理旧镜像..."
+            docker image prune -f --filter "until=72h" > /dev/null
+
+            echo "=========================================="
+            echo "  部署完成!"
+            echo "=========================================="

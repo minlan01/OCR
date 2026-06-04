@@ -148,7 +148,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: scanstruct-api
-    image: scanstruct-api:latest
+    image: ${API_IMAGE:-scanstruct-api:latest}
     environment:
       <<: *common-env
       STORAGE_BACKEND: minio
@@ -185,7 +185,7 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     container_name: scanstruct-worker
-    image: scanstruct-worker:latest
+    image: ${WORKER_IMAGE:-scanstruct-worker:latest}
     environment:
       <<: *common-env
       STORAGE_BACKEND: minio
