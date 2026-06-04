@@ -169,19 +169,20 @@ jobs:
             fi
             echo "==> 使用: $DC"
 
+            # 1. 拉取最新代码（先 stash 本地 .env 等变更）
+            echo "==> 拉取最新代码..."
+            git stash --include-untracked 2>/dev/null || true
+            git pull origin main
+            git stash pop 2>/dev/null || true
+
             # 用 .env.production 作为环境文件
-            # docker compose 自动加载 .env，我们手动指定
             ENV_OPT="--env-file .env.production"
             # 检测是否支持 --env-file
             if ! $DC $ENV_OPT config &>/dev/null; then
-              echo "  --env-file 不支持，改用 .env 软链接"
+              echo "  --env-file 不支持，改用 .env 复制"
               cp -f .env.production .env
               ENV_OPT=""
             fi
-
-            # 1. 拉取最新代码
-            echo "==> 拉取最新代码..."
-            git pull origin main
 
             # 2. 登录 GHCR 拉取镜像
             echo "==> 登录镜像仓库..."
