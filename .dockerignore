@@ -40,13 +40,9 @@ nul
 UnRAR.exe
 license.txt
 
-# Frontend source (dist is built into image, source not needed)
-static/src/
+# Frontend: dist/ excluded (built inside Docker), but source needed for build stage
+static/dist/
 static/node_modules/
-static/package-lock.json
-static/tsconfig*.json
-static/env.d.ts
-static/vite.config.ts
 
 # Docs
 docs/

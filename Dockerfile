@@ -1,7 +1,20 @@
 # =====================================================
-# Stage 1: Builder
+# Stage 1: Frontend Builder (Vue 3 + Vite)
 # =====================================================
-FROM python:3.12-slim AS builder
+FROM node:22-slim AS frontend-builder
+
+WORKDIR /build/static
+
+COPY static/package.json static/package-lock.json ./
+RUN npm ci --prefer-offline
+
+COPY static/ ./
+RUN npm run build
+
+# =====================================================
+# Stage 2: Python Builder
+# =====================================================
+FROM python:3.12-slim AS python-builder
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -12,7 +25,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --target=/install -r requirements.txt
 
 # =====================================================
-# Stage 2: Runtime
+# Stage 3: Runtime
 # =====================================================
 FROM python:3.12-slim
 
@@ -39,9 +52,12 @@ RUN groupadd -r scanstruct -g 10000 \
 
 WORKDIR /app
 
-COPY --from=builder /install /usr/local/lib/python3.12/site-packages
+COPY --from=python-builder /install /usr/local/lib/python3.12/site-packages
 
 COPY --chown=scanstruct:scanstruct . .
+
+# 用 Docker 内构建的前端产物覆盖（或创建）static/dist
+COPY --from=frontend-builder /build/static/dist /app/static/dist
 
 RUN mkdir -p /app/scan_input /app/scan_error /app/scan_archive \
     && chown -R scanstruct:scanstruct /app
