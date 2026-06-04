@@ -45,8 +45,8 @@ export async function post<T>(path: string, body?: unknown): Promise<T> {
   })
 }
 
-export async function del(path: string): Promise<void> {
-  await request(`${BASE}${path}`, { method: 'DELETE' })
+export async function del<T = void>(path: string): Promise<T> {
+  return request<T>(`${BASE}${path}`, { method: 'DELETE' })
 }
 
 export async function put<T>(path: string, body?: unknown): Promise<T> {
