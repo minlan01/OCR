@@ -122,9 +122,9 @@ jobs:
           labels: ${{ steps.meta-api.outputs.labels }}
           build-args: |
             VITE_API_KEY=${{ secrets.API_KEY_PROD }}
+            BUILDKIT_INLINE_CACHE=1
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: BUILDKIT_INLINE_CACHE=1
 
       - name: 构建 Worker 镜像
         uses: docker/build-push-action@v6
@@ -136,7 +136,6 @@ jobs:
           labels: ${{ steps.meta-worker.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: BUILDKIT_INLINE_CACHE=1
 
   # ============================================================
   # Job 2: CD — 部署到阿里云服务器
