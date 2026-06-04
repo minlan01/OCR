@@ -503,14 +503,8 @@ def validate_required_fields(analysis_result: dict) -> list[str]:
     if not defendant_name:
         missing.append("被告医院名称")
 
-    # 检查法院信息（非必须但建议）
-    court_name = (
-        analysis_result.get("court_name")
-        or analysis_result.get("受理法院")
-        or ""
-    )
-    if not court_name:
-        missing.append("受理法院名称")
+    # 法院信息：不作为硬性阻断，缺失时在文档中留空让用户手填
+    # （court_name 来自 LLM 提取，证据材料中可能不包含法院信息）
 
     return missing
 
