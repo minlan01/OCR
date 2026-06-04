@@ -159,7 +159,7 @@ jobs:
             echo "  ScanStruct CI/CD 自动部署"
             echo "=========================================="
 
-            cd /opt/scanstruct
+            cd /root/OCR
 
             # 1. 拉取最新代码
             echo "==> 拉取最新代码..."
