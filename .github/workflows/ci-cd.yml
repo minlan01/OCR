@@ -161,6 +161,24 @@ jobs:
 
             cd /root/OCR
 
+            # 检测 docker compose 版本
+            if docker compose version &>/dev/null; then
+              DC="docker compose"
+            else
+              DC="docker-compose"
+            fi
+            echo "==> 使用: $DC"
+
+            # 用 .env.production 作为环境文件
+            # docker compose 自动加载 .env，我们手动指定
+            ENV_OPT="--env-file .env.production"
+            # 检测是否支持 --env-file
+            if ! $DC $ENV_OPT config &>/dev/null; then
+              echo "  --env-file 不支持，改用 .env 软链接"
+              cp -f .env.production .env
+              ENV_OPT=""
+            fi
+
             # 1. 拉取最新代码
             echo "==> 拉取最新代码..."
             git pull origin main
@@ -171,11 +189,11 @@ jobs:
 
             # 3. 拉取最新镜像
             echo "==> 拉取最新镜像..."
-            docker compose --env-file .env.production pull api worker 2>/dev/null || true
+            $DC $ENV_OPT pull api worker 2>/dev/null || true
 
-            # 4. 重建并重启 API + Worker
+            # 4. 重建并重启所有服务
             echo "==> 更新服务..."
-            docker compose --env-file .env.production up -d --build --no-deps api worker
+            $DC $ENV_OPT up -d --build --no-deps api worker
 
             # 5. 等待服务就绪
             echo "==> 等待服务启动..."
@@ -191,7 +209,7 @@ jobs:
             else
               echo "❌ 部署后健康检查失败!"
               echo "  最近日志:"
-              docker compose --env-file .env.production logs --tail=30 api
+              $DC $ENV_OPT logs --tail=30 api
               exit 1
             fi
 
