@@ -169,11 +169,17 @@ jobs:
             fi
             echo "==> 使用: $DC"
 
-            # 1. 拉取最新代码（先 stash 本地 .env 等变更）
+            # 1. 拉取最新代码（先保护本地文件）
             echo "==> 拉取最新代码..."
-            git stash --include-untracked 2>/dev/null || true
+            # 保护 .env.production 不被 stash 吞掉
+            cp -f .env.production /tmp/.env.production.backup 2>/dev/null || true
+            git checkout -- . 2>/dev/null || true
+            git clean -fd --exclude=.env.production --exclude=.env --exclude=.env.production.bak 2>/dev/null || true
             git pull origin main
-            git stash pop 2>/dev/null || true
+            # 恢复 .env.production（以防万一）
+            if [ ! -f .env.production ] && [ -f /tmp/.env.production.backup ]; then
+              cp -f /tmp/.env.production.backup .env.production
+            fi
 
             # 用 .env.production 作为环境文件
             ENV_OPT="--env-file .env.production"
