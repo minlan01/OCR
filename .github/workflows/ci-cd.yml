@@ -120,6 +120,8 @@ jobs:
           push: true
           tags: ${{ steps.meta-api.outputs.tags }}
           labels: ${{ steps.meta-api.outputs.labels }}
+          build-args: |
+            VITE_API_KEY=${{ secrets.API_KEY_PROD }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: BUILDKIT_INLINE_CACHE=1
