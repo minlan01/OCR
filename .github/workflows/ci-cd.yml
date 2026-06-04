@@ -170,38 +170,50 @@ jobs:
             fi
             echo "==> 使用: $DC"
 
-            # 1. 拉取最新代码（先保护本地文件）
+            # 1. 拉取最新代码（带重试，服务器到 GitHub 网络不稳定）
             echo "==> 拉取最新代码..."
-            # 保护 .env.production 不被 stash 吞掉
             cp -f .env.production /tmp/.env.production.backup 2>/dev/null || true
-            git checkout -- . 2>/dev/null || true
-            git clean -fd --exclude=.env.production --exclude=.env --exclude=.env.production.bak 2>/dev/null || true
-            git pull origin main
-            # 恢复 .env.production（以防万一）
+            for i in 1 2 3; do
+              git checkout -- . 2>/dev/null || true
+              git clean -fd --exclude=.env.production --exclude=.env 2>/dev/null || true
+              if git pull origin main; then
+                echo "  git pull 成功 (第${i}次尝试)"
+                break
+              fi
+              echo "  git pull 失败，${i}/3，等待重试..."
+              sleep 10
+            done
+            # 恢复 .env.production
             if [ ! -f .env.production ] && [ -f /tmp/.env.production.backup ]; then
               cp -f /tmp/.env.production.backup .env.production
             fi
 
             # 用 .env.production 作为环境文件
             ENV_OPT="--env-file .env.production"
-            # 检测是否支持 --env-file
             if ! $DC $ENV_OPT config &>/dev/null; then
               echo "  --env-file 不支持，改用 .env 复制"
               cp -f .env.production .env
               ENV_OPT=""
             fi
 
-            # 2. 登录 GHCR 拉取镜像
+            # 2. 登录 GHCR 拉取镜像（带重试）
             echo "==> 登录镜像仓库..."
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin 2>/dev/null || true
 
             # 3. 拉取最新镜像
             echo "==> 拉取最新镜像..."
-            $DC $ENV_OPT pull api worker 2>/dev/null || true
+            for i in 1 2 3; do
+              if $DC $ENV_OPT pull api worker; then
+                echo "  镜像拉取成功"
+                break
+              fi
+              echo "  镜像拉取失败，${i}/3，等待重试..."
+              sleep 10
+            done
 
-            # 4. 重建并重启所有服务
+            # 4. 重启 API + Worker（不本地 build，用远程镜像）
             echo "==> 更新服务..."
-            $DC $ENV_OPT up -d --build --no-deps api worker
+            $DC $ENV_OPT up -d --no-build --no-deps api worker
 
             # 5. 等待服务就绪
             echo "==> 等待服务启动..."
