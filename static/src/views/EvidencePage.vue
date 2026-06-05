@@ -158,7 +158,8 @@
             <th>文件名</th>
             <th style="width: 100px">大小</th>
             <th style="width: 130px">OCR 状态</th>
-            <th style="width: 140px">自动分类</th>
+            <th style="width: 130px">自动分类</th>
+            <th style="width: 140px">手动分类</th>
             <th style="width: 80px">操作</th>
           </tr>
         </thead>
@@ -188,23 +189,35 @@
               </n-tag>
             </td>
             <td>
-              <template v-if="mat.effective_category">
+              <template v-if="mat.auto_category">
                 <n-tooltip v-if="mat.category_confidence && mat.category_confidence < 0.6" trigger="hover">
                   <template #trigger>
                     <n-tag size="small" type="error" style="cursor: help">
-                      {{ categoryLabel(mat.effective_category) }}
+                      {{ categoryLabel(mat.auto_category) }}
                       <span> {{ (mat.category_confidence * 100).toFixed(0) }}%</span>
                     </n-tag>
                   </template>
-                  分类置信度较低（{{ (mat.category_confidence * 100).toFixed(0) }}%），请检查分类是否正确。
-                  如不正确，可在目录编辑步骤中手动修改。
+                  自动分类置信度较低（{{ (mat.category_confidence * 100).toFixed(0) }}%），建议在「手动分类」列中修正。
                 </n-tooltip>
                 <n-tag v-else size="small" :type="mat.category_confidence && mat.category_confidence > 0.8 ? 'success' : 'warning'">
-                  {{ categoryLabel(mat.effective_category) }}
+                  {{ categoryLabel(mat.auto_category) }}
                   <span v-if="mat.category_confidence"> {{ (mat.category_confidence * 100).toFixed(0) }}%</span>
                 </n-tag>
               </template>
-              <n-text v-else depth="3">待分类</n-text>
+              <n-text v-else depth="3">-</n-text>
+            </td>
+            <td>
+              <n-select
+                size="tiny"
+                :value="mat.manual_category || mat.auto_category || null"
+                :options="categoryOptions"
+                :placeholder="mat.auto_category ? '点击修改' : '点击选择'"
+                :consistent-menu-width="false"
+                :status="(!mat.manual_category && mat.auto_category && mat.category_confidence && mat.category_confidence < 0.6) ? 'warning' : undefined"
+                style="min-width: 120px"
+                clearable
+                @update:value="(v: string) => handleChangeCategory(mat, v)"
+              />
             </td>
             <td>
               <n-space :size="4">
@@ -320,7 +333,8 @@
                 <th>文件名</th>
                 <th style="width: 100px">大小</th>
                 <th style="width: 130px">OCR 状态</th>
-                <th style="width: 140px">自动分类</th>
+                <th style="width: 130px">自动分类</th>
+                <th style="width: 140px">手动分类</th>
                 <th style="width: 80px">操作</th>
               </tr>
             </thead>
@@ -341,22 +355,34 @@
                   <n-tag v-else :type="ocrTagType(mat.ocr_status)" size="small">{{ ocrStatusLabel(mat.ocr_status) }}</n-tag>
                 </td>
                 <td>
-                  <template v-if="mat.effective_category">
+                  <template v-if="mat.auto_category">
                     <n-tooltip v-if="mat.category_confidence && mat.category_confidence < 0.6" trigger="hover">
                       <template #trigger>
                         <n-tag size="small" type="error" style="cursor: help">
-                          {{ categoryLabel(mat.effective_category) }}
+                          {{ categoryLabel(mat.auto_category) }}
                           <span> {{ (mat.category_confidence * 100).toFixed(0) }}%</span>
                         </n-tag>
                       </template>
-                      分类置信度较低（{{ (mat.category_confidence * 100).toFixed(0) }}%），请检查分类是否正确。如不正确可手动修改。
+                      自动分类置信度较低（{{ (mat.category_confidence * 100).toFixed(0) }}%），建议在「手动分类」列中修正。
                     </n-tooltip>
                     <n-tag v-else size="small" :type="mat.category_confidence && mat.category_confidence > 0.8 ? 'success' : 'warning'">
-                      {{ categoryLabel(mat.effective_category) }}
+                      {{ categoryLabel(mat.auto_category) }}
                       <span v-if="mat.category_confidence"> {{ (mat.category_confidence * 100).toFixed(0) }}%</span>
                     </n-tag>
                   </template>
-                  <n-text v-else depth="3">待分类</n-text>
+                  <n-text v-else depth="3">-</n-text>
+                </td>
+                <td>
+                  <n-select
+                    size="tiny"
+                    :value="mat.manual_category || mat.auto_category || null"
+                    :options="categoryOptions"
+                    placeholder="点击选择"
+                    :consistent-menu-width="false"
+                    style="min-width: 120px"
+                    clearable
+                    @update:value="(v: string) => handleChangeCategory(mat, v)"
+                  />
                 </td>
                 <td>
                   <n-space :size="4">
@@ -461,7 +487,8 @@
                 <th>文件名</th>
                 <th style="width: 100px">大小</th>
                 <th style="width: 130px">OCR 状态</th>
-                <th style="width: 140px">自动分类</th>
+                <th style="width: 130px">自动分类</th>
+                <th style="width: 140px">手动分类</th>
                 <th style="width: 80px">操作</th>
               </tr>
             </thead>
@@ -482,22 +509,34 @@
                   <n-tag v-else :type="ocrTagType(mat.ocr_status)" size="small">{{ ocrStatusLabel(mat.ocr_status) }}</n-tag>
                 </td>
                 <td>
-                  <template v-if="mat.effective_category">
+                  <template v-if="mat.auto_category">
                     <n-tooltip v-if="mat.category_confidence && mat.category_confidence < 0.6" trigger="hover">
                       <template #trigger>
                         <n-tag size="small" type="error" style="cursor: help">
-                          {{ categoryLabel(mat.effective_category) }}
+                          {{ categoryLabel(mat.auto_category) }}
                           <span> {{ (mat.category_confidence * 100).toFixed(0) }}%</span>
                         </n-tag>
                       </template>
-                      分类置信度较低（{{ (mat.category_confidence * 100).toFixed(0) }}%），请检查分类是否正确。如不正确可手动修改。
+                      自动分类置信度较低（{{ (mat.category_confidence * 100).toFixed(0) }}%），建议在「手动分类」列中修正。
                     </n-tooltip>
                     <n-tag v-else size="small" :type="mat.category_confidence && mat.category_confidence > 0.8 ? 'success' : 'warning'">
-                      {{ categoryLabel(mat.effective_category) }}
+                      {{ categoryLabel(mat.auto_category) }}
                       <span v-if="mat.category_confidence"> {{ (mat.category_confidence * 100).toFixed(0) }}%</span>
                     </n-tag>
                   </template>
-                  <n-text v-else depth="3">待分类</n-text>
+                  <n-text v-else depth="3">-</n-text>
+                </td>
+                <td>
+                  <n-select
+                    size="tiny"
+                    :value="mat.manual_category || mat.auto_category || null"
+                    :options="categoryOptions"
+                    placeholder="点击选择"
+                    :consistent-menu-width="false"
+                    style="min-width: 120px"
+                    clearable
+                    @update:value="(v: string) => handleChangeCategory(mat, v)"
+                  />
                 </td>
                 <td>
                   <n-space :size="4">
@@ -522,11 +561,19 @@
       <n-space vertical>
         <n-card size="small" title="智能分析" embedded>
           <n-space>
-            <n-button type="primary" :loading="analyzing" @click="handleAnalyze" :disabled="analyzing">
-              {{ analyzing ? '分析中...' : '开始智能分析' }}
+            <n-button
+              :type="currentCase?.status === 'failed' ? 'warning' : 'primary'"
+              :loading="analyzing"
+              @click="handleAnalyze"
+              :disabled="analyzing"
+            >
+              {{ analyzing ? '分析中...' : (currentCase?.status === 'failed' ? '重新分析' : '开始智能分析') }}
             </n-button>
             <n-tag v-if="analysisResult" :type="statusTagType(analysisResult.status)">
               {{ statusLabel(analysisResult.status) }}
+            </n-tag>
+            <n-tag v-if="currentCase?.status === 'failed'" type="error">
+              分析失败 — 可点击重新分析
             </n-tag>
           </n-space>
 
@@ -746,6 +793,8 @@ import {
   NDrawerContent,
   NGrid,
   NGi,
+  NSelect,
+  NTooltip,
 } from 'naive-ui'
 import {
   CloudUploadOutline,
@@ -1051,6 +1100,45 @@ function categoryLabel(cat: string): string {
     identity: '身份证明',
   }
   return map[cat] || cat
+}
+
+/** 手动分类下拉选项 */
+const categoryOptions = computed(() => {
+  const base: { label: string; value: string }[] = [
+    { label: '原告身份证', value: 'identity_id_card' },
+    { label: '户口本', value: 'identity_hukou' },
+    { label: '其他身份信息', value: 'identity_other' },
+    { label: '被告信息', value: 'identity_defendant' },
+    { label: '死亡证明', value: 'death_certificate' },
+    { label: '病历资料', value: 'medical_record' },
+    { label: '鉴定意见书', value: 'appraisal' },
+    { label: '医疗费用', value: 'fee_receipt' },
+    { label: '其他证据', value: 'other_evidence' },
+  ]
+  return base
+})
+
+/** 修改素材分类 */
+async function handleChangeCategory(mat: MaterialResponse, newCategory: string | null) {
+  if (!currentCase.value) return
+  try {
+    const res = await evidenceApi.updateMaterial(currentCase.value.id, mat.id, {
+      manual_category: newCategory || '',
+    })
+    // 同步本地素材列表
+    const idx = materials.value.findIndex(m => m.id === mat.id)
+    if (idx !== -1) {
+      materials.value[idx] = res
+    }
+    if (newCategory) {
+      message.success(`手动分类已设为「${categoryLabel(newCategory)}」`)
+    } else {
+      message.success('已清除手动分类，将使用自动分类')
+    }
+  } catch (e: unknown) {
+    const err = e instanceof Error ? e.message : String(e)
+    message.error(err)
+  }
 }
 
 function stepStatusType(status: string): 'default' | 'success' | 'warning' | 'error' | 'info' {
@@ -1753,7 +1841,8 @@ async function saveDefendantPhone() {
     syncDefendantPhone(res)
     message.success('被告联系方式已保存')
   } catch (e: unknown) {
-    message.error((e as Error).message)
+    const err = e instanceof Error ? e.message : String(e)
+    message.error(err)
   } finally {
     savingDefendantPhone.value = false
   }
@@ -1772,7 +1861,8 @@ async function saveLawyerInfo() {
     syncDefendantPhone(res)
     message.success('律师信息已保存')
   } catch (e: unknown) {
-    message.error((e as Error).message)
+    const err = e instanceof Error ? e.message : String(e)
+    message.error(err)
   } finally {
     savingLawyer.value = false
   }

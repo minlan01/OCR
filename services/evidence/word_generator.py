@@ -15,6 +15,7 @@ from loguru import logger
 
 from config.settings import settings
 from services.evidence.classifier import CATEGORY_NAMES
+from services.utils.date_utils import normalize_date
 
 # 模板目录
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent.parent / "templates" / "evidence"
@@ -93,26 +94,20 @@ def _normalize_ethnicity(value: str) -> str:
 
 
 def _normalize_birth_date(value: str) -> str:
-    """规范化出生日期字段：'1958-07-13' → '1958年7月13日'"""
+    """规范化出生日期字段：'1958-07-13' → '1958年7月13日'
+
+    使用统一的 date_utils.normalize_date() 处理所有格式
+    """
     if not value:
         return ""
-    import re
-    value = value.strip()
-    # ISO格式: 1958-07-13 或 1958/07/13
-    m = re.match(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', value)
-    if m:
-        return f"{m.group(1)}年{int(m.group(2))}月{int(m.group(3))}日"
-    # 已经是中文格式
-    if "年" in value and "月" in value:
-        return value
-    return value
+    return normalize_date(value.strip())
 
 
 def _extract_identity_from_catalog(catalog_data: dict, plaintiff_name: str) -> dict:
     """从 catalog_data 的身份证材料中提取完整身份信息（备选方案）
 
     当 LLM 没有正确提取身份信息时，直接从 OCR 文本中用正则提取。
-    返回: {id_number, ethnicity, birth_date, address}
+    返回: {id_number, ethnicity, birth_date, address, gender}
     """
     import re
 
@@ -121,76 +116,150 @@ def _extract_identity_from_catalog(catalog_data: dict, plaintiff_name: str) -> d
     # 正则模式 - 更宽松以匹配各种OCR输出格式
     id_pattern = re.compile(r'[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]')
     ethnicity_pattern = re.compile(r'民\s*族[：:\s]*([\u4e00-\u9fff]{1,8})')
+    gender_pattern = re.compile(r'性\s*别[：:\s]*(男|女)')
     birth_pattern_cn = re.compile(r'(?:出\s*生|出生日期|生\s*日)[：:\s]*((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日')
     birth_pattern_iso = re.compile(r'(?:出\s*生|出生日期|生\s*日)[：:\s]*((?:19|20)\d{2})[-/.](\d{1,2})[-/.](\d{1,2})')
     birth_pattern_bare = re.compile(r'((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日')
     address_pattern = re.compile(r'(?:住\s*址|住\s*所|地\s*址)[：:\s]*([\u4e00-\u9fff\d号楼栋室层区路街道巷村镇省市区县]{5,80})')
+
+    def _matches_name(item: dict, name: str) -> bool:
+        """多路径姓名匹配：identity.patient_name / original_filename"""
+        if not name:
+            return False
+        # 路径1: identity.patient_name
+        identity = item.get("identity", {})
+        item_name = identity.get("patient_name", "")
+        if name in item_name:
+            return True
+        # 路径2: evidence_name.original_filename（文件名通常含人名）
+        ev_name = item.get("evidence_name", {})
+        filename = ev_name.get("original_filename", "") or item.get("title", "")
+        # 去掉扩展名和"正面"/"反面"等后缀
+        clean_fn = re.sub(r'\.(jpg|jpeg|png|pdf|jpx)$', '', filename or "", flags=re.IGNORECASE)
+        clean_fn = re.sub(r'(正|反)面$', '', clean_fn)
+        if name in clean_fn:
+            return True
+        # 路径3: raw_extracted.layer_2_identity.patient_name
+        raw = item.get("raw_extracted", {})
+        layer2 = raw.get("layer_2_identity", {}) or {}
+        raw_name = layer2.get("patient_name", "")
+        if name in raw_name:
+            return True
+        return False
+
+    def _fill_from_identity(identity: dict) -> None:
+        """从 identity 层补充已有数据"""
+        if not result.get("id_number"):
+            pid = identity.get("patient_id", "")
+            if pid and len(pid) >= 15 and "*" not in pid:
+                result["id_number"] = pid
+
+        if not result.get("birth_date"):
+            pb = identity.get("patient_birth", "")
+            if pb:
+                result["birth_date"] = _normalize_birth_date(pb)
+
+        if not result.get("address"):
+            pa = identity.get("patient_address", "")
+            if pa:
+                result["address"] = pa
+
+        if not result.get("gender"):
+            pg = identity.get("patient_gender", "")
+            if pg:
+                result["gender"] = pg
+
+        if not result.get("ethnicity"):
+            pe = identity.get("ethnicity", "")
+            if pe:
+                result["ethnicity"] = _normalize_ethnicity(pe)
+
+    def _fill_from_raw_extracted(raw: dict) -> None:
+        """从 raw_extracted.layer_2_identity 补充（原始未脱敏数据）"""
+        layer2 = raw.get("layer_2_identity", {}) or {}
+        if not layer2:
+            return
+        if not result.get("id_number"):
+            pid = layer2.get("patient_id", "")
+            if pid and len(pid) >= 15 and "*" not in pid:
+                result["id_number"] = pid
+
+        if not result.get("birth_date"):
+            pb = layer2.get("patient_birth", "")
+            if pb:
+                result["birth_date"] = _normalize_birth_date(pb)
+
+        if not result.get("address"):
+            pa = layer2.get("patient_address", "")
+            if pa:
+                result["address"] = pa
+
+        if not result.get("gender"):
+            pg = layer2.get("patient_gender", "")
+            if pg:
+                result["gender"] = pg
+
+    def _fill_from_ocr_text(ocr_text: str) -> None:
+        """从 OCR 文本中正则提取"""
+        if not ocr_text:
+            return
+
+        # 提取身份证号
+        if not result.get("id_number"):
+            match = id_pattern.search(ocr_text)
+            if match:
+                result["id_number"] = match.group(0)
+
+        # 提取性别
+        if not result.get("gender"):
+            match = gender_pattern.search(ocr_text)
+            if match:
+                result["gender"] = match.group(1)
+
+        # 提取民族
+        if not result.get("ethnicity"):
+            match = ethnicity_pattern.search(ocr_text)
+            if match:
+                result["ethnicity"] = _normalize_ethnicity(match.group(1).strip())
+
+        # 提取出生日期（支持多种格式）
+        if not result.get("birth_date"):
+            match = birth_pattern_cn.search(ocr_text)
+            if match:
+                result["birth_date"] = f"{match.group(1)}年{match.group(2)}月{match.group(3)}日"
+            else:
+                match = birth_pattern_iso.search(ocr_text)
+                if match:
+                    result["birth_date"] = f"{match.group(1)}年{int(match.group(2))}月{int(match.group(3))}日"
+                else:
+                    match = birth_pattern_bare.search(ocr_text)
+                    if match:
+                        result["birth_date"] = f"{match.group(1)}年{match.group(2)}月{match.group(3)}日"
+
+        # 提取住址
+        if not result.get("address"):
+            match = address_pattern.search(ocr_text)
+            if match:
+                result["address"] = match.group(1).strip()
 
     for group in catalog_data.get("groups", []):
         if group.get("category") != "identity_id_card":
             continue
 
         for item in group.get("items", []):
-            # 检查是否是这位原告的身份证
+            # 多路径姓名匹配
+            if not _matches_name(item, plaintiff_name):
+                continue
+
+            # 依次从三个来源补充：identity 层 → raw_extracted → OCR 正则
             identity = item.get("identity", {})
-            item_name = identity.get("patient_name", "")
+            _fill_from_identity(identity)
 
-            # 姓名匹配
-            if plaintiff_name and plaintiff_name not in item_name:
-                continue
+            raw = item.get("raw_extracted", {})
+            _fill_from_raw_extracted(raw)
 
-            # 先从 identity 层提取已有数据
-            if not result.get("id_number"):
-                pid = identity.get("patient_id", "")
-                if pid and len(pid) >= 15 and "*" not in pid:
-                    result["id_number"] = pid
-
-            if not result.get("birth_date"):
-                pb = identity.get("patient_birth", "")
-                if pb:
-                    result["birth_date"] = _normalize_birth_date(pb)
-
-            if not result.get("address"):
-                pa = identity.get("patient_address", "")
-                if pa:
-                    result["address"] = pa
-
-            # 从 OCR 文本中提取（补充 identity 层缺失的字段）
             ocr_text = item.get("ocr_text", "")
-            if not ocr_text:
-                continue
-
-            # 提取身份证号
-            if not result.get("id_number"):
-                match = id_pattern.search(ocr_text)
-                if match:
-                    result["id_number"] = match.group(0)
-
-            # 提取民族
-            if not result.get("ethnicity"):
-                match = ethnicity_pattern.search(ocr_text)
-                if match:
-                    result["ethnicity"] = _normalize_ethnicity(match.group(1).strip())
-
-            # 提取出生日期（支持多种格式）
-            if not result.get("birth_date"):
-                match = birth_pattern_cn.search(ocr_text)
-                if match:
-                    result["birth_date"] = f"{match.group(1)}年{match.group(2)}月{match.group(3)}日"
-                else:
-                    match = birth_pattern_iso.search(ocr_text)
-                    if match:
-                        result["birth_date"] = f"{match.group(1)}年{int(match.group(2))}月{int(match.group(3))}日"
-                    else:
-                        match = birth_pattern_bare.search(ocr_text)
-                        if match:
-                            result["birth_date"] = f"{match.group(1)}年{match.group(2)}月{match.group(3)}日"
-
-            # 提取住址
-            if not result.get("address"):
-                match = address_pattern.search(ocr_text)
-                if match:
-                    result["address"] = match.group(1).strip()
+            _fill_from_ocr_text(ocr_text)
 
     return result
 
@@ -214,7 +283,7 @@ def _get_plaintiffs(context: dict, catalog_data: dict = None) -> list[dict]:
                     continue
                 # 检查是否有缺失字段
                 missing_fields = []
-                for field in ("id_number", "ethnicity", "birth_date", "address"):
+                for field in ("id_number", "ethnicity", "birth_date", "address", "gender"):
                     if not p.get(field):
                         missing_fields.append(field)
                 if missing_fields:
@@ -267,7 +336,7 @@ def _get_plaintiffs(context: dict, catalog_data: dict = None) -> list[dict]:
             if not name:
                 continue
             missing_fields = []
-            for field in ("id_number", "ethnicity", "birth_date", "address"):
+            for field in ("id_number", "ethnicity", "birth_date", "address", "gender"):
                 if not p.get(field):
                     missing_fields.append(field)
             if missing_fields:
@@ -654,18 +723,19 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
             text += f"，联系电话：{phone}"
 
         # 律师信息（加在每位原告最后）
-        # 格式：联系电话：18487301173（凡律师）、联系电话：18617325475（王律师）
+        # 格式：联系电话：18487301173（凡律师）、15877881929（刘律师）
+        # 注意：只有第一个律师前加「联系电话：」，后续用「、」连接
         if lawyer_info:
             lawyer_parts = []
             for lw in lawyer_info:
                 lw_name = lw.get("name", "").strip()
                 lw_phone = lw.get("phone", "").strip()
                 if lw_name and lw_phone:
-                    lawyer_parts.append(f"联系电话：{lw_phone}（{lw_name}律师）")
+                    lawyer_parts.append(f"{lw_phone}（{lw_name}律师）")
                 elif lw_phone:
-                    lawyer_parts.append(f"联系电话：{lw_phone}")
+                    lawyer_parts.append(lw_phone)
             if lawyer_parts:
-                text += "，" + "、".join(lawyer_parts)
+                text += "，联系电话：" + "、".join(lawyer_parts)
 
         para = doc.add_paragraph()
         _set_body_para(para)
@@ -725,10 +795,23 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
     _set_run_font(run, BODY_FONT, BODY_SIZE)
     run.font.bold = True
 
-    # 第一条：赔偿请求（金额挖空）
+    # 第一条：赔偿请求（金额挖空，根据案件类型选择赔偿项目）
+    case_type = context.get("case_type", "death")
+    if case_type == "injury":
+        claim_items = "医疗费、误工费、护理费、住院伙食补助费、营养费、伤残赔偿金（包含被扶养人生活费）、后续治疗费、交通费、精神损害抚慰金等暂计人民币______元"
+        retention_clause = "因本案尚未鉴定，上述赔偿费用待鉴定后再行补充变更"
+    elif case_type == "neonatal":
+        claim_items = "医疗费、护理费、住院伙食补助费、营养费、伤残赔偿金（包含被扶养人生活费）、后续护理费、交通费、精神损害抚慰金等暂计人民币______元"
+        retention_clause = "因本案尚未鉴定，上述赔偿费用待鉴定后再行补充变更"
+    else:  # death
+        claim_items = "医疗费、误工费、护理费、住院伙食补助费、营养费、死亡赔偿金（包含被扶养人生活费）、丧葬费、交通费、精神损害抚慰金等暂计人民币______元"
+        retention_clause = ""
     p = doc.add_paragraph()
     _set_body_para(p)
-    run = p.add_run("一、请求人民法院依法判令被告赔偿原告医疗费、误工费、护理费、住院伙食补助费、营养费、死亡赔偿金（包含被扶养人生活费）、丧葬费、交通费、精神损害抚慰金等暂计人民币______元；")
+    claim_text = f"一、请求人民法院依法判令被告赔偿原告{claim_items}；"
+    if retention_clause:
+        claim_text += retention_clause + "；"
+    run = p.add_run(claim_text)
     _set_run_font(run, BODY_FONT, BODY_SIZE)
 
     # 第二条：诉讼费由被告承担

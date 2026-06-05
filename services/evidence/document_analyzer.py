@@ -20,6 +20,7 @@ from openai import OpenAI
 from config.settings import settings
 from services.evidence.classifier import CATEGORY_NAMES
 from services.complaint.template_manager import get_template, get_template_key, TEMPLATE_REGISTRY
+from services.utils.date_utils import normalize_date as _normalize_date
 
 _analyzer_client: Optional[OpenAI] = None
 _flash_client: Optional[OpenAI] = None
@@ -100,6 +101,14 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
                 direct_dd = _direct_extract_death_diagnosis(materials)
                 if direct_dd:
                     analysis_result["death_diagnosis"] = direct_dd
+                else:
+                    # 死亡诊断提取失败，标记缺失
+                    logger.warning(
+                        f"Death diagnosis direct extraction failed for case {case_id} "
+                        f"— will rely on LLM extraction result"
+                    )
+                    if not analysis_result.get("death_diagnosis"):
+                        analysis_result["_death_diagnosis_missing"] = True
 
             # ── Step 1.6: 定向提取被告信息（从OCR原文中补充法定代表人/信用代码/地址） ──
             direct_def = _direct_extract_defendant_info(materials)
@@ -107,6 +116,34 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
                 for k, v in direct_def.items():
                     if v and not analysis_result.get(k):
                         analysis_result[k] = v
+
+            # ── Step 1.7: 多家医院被告识别（解决多家医院混淆） ──
+            analysis_result = _resolve_defendant_hospital(analysis_result, materials)
+
+            # ── Step 1.7b: 鉴定结论定向提取（补充LLM遗漏的鉴定人/结论原文） ──
+            direct_appraisal = _direct_extract_appraisal_conclusion(materials)
+            if direct_appraisal:
+                appraisal = analysis_result.get("appraisal_details", {})
+                for k, v in direct_appraisal.items():
+                    if v and not appraisal.get(k):
+                        appraisal[k] = v
+                if appraisal:
+                    analysis_result["appraisal_details"] = appraisal
+
+            # ── Step 1.7c: 医务人员资质定向提取（补充LLM遗漏的资质问题） ──
+            direct_staff = _direct_extract_staff_qualification(materials)
+            if direct_staff:
+                staff = analysis_result.get("staff_details", {})
+                for k, v in direct_staff.items():
+                    if v and not staff.get(k):
+                        staff[k] = v
+                if staff:
+                    analysis_result["staff_details"] = staff
+                if direct_staff.get("has_staff_issue") and not analysis_result.get("has_staff_issue"):
+                    analysis_result["has_staff_issue"] = True
+
+            # ── Step 1.8: 后验证（校验身份证号、被告名称、日期等） ──
+            analysis_result = _validate_extracted_data(analysis_result, case.case_type)
 
             # ── 要件验证 ──
             req_stmt = select(EvidenceRequirement).where(
@@ -163,7 +200,9 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
             analysis_result["case_name"] = case.case_name
             analysis_result["case_type"] = case.case_type
             analysis_result["case_type_name"] = (
-                "人身损害赔偿" if case.case_type == "injury" else "死亡赔偿"
+                "人身损害赔偿" if case.case_type == "injury"
+                else "新生儿损害赔偿" if case.case_type == "neonatal"
+                else "死亡赔偿"
             )
             analysis_result["is_minor"] = case.is_minor
 
@@ -398,8 +437,53 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
     if len(text) > max_chars:
         truncated_text += "\n...(内容过长已截断)"
 
-    case_type_desc = "人身损害（伤残）" if case_type == "injury" else "死亡"
+    case_type_desc = (
+        "人身损害（伤残）" if case_type == "injury"
+        else "新生儿损害" if case_type == "neonatal"
+        else "死亡"
+    )
     minor_desc = "（未成年人）" if is_minor else ""
+
+    # ── 根据案件类型定制提取说明 ──
+    if case_type == "neonatal":
+        case_specific_note = (
+            "【新生儿案件特别注意】\n"
+            "1. 患者为新生儿，需要从出生医学证明中提取新生儿姓名、出生体重、孕周等\n"
+            "2. 需要提取母亲信息（姓名、孕周、产次、分娩方式）\n"
+            "3. 从分娩记录中提取Apgar评分（1分钟、5分钟、10分钟各项得分）\n"
+            "4. 关注新生儿窒息、缺氧缺血性脑病(HIE)、颅内出血等新生儿特有诊断\n"
+            "5. 关注胎心监护(CTG)结果、羊水情况、脐带情况等产程信息\n"
+            "6. 入院信息中的admission_reason应为'母亲待产/新生儿出生'相关\n"
+            "7. adverse_outcome应侧重新生儿期的损害（如新生儿窒息、HIE等）\n"
+        )
+        appraisal_note = "disability_level(伤残等级)"
+        death_section = ""
+    elif case_type == "death":
+        case_specific_note = (
+            "【死亡案件特别注意】\n"
+            "1. 患者已死亡，需要从死亡证明/尸检报告/病历中提取完整死亡诊断\n"
+            "2. 死亡诊断必须从住院病历或尸检报告/司法鉴定意见书中提取完整编号列举式诊断\n"
+            "3. 不要使用死亡证明书上的简略'死亡原因'，那不是完整的死亡诊断\n"
+            "4. adverse_outcome应包含死亡经过及具体时间\n"
+        )
+        appraisal_note = "cause_of_death(死因), fault_degree"
+        death_section = (
+            "\n### 九、死亡信息（仅死亡案件）\n"
+            "- death_date: 死亡日期\n"
+            "- death_diagnosis: 完整死亡诊断（重要：必须从住院病历或尸检报告/司法鉴定意见书中提取完整的'死亡诊断'，"
+            "通常是编号列举的多项诊断，如\u2460重度肺动脉高压；\u2461急性右心衰竭；\u2462...格式。"
+            "不要使用死亡证明书上的简略'死亡原因'，死亡证明书只有简略死因，不是完整的死亡诊断。必须完整列出所有项，不要遗漏。）\n"
+        )
+    else:  # injury
+        case_specific_note = (
+            "【伤残案件特别注意】\n"
+            "1. 患者存活，需要从病历中提取入院至今的完整诊疗过程\n"
+            "2. 关注损害发生的时间节点和具体经过\n"
+            "3. adverse_outcome应描述伤残损害后果\n"
+            "4. 如患者截至起诉之日仍在住院，需在admission_condition中注明\n"
+        )
+        appraisal_note = "disability_level(伤残等级)"
+        death_section = ""
 
     prompt = f"""你是一个医疗损害案件法律文书信息提取助手。请从以下证据材料的OCR原文中提取结构化数据。
 
@@ -416,8 +500,14 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
 4. 从身份证OCR原文中提取：姓名、性别、民族、出生日期、住址、身份证号
 5. 从户口本OCR原文中提取：户主关系、亲属关系
 6. 从被告信息材料中提取：医院全称（不要省略！）、法定代表人、统一社会信用代码
-7. 从病历OCR原文中提取：入院日期、主诉、诊断、检查、治疗经过、死亡诊断等
+7. 从病历OCR原文中提取：入院日期、主诉、诊断、检查、治疗经过
 8. 从鉴定报告OCR原文中提取：鉴定机构、鉴定日期、报告编号、鉴定意见
+9. **身份证号必须是18位，前17位纯数字，末位数字或X**，不允许带空格或其他字母
+10. **同一人正反面OCR姓名必须一致**，如果发现不一致则标记 name_conflict: true
+11. **被告医院名称必须提取完整全称**，不得省略"市/州/县/区"等行政区划词
+12. **如有多家医院出现**，需区分哪一家是被诉医院（被告），哪些是转院/首诊/会诊医院
+
+{case_specific_note}
 
 ### 一、原告信息（数组，支持多个原告）
 从身份证OCR原文中提取所有原告（每个人正反面信息合并为一条）:
@@ -437,11 +527,17 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
 - patient_age: 患者年龄
 
 ### 三、被告信息
-- defendant_name: 被告医院全称
+- defendant_name: 被告医院全称（必须完整，不得省略行政区划词如"市""县""区"）
 - legal_representative: 法定代表人姓名
 - credit_code: 统一社会信用代码
 - defendant_address: 医院地址
 - defendant_phone: 医院电话
+
+### 三-B、其他医院（可选，当存在多家医院时）
+- other_hospitals: 数组，每项包含：
+  - name: 医院全称
+  - role: 与本案关系（"首诊医院"/"转入医院"/"会诊医院"/"其他"）
+  - visit_date: 就诊日期（如有）
 
 ### 四、入院信息（用于第1段事实与理由）
 - admission_reason: 入院原因/主诉
@@ -461,16 +557,24 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
 
 ### 七、鉴定信息（可选）
 - has_appraisal: true/false
-- appraisal_details: {{ appraisal_org, appraisal_date, report_no, cause_of_death(死亡案件), disability_level(伤残案件), causation, fault_degree }}
+- appraisal_details: {{ appraisal_org, appraisal_org_full_name, appraisal_date, report_no, {appraisal_note}, causation, appraisal_conclusion_original, appraiser_names, appraiser_license_nos }}
+  - appraisal_org_full_name: 鉴定机构完整全称（不得简写）
+  - appraisal_conclusion_original: 鉴定意见原文（逐字复制，不得改写或概括）
+  - appraiser_names: 鉴定人姓名列表（数组）
+  - appraiser_license_nos: 鉴定人执业证号列表（数组）
 
 ### 八、医务人员资质（可选）
 - has_staff_issue: true/false
-- staff_details: {{ staff_name, issue_type, issue_description }}
-
-### 九、死亡信息（仅死亡案件）
-- death_date: 死亡日期
-- death_diagnosis: 完整死亡诊断（重要：必须从住院病历或尸检报告/司法鉴定意见书中提取完整的"死亡诊断"，通常是编号列举的多项诊断，如"①重度肺动脉高压；②急性右心衰竭；③..."格式。不要使用死亡证明书上的简略"死亡原因"，死亡证明书只有简略死因，不是完整的死亡诊断。必须完整列出所有项，不要遗漏。）
-
+- staff_details: {{
+    staff_name: 涉事医务人员姓名,
+    staff_department: 科室,
+    staff_license_no: 执业证号,
+    staff_scope: 注册执业范围,
+    issue_type: 资质问题类型（无证执业/超范围执业/注册过期/未注册/其他）,
+    issue_description: 过错描述,
+    actual_operation: 实际施行操作（与执业范围对比）
+  }}
+{death_section}
 ### 十、结案信息
 - court_name: 受理法院名称
 - complaint_signer: 具状人签名（多位原告用"、"分隔）
@@ -488,7 +592,7 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
                 {
                     "role": "system",
                     "content": (
-                        "你是一个专业的医疗损害案件法律文书信息提取助手。"
+                        f"你是一个专业的{case_type_desc}案件法律文书信息提取助手。"
                         "你必须从OCR原文中仔细提取所有信息，不要遗漏。"
                         "特别注意：\n"
                         "1. 身份证OCR原文中包含姓名、性别、民族、出生、住址、身份证号，必须完整提取\n"
@@ -496,9 +600,15 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
                         "3. 被告医院的完整名称必须完整提取，不能简写为'医院'\n"
                         "4. 病历材料中的入院日期、主诉、诊断必须准确提取\n"
                         "5. 提取所有出现的原告（通常4人左右），不要遗漏\n"
-                        "6. 死亡诊断必须从住院病历或尸检报告/司法鉴定意见书中提取完整的编号列举式死亡诊断，"
-                        "不要从死亡证明书上提取简略死因\n"
-                        "严格按照要求的JSON结构返回，只输出JSON，不添加任何解释。"
+                        + (
+                            "6. 死亡诊断必须从住院病历或尸检报告/司法鉴定意见书中提取完整的编号列举式死亡诊断，"
+                            "不要从死亡证明书上提取简略死因\n"
+                            if case_type == "death" else
+                            "6. 如有Apgar评分，必须逐项完整提取（1分钟/5分钟/10分钟各项得分）\n"
+                            if case_type == "neonatal" else
+                            ""
+                        )
+                        + "严格按照要求的JSON结构返回，只输出JSON，不添加任何解释。"
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -600,6 +710,18 @@ def _generate_facts_paragraph(
         death_diag = extracted_data.get("death_diagnosis", "")
         if death_date:
             context_parts.append(f"【死亡信息】死亡日期：{death_date}，死亡诊断：{death_diag}")
+        # 鉴定结论原文注入（帮助段落2正确描述鉴定结果，尤其是尸检/死因鉴定）
+        appraisal = extracted_data.get("appraisal_details", {})
+        conclusion_original = appraisal.get("appraisal_conclusion_original", "")
+        if conclusion_original:
+            context_parts.append(f"【鉴定结论原文（请逐字引用，不要改写）】{conclusion_original}")
+        # 其他医院信息
+        other_hospitals = extracted_data.get("other_hospitals", [])
+        if other_hospitals:
+            hospitals_text = "；".join(
+                f"{h.get('name', '')}（{h.get('role', '其他')}）" for h in other_hospitals
+            )
+            context_parts.append(f"【其他就诊医院】{hospitals_text}")
 
     elif section_id == "paragraph_3":
         transfer = extracted_data.get("transfer_details", {})
@@ -618,7 +740,7 @@ def _generate_facts_paragraph(
 
     context = "\n".join(context_parts)
 
-    case_type_desc = "死亡" if case_type == "death" else "伤残"
+    case_type_desc = "死亡" if case_type == "death" else "新生儿损害" if case_type == "neonatal" else "伤残"
     minor_note = "（注意：患者为未成年人）" if is_minor else ""
 
     try:
@@ -672,11 +794,20 @@ def _generate_conclusion(extracted_data: dict, case_type: str) -> str:
             f"因此，为维护原告的合法权益，特根据《中华人民共和国民法典》"
             f"《中华人民共和国民事诉讼法》等有关规定将本案诉至人民法院，望贵院依法裁判。"
         )
-    else:
+    elif case_type == "neonatal":
+        return (
+            f"综上所述，被告{defendant_name}在为患儿{patient_name}提供诊疗服务过程中，"
+            f"未尽到注意及相应的诊疗义务，违反诊疗常规、疏忽大意，"
+            f"并由此造成了新生儿遭受严重损害的后果，"
+            f"给原告及其家庭造成了巨大的物质损害及带来了极大的精神痛苦。"
+            f"因此，为维护原告的合法权益，特根据《中华人民共和国民法典》"
+            f"《中华人民共和国民事诉讼法》等有关规定将本案诉至人民法院，望贵院依法裁判。"
+        )
+    else:  # injury
         return (
             f"综上所述，被告{defendant_name}在为患者{patient_name}提供诊疗服务过程中，"
             f"未尽到注意及相应的诊疗义务，违反诊疗常规、疏忽大意，"
-            f"并由此造成了严重的损害后果，"
+            f"并由此造成了患者伤残的严重损害后果，"
             f"给原告及其家庭造成了巨大的物质损害及带来了极大的精神痛苦。"
             f"因此，为维护原告的合法权益，特根据《中华人民共和国民法典》"
             f"《中华人民共和国民事诉讼法》等有关规定将本案诉至人民法院，望贵院依法裁判。"
@@ -773,10 +904,10 @@ def _direct_extract_death_diagnosis(materials: list) -> str | None:
 
     策略：
     1. 按类别优先级（鉴定报告 > 病历 > 死亡证明）查找
-    2. 在OCR文本中搜索"死亡诊断"或"死亡原因"标签
+    2. 在OCR文本中搜索多种诊断标签
     3. 取标签后的编号列举式诊断原文（如 ①xxx；②xxx；③xxx）
-    4. 处理OCR跨页断裂：页码/页眉混入编号项时，丢弃污染部分，
-       并在页码后面查找残留的诊断项文本（如"凝血功能障碍"）
+    4. 支持段落式、表格式结论
+    5. 处理OCR跨页断裂
     """
     import re as _re
 
@@ -792,6 +923,27 @@ def _direct_extract_death_diagnosis(materials: list) -> str | None:
     # 匹配中文医学诊断名：含中文、括号、数字、加号等
     _DIAG_CONTENT = r'[\u4e00-\u9fff\uff08\uff09\(\)0-9a-zA-Z+＋\-－%％Ⅰ-ⅢⅣⅤ]'
 
+    # 扩展的诊断标签匹配模式（按优先级排序）
+    _DIAG_LABELS = [
+        r'死亡诊断意见[：:]\s*',
+        r'死亡诊断[：:]\s*',
+        r'尸检诊断[：:]\s*',
+        r'解剖诊断[：:]\s*',
+        r'病理诊断[：:]\s*',
+        r'死因分析[：:]\s*',
+        r'死亡原因分析[：:]\s*',
+        r'死亡原因[：:]\s*',
+        r'鉴定意见[：:]\s*',
+        r'鉴定结论[：:]\s*',
+        r'检验结果[：:]\s*',
+    ]
+
+    # 出院诊断关键词（用于兜底提取，仅匹配含"死亡/衰竭"的条目）
+    _DISCHARGE_DIAG_LABEL = r'出院诊断[：:]\s*'
+    _DEATH_KEYWORDS = re.compile(
+        r'死亡|衰竭|濒死|无效|心跳骤停|呼吸骤停|循环衰竭|多器官功能衰竭|肺栓塞'
+    )
+
     for mat in sorted_mats:
         ocr_text = (mat.ocr_text or "").strip()
         cat = mat.effective_category or ""
@@ -800,13 +952,14 @@ def _direct_extract_death_diagnosis(materials: list) -> str | None:
         if cat not in _DEATH_DIAG_PRIORITY_CATEGORIES:
             continue
 
-        # 搜索"死亡诊断"标签
-        match = _re.search(r'死亡诊断[：:]\s*', ocr_text)
+        # 按优先级搜索多种诊断标签
+        match = None
+        for label_pattern in _DIAG_LABELS:
+            match = _re.search(label_pattern, ocr_text)
+            if match:
+                break
         if not match:
-            # 退而搜索"死亡原因"（死亡证明书上用的标签）
-            match = _re.search(r'死亡原因[：:]\s*', ocr_text)
-            if not match:
-                continue
+            continue
 
         start_pos = match.end()
         # 取标签后最多800字符（足够覆盖跨页断裂的场景）
@@ -880,7 +1033,48 @@ def _direct_extract_death_diagnosis(materials: list) -> str | None:
             )
             return result
 
-        # 如果没有编号格式，取标签后到句号/换行的整段文本
+        # 尝试数字编号格式：1.xxx；2.xxx；3.xxx
+        num_items = []
+        for m in _re.finditer(r'(\d{1,2})[.、．]\s*([^\n；;1-9]+)', tail):
+            num = int(m.group(1))
+            content = m.group(2).strip().rstrip('；;，,。．.')
+            if num > 15:  # 不太可能是诊断编号
+                continue
+            if _re.search(r'[第]\d+页|病鉴字|法鉴中心|共\d+页|[A-Z]\d{4,}|报告单', content):
+                continue
+            num_items.append((num, content))
+        # 按序号排序并检查连续性
+        if num_items:
+            num_items.sort(key=lambda x: x[0])
+            consecutive = True
+            for i in range(1, len(num_items)):
+                if num_items[i][0] != num_items[i-1][0] + 1:
+                    consecutive = False
+                    break
+            if consecutive and len(num_items) >= 2:
+                result = '；'.join(f"{n}.{c}" for n, c in num_items)
+                logger.info(
+                    f"Direct extracted death_diagnosis from '{mat.original_filename}' "
+                    f"({cat}): numbered format, {len(num_items)} items"
+                )
+                return result
+
+        # 尝试分号/句号分隔的段落式结论
+        # 典型模式：多个诊断用分号连接的一段文字
+        paragraph_match = _re.search(
+            r'((?:(?:[\u4e00-\u9fff()][\u4e00-\u9fff()0-9a-zA-Z+＋\-－%％Ⅰ-ⅢⅣⅤ]{2,30})[；;]\s*){2,8}'
+            r'[\u4e00-\u9fff()][\u4e00-\u9fff()0-9a-zA-Z+＋\-－%％Ⅰ-ⅢⅣⅤ]{2,30})[。．\.]?',
+            tail,
+        )
+        if paragraph_match:
+            result = paragraph_match.group(1)
+            logger.info(
+                f"Direct extracted death_diagnosis from '{mat.original_filename}' "
+                f"({cat}): paragraph format"
+            )
+            return result
+
+        # 最后兜底：取标签后到句号/换行的整段文本
         simple_match = _re.search(r'[^。\n]{5,200}[。．\.]?', tail)
         if simple_match:
             result = simple_match.group().rstrip('。．.')
@@ -890,6 +1084,40 @@ def _direct_extract_death_diagnosis(materials: list) -> str | None:
             )
             return result
 
+    # ── 兜底策略：从"出院诊断"中提取含"死亡/衰竭"等关键词的条目 ──
+    # 当以上所有标签都没找到死亡诊断时，尝试从出院诊断中筛选
+    for mat in sorted_mats:
+        ocr_text = (mat.ocr_text or "").strip()
+        cat = mat.effective_category or ""
+        if cat not in ("medical_record", "death_certificate"):
+            continue
+
+        match = _re.search(_DISCHARGE_DIAG_LABEL, ocr_text)
+        if not match:
+            continue
+
+        start_pos = match.end()
+        tail = ocr_text[start_pos:start_pos + 600]
+
+        # 提取带圈/数字编号的诊断条目
+        death_items = []
+        for m in _re.finditer(r'[①②③④⑤⑥⑦⑧⑨⑩]?([\u4e00-\u9fff()][\u4e00-\u9fff()0-9a-zA-Z+＋\-－%％Ⅰ-ⅢⅣⅤ]{2,40})', tail):
+            item_text = m.group(1)
+            if _DEATH_KEYWORDS.search(item_text):
+                death_items.append(item_text)
+            # 最多检查 15 项后停止
+            if len(death_items) >= 5:
+                break
+
+        if death_items:
+            result = '；'.join(death_items)
+            logger.info(
+                f"Direct extracted death_diagnosis from discharge diagnosis in "
+                f"'{mat.original_filename}' ({cat}): {len(death_items)} items: {result[:100]}"
+            )
+            return result
+
+    logger.warning("Death diagnosis not found in any material — will be marked as missing")
     return None
 
 
@@ -1018,3 +1246,311 @@ def _direct_extract_defendant_info(materials: list) -> dict | None:
         return result
 
     return None
+
+
+# ──────────────────────────────────────────────────────────────
+# Step 1.7: 鉴定结论定向提取
+# ──────────────────────────────────────────────────────────────
+
+def _direct_extract_appraisal_conclusion(materials: list) -> dict | None:
+    """直接从OCR原文中定向提取鉴定结论原文、鉴定人信息
+
+    策略：
+    1. 从 appraisal 类别的材料中提取
+    2. 搜索鉴定意见/鉴定结论标签
+    3. 提取鉴定人姓名和执业证号
+    """
+    import re as _re
+
+    result = {}
+
+    for mat in materials:
+        if (mat.effective_category or "") != "appraisal":
+            continue
+        ocr_text = (mat.ocr_text or "").strip()
+        if not ocr_text:
+            continue
+
+        # ── 提取鉴定意见原文 ──
+        # 多种标签匹配
+        for label in [
+            r'鉴定意见[：:]\s*',
+            r'鉴定结论[：:]\s*',
+            r'分析说明[：:]\s*',
+            r'检验结果[：:]\s*',
+        ]:
+            match = _re.search(label, ocr_text)
+            if match:
+                # 取标签后最多1200字符
+                tail = ocr_text[match.end():match.end() + 1200]
+                # 去除页码污染
+                tail = _re.sub(r'第\d+页共\d+页', '', tail)
+                # 截取到下一个大段落标记（"四、"、"五、" 等）
+                section_match = _re.search(r'[四五六七八九十]+、', tail)
+                if section_match:
+                    tail = tail[:section_match.start()]
+                if len(tail.strip()) > 10:
+                    result["appraisal_conclusion_original"] = tail.strip()
+                    break
+
+        # ── 提取鉴定人姓名和执业证号 ──
+        # 常见格式：鉴定人：张三 李四 / 鉴定人：张三（证号XXXX）李四（证号XXXX）
+        appraiser_section = _re.search(
+            r'(?:鉴定人|司法鉴定人)[：:]\s*(.*?)(?:\n\n|第\d+页|$)',
+            ocr_text,
+            _re.DOTALL,
+        )
+        if appraiser_section:
+            section_text = appraiser_section.group(1).strip()
+            names = []
+            license_nos = []
+            # 匹配: 张三（证号XXXX）/ 张三(证号XXXX)
+            for m in _re.finditer(
+                r'([\u4e00-\u9fff]{2,4})[（(]?\s*(?:证号|执业证号|编号)[：:]*\s*([A-Z0-9]+)[）)]?',
+                section_text,
+            ):
+                names.append(m.group(1))
+                license_nos.append(m.group(2))
+            # 如果没找到带证号的格式，尝试只有姓名
+            if not names:
+                for m in _re.finditer(r'([\u4e00-\u9fff]{2,4})', section_text):
+                    name = m.group(1)
+                    if name not in ("鉴定人", "司法", "执业", "证号") and name not in names:
+                        names.append(name)
+
+            if names:
+                result["appraiser_names"] = names
+            if license_nos:
+                result["appraiser_license_nos"] = license_nos
+
+        # ── 提取鉴定机构全称 ──
+        org_match = _re.search(
+            r'([\u4e00-\u9fff]{2,15}(?:司法鉴定中心|司法鉴定所|法医鉴定中心|鉴定中心|鉴定所))',
+            ocr_text,
+        )
+        if org_match:
+            result["appraisal_org_full_name"] = org_match.group(1)
+
+        if result:
+            logger.info(f"Direct extracted appraisal_conclusion: {list(result.keys())}")
+            return result
+
+    return None
+
+
+# ──────────────────────────────────────────────────────────────
+# Step 1.8: 医务人员资质定向提取
+# ──────────────────────────────────────────────────────────────
+
+def _direct_extract_staff_qualification(materials: list) -> dict | None:
+    """直接从OCR原文中定向提取医务人员资质问题
+
+    策略：
+    1. 从 identity_defendant 和 medical_record 类别中搜索
+    2. 匹配执业证/资格证/注册信息/超范围执业等
+    """
+    import re as _re
+
+    result = {}
+
+    for mat in materials:
+        cat = mat.effective_category or ""
+        if cat not in ("identity_defendant", "medical_record"):
+            continue
+        ocr_text = (mat.ocr_text or "").strip()
+        if not ocr_text:
+            continue
+
+        # 搜索医务人员姓名
+        staff_names = []
+        for m in _re.finditer(
+            r'(?:经治医师|主治医师|住院医师|手术医师|麻醉医师|主刀医师|管床医师|接诊医师)[：:]\s*([\u4e00-\u9fff]{2,4})',
+            ocr_text,
+        ):
+            staff_names.append(m.group(1))
+
+        # 搜索执业资质信息
+        has_qualification_issue = False
+        issue_type = ""
+        if _re.search(r'无证执业|未取得.*执业资格|未注册|执业证.*过期|超范围执业', ocr_text):
+            has_qualification_issue = True
+            if _re.search(r'无证执业|未取得.*执业资格', ocr_text):
+                issue_type = "无证执业"
+            elif _re.search(r'未注册', ocr_text):
+                issue_type = "未注册"
+            elif _re.search(r'执业证.*过期', ocr_text):
+                issue_type = "注册过期"
+            elif _re.search(r'超范围执业', ocr_text):
+                issue_type = "超范围执业"
+
+        # 搜索执业证号
+        license_nos = []
+        for m in _re.finditer(r'执业证号[：:]\s*(\d{10,20})', ocr_text):
+            license_nos.append(m.group(1))
+
+        # 搜索执业范围
+        scope_match = _re.search(r'执业范围[：:]\s*([\u4e00-\u9fff]{2,20})', ocr_text)
+
+        if staff_names:
+            result["staff_name"] = staff_names[0]  # 取第一个涉事人员
+        if has_qualification_issue:
+            result["issue_type"] = issue_type
+            result["has_staff_issue"] = True
+        if license_nos:
+            result["staff_license_no"] = license_nos[0]
+        if scope_match:
+            result["staff_scope"] = scope_match.group(1)
+
+        if result:
+            logger.info(f"Direct extracted staff_qualification: {result}")
+            return result
+
+    return None
+
+def _validate_extracted_data(data: dict, case_type: str) -> dict:
+    """校验并修正 LLM 提取结果，记录问题供后续参考"""
+    issues = []
+
+    # ── 1. 身份证号格式校验 ──
+    for i, plaintiff in enumerate(data.get("plaintiffs", [])):
+        id_num = plaintiff.get("id_number", "")
+        if id_num and not re.match(r"^\d{17}[\dXx]$", id_num):
+            issues.append(f"原告{i+1}身份证号格式错误: {id_num}")
+            plaintiff["id_number"] = None  # 清除无效值
+
+        # 身份证姓名一致性
+        if plaintiff.get("name_conflict"):
+            issues.append(f"原告{i+1}({plaintiff.get('name', '?')})正反面姓名不一致")
+
+    # ── 2. 被告医院名称完整性校验 ──
+    defendant_name = data.get("defendant_name", "")
+    if defendant_name:
+        if len(defendant_name) < 4:
+            issues.append(f"被告名称疑似不完整（过短）: {defendant_name}")
+        if not any(kw in defendant_name for kw in [
+            "医院", "卫生院", "诊所", "保健院", "中心", "医务室", "门诊", "卫生室",
+        ]):
+            issues.append(f"被告名称缺少医疗机构关键词: {defendant_name}")
+    else:
+        issues.append("未提取到被告医院名称")
+
+    # ── 3. 电话号码格式校验 ──
+    for phone_field in ["defendant_phone", "phone"]:
+        phone = data.get(phone_field, "")
+        if phone and not re.match(r"^[\d\-+()]{6,15}$", phone):
+            issues.append(f"电话号码格式异常: {phone}")
+
+    # ── 4. 日期格式统一化（覆盖所有日期字段） ──
+    _DATE_FIELDS = [
+        "admission_date", "death_date", "discharge_date",
+        "transfer_date", "surgery_date", "icu_admission_date",
+    ]
+    for date_field in _DATE_FIELDS:
+        val = data.get(date_field, "")
+        if val:
+            normalized = _normalize_date(val)
+            if normalized != val:
+                data[date_field] = normalized
+
+    # ── 5. 死亡案件必填校验 ──
+    if case_type == "death":
+        if not data.get("death_date"):
+            issues.append("死亡案件缺少死亡日期")
+        if not data.get("death_diagnosis"):
+            issues.append("死亡案件缺少死亡诊断")
+
+    # ── 6. 新生儿案件必填校验 ──
+    if case_type == "neonatal":
+        # 新生儿固定 is_minor
+        data["is_minor"] = True
+
+    # ── 7. 关键日期字段标准化（嵌套对象中的日期） ──
+    appraisal = data.get("appraisal_details", {})
+    if appraisal:
+        for key in ["appraisal_date"]:
+            val = appraisal.get(key, "")
+            if val:
+                appraisal[key] = _normalize_date(val)
+
+    # 诊疗时间线中的日期标准化
+    for event_key in ["treatment_events", "timeline_events"]:
+        events = data.get(event_key, [])
+        if isinstance(events, list):
+            for event in events:
+                if isinstance(event, dict):
+                    for dkey in ["date", "start_date", "end_date"]:
+                        val = event.get(dkey, "")
+                        if val:
+                            event[dkey] = _normalize_date(val)
+
+    if issues:
+        logger.warning(f"Extracted data validation issues: {issues}")
+    data["_validation_issues"] = issues
+    return data
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 多家医院被告识别
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _resolve_defendant_hospital(data: dict, materials: list) -> dict:
+    """从提取结果和材料中确定被告医院，解决多家医院混淆问题
+
+    优先级：
+    1. identity_defendant 类别的 OCR 文本中提取的医院名 → 最高优先级
+    2. 被告营业执照/执业许可证上的机构名
+    3. 所有材料中出现频率最高的医院名
+    4. 如果仍然无法确定 → 标记为"待确认"
+    """
+    defendant_name = data.get("defendant_name", "")
+    other_hospitals = data.get("other_hospitals", [])
+
+    # 如果已经有被告名称且看起来完整，直接返回
+    if defendant_name and len(defendant_name) >= 4 and "医院" in defendant_name:
+        return data
+
+    # 尝试从 identity_defendant 材料中直接提取
+    direct_result = _direct_extract_defendant_info(materials)
+    if direct_result and direct_result.get("defendant_name"):
+        if not defendant_name or len(direct_result["defendant_name"]) > len(defendant_name):
+            # 直接提取的更完整，替换
+            if defendant_name and defendant_name != direct_result["defendant_name"]:
+                # 原来的可能不是被告，移到 other_hospitals
+                other_hospitals.append({
+                    "name": defendant_name,
+                    "role": "待确认",
+                })
+            data["defendant_name"] = direct_result["defendant_name"]
+        # 同时补充法定代表人等信息
+        for key in ["legal_representative", "credit_code", "defendant_address"]:
+            if direct_result.get(key) and not data.get(key):
+                data[key] = direct_result[key]
+
+    # 如果还没有被告名称，统计材料中出现频率最高的医院名
+    if not data.get("defendant_name"):
+        import collections
+        hospital_freq = collections.Counter()
+        for mat in materials:
+            ocr_text = (mat.ocr_text or "")
+            for m in re.finditer(r"([\u4e00-\u9fff]{2,8}(?:医院|卫生院|保健院|中心))", ocr_text):
+                name = m.group(1)
+                # 跳过常见非被告词
+                if name in ("被告医院", "原告医院", "诊疗医院"):
+                    continue
+                hospital_freq[name] += 1
+
+        if hospital_freq:
+            best = hospital_freq.most_common(1)[0]
+            data["defendant_name"] = best[0]
+            logger.info(f"Defendant resolved by frequency: {best[0]} (appeared {best[1]} times)")
+
+    # 验证被告名称完整性
+    if data.get("defendant_name") and len(data["defendant_name"]) < 4:
+        data["_defendant_name_needs_confirmation"] = True
+        logger.warning(f"Defendant name may be incomplete: {data['defendant_name']}")
+
+    # 保存 other_hospitals
+    if other_hospitals:
+        data["other_hospitals"] = other_hospitals
+
+    return data

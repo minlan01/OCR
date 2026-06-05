@@ -41,12 +41,16 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         "营业执照", "执业许可证", "信用代码",
         "统一社会信用代码", "法定代表人", "事业单位",
         "医疗机构执业许可证", "医疗机构登记",
+        "执业医师", "执业证", "资格证", "医师资格",
+        "护士执业", "执业范围", "卫生专业技术", "注册信息",
+        "医务人员资质", "医师执业证",
     ],
     # ─── 死亡证明（死亡案件） ───
     "death_certificate": [
         "死亡证明", "居民死亡", "死亡医学证明",
-        "死亡诊断", "火化证明", "尸检报告",
-        "死亡推断",
+        "死亡诊断", "火化证明",
+        "死亡推断", "死亡通知书",
+        # 注意：尸检报告/尸体检验 不在此类，归入 appraisal（司法鉴定）
     ],
     # ─── 病历资料 ───
     "medical_record": [
@@ -60,7 +64,8 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "appraisal": [
         "司法鉴定", "鉴定意见书", "伤残等级", "因果关系",
         "参与度", "鉴定意见", "鉴定书", "过错认定", "过错参与度",
-        "法医鉴定",
+        "法医鉴定", "尸体检验", "尸检报告", "尸体解剖",
+        "死因鉴定", "解剖报告", "病理鉴定", "毒物鉴定",
     ],
     # ─── 医疗费用及相关票据 ───
     "fee_receipt": [
@@ -174,6 +179,16 @@ def _get_llm_client() -> OpenAI:
 def _is_death_case(case_type: str) -> bool:
     """判断是否为死亡案件"""
     return case_type in ("death", "death_adult", "death_minor")
+
+
+def _get_case_type_desc(case_type: str) -> str:
+    """获取案件类型描述文字"""
+    if case_type in ("death", "death_adult", "death_minor"):
+        return "医疗损害（死亡）"
+    elif case_type in ("neonatal", "neonatal_adult", "neonatal_minor"):
+        return "医疗损害（新生儿）"
+    else:
+        return "医疗损害（伤残）"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -312,18 +327,34 @@ def _classify_by_llm(text: str, case_type: str) -> tuple[str, float]:
 - identity_id_card（原告身份证）: 文档主要内容为"居民身份证"，正面有姓名/性别/民族/出生/住址/身份证号，背面有签发机关/有效期限。注意：仅在文档本身是身份证时才选此项，其他文档中提到"身份证号"不算
 - identity_hukou（户口本）: 文档主要内容为"户口""常住人口登记卡"等户口登记信息
 - identity_other（其他身份信息）: 出生医学证明、监护证明等非身份证/户口本的身份证明文件
-- identity_defendant（被告信息）: 医疗机构的营业执照、执业许可证等主体资格证明文件
-- death_certificate（死亡证明）: 文档主要内容为"死亡医学证明""居民死亡证明""火化证明"等（仅死亡案件）
+- identity_defendant（被告信息）: 医疗机构的营业执照、执业许可证等主体资格证明文件，以及医务人员执业资质文件
+- death_certificate（死亡证明）: 文档主要内容为"死亡医学证明""居民死亡证明""火化证明"等（仅死亡案件）。注意：尸检报告/尸体检验/鉴定意见书不属于此类，归入appraisal
 - medical_record（病历资料）: 入院/出院记录、手术记录、检查报告、诊断证明、病程记录等医疗文书
-- appraisal（司法鉴定）: 司法鉴定意见书、伤残等级鉴定、因果关系鉴定等
+- appraisal（司法鉴定）: 司法鉴定意见书、伤残等级鉴定、因果关系鉴定、尸体检验/尸检报告、死因鉴定等
 - fee_receipt（费用票据）: 医疗费发票、费用清单、收费收据、结算单等财务凭证
 """
+    # 新生儿案件的分类额外提示
+    if case_type == "neonatal":
+        classification_guide += (
+            "\n【新生儿案件特别提示】\n"
+            "- 出生医学证明（含新生儿姓名、出生体重、孕周等）→ identity_other\n"
+            "- 分娩记录、产程记录 → medical_record\n"
+            "- 新生儿窒息复苏记录 → medical_record\n"
+            "- Apgar评分表、新生儿筛查报告 → medical_record\n"
+        )
+    else:
+        classification_guide += (
+            "\n【鉴定与资质文件分类提示】\n"
+            "- 尸检报告/尸体检验/尸体解剖/死因鉴定 → appraisal（不是death_certificate！）\n"
+            "- 执业医师证/资格证/注册信息/执业范围 → identity_defendant\n"
+            "- 鉴定意见书中的鉴定人信息 → appraisal（随鉴定书分类）\n"
+        )
 
     prompt = (
         f"请仔细阅读以下文档的完整内容，判断它实际属于哪个证据类别。\n"
         f"只能从以下选项中选择一个：\n{category_desc}\n\n"
         f"{classification_guide}\n"
-        f"案件类型：{'医疗损害（死亡）' if _is_death_case(case_type) else '医疗损害（伤残）'}\n\n"
+        f"案件类型：{_get_case_type_desc(case_type)}\n\n"
         f"文档内容：\n{text[:3000]}\n\n"
         f"请返回JSON格式：{{\"category\": \"类别代码\", \"confidence\": 0.0-1.0的置信度}}\n"
         f"只返回JSON，不要额外说明。"
@@ -530,7 +561,7 @@ def _extract_by_llm(text: str, case_type: str) -> dict[str, Any]:
     """调用 LLM 进行四层结构化提取"""
     client = _get_llm_client()
 
-    case_type_desc = "医疗损害（死亡）" if _is_death_case(case_type) else "医疗损害（伤残）"
+    case_type_desc = _get_case_type_desc(case_type)
 
     prompt = (
         f"你是一个医疗损害案件证据分析助手。请严格按照以下四层顺序提取信息。\n"
@@ -779,14 +810,14 @@ def _classify_and_extract_by_llm(text: str, case_type: str) -> dict[str, Any]:
     client = _get_llm_client()
 
     available_categories = list(CATEGORY_ORDER)
-    if not _is_death_case(case_type):
+    if case_type not in ("death", "death_adult", "death_minor"):
         available_categories = [c for c in available_categories if c != "death_certificate"]
 
     category_desc = "\n".join(
         f"- {cat}: {CATEGORY_NAMES.get(cat, cat)}" for cat in available_categories
     )
 
-    case_type_desc = "医疗损害（死亡）" if _is_death_case(case_type) else "医疗损害（伤残）"
+    case_type_desc = _get_case_type_desc(case_type)
 
     prompt = (
         f"你是一个医疗损害案件证据分析助手。请同时完成以下两个任务：\n\n"
@@ -962,14 +993,14 @@ def _classify_and_extract_batch_by_llm(
     client = _get_llm_client()
 
     available_categories = list(CATEGORY_ORDER)
-    if not _is_death_case(case_type):
+    if case_type not in ("death", "death_adult", "death_minor"):
         available_categories = [c for c in available_categories if c != "death_certificate"]
 
     category_desc = "\n".join(
         f"- {cat}: {CATEGORY_NAMES.get(cat, cat)}" for cat in available_categories
     )
 
-    case_type_desc = "医疗损害（死亡）" if _is_death_case(case_type) else "医疗损害（伤残）"
+    case_type_desc = _get_case_type_desc(case_type)
 
     docs_text = "\n\n---\n\n".join(
         f"[文档{i+1}]:\n{text[:2000]}" for i, (_, text) in enumerate(items)

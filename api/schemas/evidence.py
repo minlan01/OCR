@@ -120,7 +120,7 @@ class UpdateCaseRequest(BaseModel):
                 raise ValueError(f"律师{i+1}姓名不能超过20个字符")
             # 验证电话格式（中国大陆手机号或座机）
             phone = lawyer["phone"].strip()
-            if not re.match(r"^1[3-9]\d{9}$|^0\d{2,3}-?\d{7,8}$", phone):
+            if not re.match(r"^1[3-9]\d{9}$|^0\d{2,3}-?\d{6,8}$", phone):
                 raise ValueError(f"律师{i+1}电话格式不正确（应为手机号或座机号）")
         return v
 
@@ -133,7 +133,7 @@ class UpdateCaseRequest(BaseModel):
         # 允许手机号、座机号、或"未知"
         if phone == "未知":
             return phone
-        if not re.match(r"^1[3-9]\d{9}$|^0\d{2,3}-?\d{7,8}$", phone):
+        if not re.match(r"^1[3-9]\d{9}$|^0\d{2,3}-?\d{6,8}$", phone):
             raise ValueError("电话格式不正确（应为手机号或座机号，如13800138000或010-12345678）")
         return phone
 

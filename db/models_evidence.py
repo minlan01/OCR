@@ -29,8 +29,8 @@ VALID_EVIDENCE_STATUSES = (
     "'draft','uploading','processing','catalog_ready',"
     "'analyzing','analysis_done','exporting','completed','failed'"
 )
-VALID_FILE_TYPES = "'pdf','image','docx','xlsx','other'"
-VALID_OCR_STATUSES = "'pending','processing','completed','failed','skipped'"
+VALID_FILE_TYPES = "'pdf','image','docx','xlsx','audio','other'"
+VALID_OCR_STATUSES = "'pending','processing','completed','failed','skipped','not_applicable'"
 
 
 class EvidenceCase(Base):

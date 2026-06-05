@@ -253,6 +253,8 @@ def _build_four_layer_item(
         "description": layer3.get("treatment_summary", material.catalog_description or ""),
         "fee_detail": material.fee_detail,
         "raw_extracted": extracted,
+        # OCR 原文（用于 word_generator 的正则补充提取）
+        "ocr_text": material.ocr_text or "",
     }
 
 

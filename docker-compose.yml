@@ -167,9 +167,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1G
         reservations:
-          memory: 256M
+          memory: 512M
     restart: unless-stopped
     networks:
       - scanstruct-net
@@ -189,6 +189,11 @@ services:
     environment:
       <<: *common-env
       STORAGE_BACKEND: minio
+      BAILIAN_OCR_MAX_CONCURRENT: ${BAILIAN_OCR_MAX_CONCURRENT:-10}
+      BAILIAN_TEXT_MAX_CONCURRENT: ${BAILIAN_TEXT_MAX_CONCURRENT:-5}
+      LLM_RATE_LIMITER_TEXT: ${LLM_RATE_LIMITER_TEXT:-5}
+      LLM_RATE_LIMITER_OCR: ${LLM_RATE_LIMITER_OCR:-10}
+      LLM_RATE_LIMITER_FLASH: ${LLM_RATE_LIMITER_FLASH:-15}
     depends_on:
       postgres:
         condition: service_healthy
@@ -196,6 +201,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    tmpfs:
+      - /tmp:size=128M
     deploy:
       resources:
         limits:

@@ -22,7 +22,13 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    const detail = body?.detail || `HTTP ${res.status}`
+    let detail = body?.detail || `HTTP ${res.status}`
+    // FastAPI 422 验证错误 detail 是数组，需提取 msg
+    if (Array.isArray(detail)) {
+      detail = detail.map((e: { msg?: string; message?: string }) => e.msg || e.message || JSON.stringify(e)).join('; ')
+    } else if (typeof detail === 'object') {
+      detail = (detail as { message?: string }).message || JSON.stringify(detail)
+    }
     throw new Error(detail)
   }
 

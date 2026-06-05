@@ -6,6 +6,7 @@
   - RPS 限速器: 控制每秒请求数，防止触发突发保护
   - 429 指数退避: 遇到限流自动等待重试
   - 备选模型回退: 限流时自动切换到备用模型
+  - 分布式信号量: 通过 Redis 控制跨 Worker 全局并发
 """
 from __future__ import annotations
 
@@ -271,6 +272,23 @@ class BailianOCREngine(BaseOCREngine):
                             f"Bailian OCR 429 限流 [{filename}] | model={model} | "
                             f"attempt={attempt+1}/{retry_max+1} | wait={wait}s"
                         )
+                        # 记录 429 到分布式限流器（用于自适应降级）
+                        try:
+                            from services.llm.rate_limiter import get_rate_limiter
+                            import asyncio as _aio
+                            _limiter = get_rate_limiter()
+                            try:
+                                loop = asyncio.get_event_loop()
+                                if loop.is_running():
+                                    asyncio.ensure_future(_limiter.record_429("ocr"))
+                                else:
+                                    loop.run_until_complete(_limiter.record_429("ocr"))
+                            except RuntimeError:
+                                loop = asyncio.new_event_loop()
+                                loop.run_until_complete(_limiter.record_429("ocr"))
+                                loop.close()
+                        except Exception:
+                            pass
                         if attempt < retry_max:
                             time.sleep(wait)
                             continue
@@ -349,9 +367,17 @@ class BailianOCREngine(BaseOCREngine):
             return None
 
     def recognize_batch(self, image_paths: list[Path]) -> list[list[dict]]:
+        # 使用分布式限流器的并发上限（而非本地 max_concurrent）
+        try:
+            from services.llm.rate_limiter import get_rate_limiter
+            limiter = get_rate_limiter()
+            effective_concurrent = limiter.get_limit("ocr")
+        except Exception:
+            effective_concurrent = self._max_concurrent
+
         results: list[list[dict]] = [[] for _ in image_paths]
 
-        with ThreadPoolExecutor(max_workers=self._max_concurrent) as pool:
+        with ThreadPoolExecutor(max_workers=effective_concurrent) as pool:
             future_to_idx = {
                 pool.submit(self.recognize, path): idx
                 for idx, path in enumerate(image_paths)

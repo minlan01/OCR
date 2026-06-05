@@ -6,10 +6,13 @@
 - OCR完成后立即进入分类+提取，不等其他材料
 - 合并分类+提取为一次LLM调用
 - 批量LLM调用（每批最多5个材料）
+- 临时文件及时清理，防止 /tmp 磁盘满
 """
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 import uuid
 from datetime import datetime, timezone
 
@@ -17,6 +20,40 @@ from loguru import logger
 
 from worker.celery_app import celery_app
 from config.settings import settings
+
+
+# ─── 临时文件清理 ────────────────────────────────────────────────────────────
+
+def _cleanup_temp_files(*paths: str) -> None:
+    """清理临时文件/目录（静默忽略错误）"""
+    for p in paths:
+        try:
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+            elif os.path.isfile(p):
+                os.unlink(p)
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temp file {p}: {e}")
+
+
+def _cleanup_tmp_dir() -> None:
+    """清理 /tmp 下的 OCR 临时目录和工作文件"""
+    import glob as _glob
+    tmp_dir = "/tmp"
+    try:
+        # 清理 OCR 工作目录
+        for d in _glob.glob(os.path.join(tmp_dir, "ocr_*")):
+            _cleanup_temp_files(d)
+        for d in _glob.glob(os.path.join(tmp_dir, "tmp*")):
+            # 只清理超过 1 小时的临时文件/目录（避免清理正在使用的）
+            try:
+                mtime = os.path.getmtime(d)
+                if (datetime.now().timestamp() - mtime) > 3600:
+                    _cleanup_temp_files(d)
+            except OSError:
+                pass
+    except Exception as e:
+        logger.warning(f"Failed to cleanup /tmp: {e}")
 
 
 def _create_worker_engine():
@@ -323,7 +360,7 @@ def _run_ocr_pipeline(case_id: str) -> dict:
                 db.add(step)
                 await db.flush()
 
-                # 获取待处理材料（包括之前失败的，允许重试）
+                # 获取待处理材料（包括之前失败的，允许重试；排除 audio 标记 not_applicable）
                 stmt = select(EvidenceMaterial).where(
                     EvidenceMaterial.evidence_case_id == case_uuid,
                     EvidenceMaterial.ocr_status.in_(("pending", "failed")),
@@ -359,6 +396,9 @@ def _run_ocr_pipeline(case_id: str) -> dict:
                 if step.started_at:
                     step.duration_ms = int((step.completed_at - step.started_at).total_seconds() * 1000)
                 await db.commit()
+
+                # 清理 OCR 临时文件
+                _cleanup_tmp_dir()
 
                 return summary
         finally:
@@ -404,6 +444,14 @@ def _ocr_single_material(material_id: str) -> dict:
                 try:
                     material.ocr_status = "processing"
                     await db.flush()
+
+                    # 跳过音频文件等不需要 OCR 的类型
+                    if material.file_type == "audio":
+                        material.ocr_status = "not_applicable"
+                        material.ocr_text = ""
+                        material.ocr_result = {"source_type": "audio", "note": "Audio file - OCR not applicable"}
+                        await db.commit()
+                        return {"success": True}
 
                     if material.minio_bucket and material.minio_key:
                         file_bytes = minio_client.download_bytes(

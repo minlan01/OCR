@@ -202,6 +202,8 @@ def _detect_file_type(filename: str) -> str:
         return "docx"
     if fn.endswith((".xlsx", ".xls")):
         return "xlsx"
+    if fn.endswith((".mp3", ".wav", ".m4a", ".amr", ".aac", ".flac", ".ogg")):
+        return "audio"
     return "other"
 
 
@@ -329,14 +331,14 @@ async def delete_case(
 
 
 @router.post("/cases/{case_id}/upload", response_model=list[MaterialResponse], status_code=201)
-@limiter.limit("120/minute")
+@limiter.limit("10/minute")
 async def upload_materials(
     request: Request,
     case_id: uuid.UUID,
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """批量上传证据材料（支持多文件）"""
+    """批量上传证据材料（支持多文件，大文件流式上传）"""
     case = await _get_case_or_404(case_id, db)
 
     if case.status in ("completed",):
@@ -348,6 +350,9 @@ async def upload_materials(
     if case.status == "draft":
         case.status = "uploading"
 
+    MULTIPART_THRESHOLD = 100 * 1024 * 1024  # 100MB 以上走流式
+    from services.storage.minio_client import minio_client
+
     uploaded = []
     for file in files:
         # 先检查 Content-Length 避免读取超大文件到内存
@@ -357,36 +362,99 @@ async def upload_materials(
                 detail=f"文件过大: {file.filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
             )
 
-        content = await file.read()
-        if len(content) > settings.max_upload_size:
-            raise HTTPException(
-                status_code=400,
-                detail=f"文件过大: {file.filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
-            )
-
         file_type = _detect_file_type(file.filename or "")
-        # 文件类型白名单校验
-        ALLOWED_TYPES = {"pdf", "image", "docx", "xlsx"}
+        # 文件类型白名单校验（含音频）
+        ALLOWED_TYPES = {"pdf", "image", "docx", "xlsx", "audio"}
         if file_type not in ALLOWED_TYPES:
             raise HTTPException(
                 status_code=400,
-                detail=f"不支持的文件类型: {file.filename}（仅支持 PDF/图片/Word/Excel）",
+                detail=f"不支持的文件类型: {file.filename}（仅支持 PDF/图片/Word/Excel/音频）",
+            )
+
+        # 扩展名校验（使用 settings.allowed_extensions）
+        ext = Path(file.filename or "").suffix.lower()
+        if ext not in settings.allowed_extensions and file_type not in ("image", "docx", "xlsx", "audio"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的文件扩展名: {ext}（允许: {', '.join(settings.allowed_extensions)}）",
             )
 
         original_filename = file.filename or "upload"
         minio_key = f"evidence/{case_id}/{uuid.uuid4()}_{quote(original_filename)}"
+        content_type = file.content_type or "application/octet-stream"
 
+        # 根据文件大小选择上传方式
+        file_size_actual: int
         try:
-            from services.storage.minio_client import minio_client
-            minio_client.upload_bytes(
-                bucket=EVIDENCE_MINIO_BUCKET,
-                object_key=minio_key,
-                data=content,
-                content_type=file.content_type or "application/octet-stream",
-            )
+            if file.size and file.size >= MULTIPART_THRESHOLD:
+                # 大文件：流式上传（内存恒定 = 一个分片大小）
+                # 先保存到临时文件，再 fput_object
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                    tmp_path = tmp.name
+                    while True:
+                        chunk = await file.read(50 * 1024 * 1024)  # 50MB chunks
+                        if not chunk:
+                            break
+                        tmp.write(chunk)
+                    file_size_actual = tmp.tell()
+
+                if file_size_actual > settings.max_upload_size:
+                    import os
+                    os.unlink(tmp_path)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
+                    )
+
+                try:
+                    minio_client.upload_file(
+                        bucket=EVIDENCE_MINIO_BUCKET,
+                        object_key=minio_key,
+                        file_path=tmp_path,
+                        content_type=content_type,
+                    )
+                finally:
+                    import os
+                    os.unlink(tmp_path)
+            elif file_type == "audio":
+                # 音频文件：读取到内存（通常不大），流式上传
+                content = await file.read()
+                file_size_actual = len(content)
+                if file_size_actual > settings.max_upload_size:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
+                    )
+                minio_client.upload_bytes(
+                    bucket=EVIDENCE_MINIO_BUCKET,
+                    object_key=minio_key,
+                    data=content,
+                    content_type=content_type,
+                )
+            else:
+                # 小文件：原有方式
+                content = await file.read()
+                file_size_actual = len(content)
+                if file_size_actual > settings.max_upload_size:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
+                    )
+                minio_client.upload_bytes(
+                    bucket=EVIDENCE_MINIO_BUCKET,
+                    object_key=minio_key,
+                    data=content,
+                    content_type=content_type,
+                )
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"MinIO upload failed for evidence case {case_id}: {e}")
+            logger.error(f"MinIO upload failed for evidence case {case_id}: {type(e).__name__}: {e}")
             raise HTTPException(status_code=500, detail="File storage failed")
+
+        # 音频文件 OCR 状态标记为 not_applicable
+        ocr_status = "not_applicable" if file_type == "audio" else "pending"
 
         material = EvidenceMaterial(
             evidence_case_id=case_id,
@@ -394,8 +462,8 @@ async def upload_materials(
             file_type=file_type,
             minio_bucket=EVIDENCE_MINIO_BUCKET,
             minio_key=minio_key,
-            file_size=len(content),
-            ocr_status="pending",
+            file_size=file_size_actual,
+            ocr_status=ocr_status,
         )
         db.add(material)
         await db.flush()
@@ -1079,7 +1147,8 @@ async def start_analysis(
 
     case = await _get_case_or_404(case_id, db)
 
-    if case.status not in ("catalog_ready", "analysis_done"):
+    # 允许 failed 状态重新分析
+    if case.status not in ("catalog_ready", "analysis_done", "failed"):
         if case.status == "analyzing":
             return ProcessResponse(
                 case_id=str(case_id),
@@ -1087,8 +1156,21 @@ async def start_analysis(
             )
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot analyze case with status: {case.status}. Need catalog_ready.",
+            detail=f"Cannot analyze case with status: {case.status}. Need catalog_ready or retry failed.",
         )
+
+    # failed 状态重新分析时，清理旧的分析步骤
+    if case.status == "failed":
+        from db.models_evidence import EvidenceStep
+        from sqlalchemy import delete as sql_delete
+        await db.execute(
+            sql_delete(EvidenceStep).where(
+                EvidenceStep.case_id == case_id,
+                EvidenceStep.step_name.in_(("analysis", "analyze")),
+            )
+        )
+        await db.flush()
+        logger.info(f"Cleaned up old analysis steps for failed case {case_id}")
 
     # 重新分析时，清理旧的导出文件（基于旧分析结果生成的文档已过期）
     _cleanup_all_exports(case)

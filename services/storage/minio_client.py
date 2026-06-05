@@ -1,10 +1,13 @@
 """
 MinIO 存储客户端
 管理文件上传、下载、删除、预签名 URL
+支持大文件流式分片上传 + 重试
 """
 from __future__ import annotations
 
 import io
+import os
+import time
 from typing import Optional
 
 from loguru import logger
@@ -16,6 +19,12 @@ from config.settings import settings
 
 class MinioClient:
     """MinIO 客户端封装"""
+
+    # 大文件分片阈值和分片大小
+    MULTIPART_THRESHOLD = 100 * 1024 * 1024   # 100MB 以上走分片
+    PART_SIZE = 50 * 1024 * 1024              # 每片 50MB
+    MAX_RETRIES = 3                            # 上传最大重试次数
+    RETRY_DELAYS = [1.0, 2.0, 4.0]            # 重试间隔（秒）
 
     def __init__(self):
         self._client: Optional[Minio] = None
@@ -64,6 +73,10 @@ class MinioClient:
             logger.error(f"Failed to create bucket {bucket_name}: {e}")
             raise
 
+    # ────────────────────────────────────────────
+    # 上传方法
+    # ────────────────────────────────────────────
+
     def upload_bytes(
         self,
         bucket: str,
@@ -71,20 +84,19 @@ class MinioClient:
         data: bytes,
         content_type: str = "application/octet-stream",
     ) -> int:
-        """上传字节数据到 MinIO，返回文件大小"""
-        try:
-            result = self.client.put_object(
+        """上传字节数据到 MinIO，返回文件大小（带重试）"""
+        return self._upload_with_retry(
+            lambda: self.client.put_object(
                 bucket_name=bucket,
                 object_name=object_key,
                 data=io.BytesIO(data),
                 length=len(data),
                 content_type=content_type,
-            )
-            logger.debug(f"Uploaded {object_key} to {bucket} ({len(data)} bytes)")
-            return len(data)
-        except S3Error as e:
-            logger.error(f"MinIO upload failed: {object_key} -> {bucket} | {e}")
-            raise
+            ),
+            bucket=bucket,
+            object_key=object_key,
+            size=len(data),
+        )
 
     def upload_file(
         self,
@@ -93,22 +105,111 @@ class MinioClient:
         file_path: str,
         content_type: str = "application/octet-stream",
     ) -> int:
-        """上传本地文件到 MinIO"""
-        import os
-
-        try:
-            file_size = os.path.getsize(file_path)
-            self.client.fput_object(
+        """上传本地文件到 MinIO（适合大文件，使用 fput_object 分片上传）"""
+        file_size = os.path.getsize(file_path)
+        return self._upload_with_retry(
+            lambda: self.client.fput_object(
                 bucket_name=bucket,
                 object_name=object_key,
                 file_path=file_path,
                 content_type=content_type,
+                part_size=self.PART_SIZE,  # 大文件自动分片
+            ),
+            bucket=bucket,
+            object_key=object_key,
+            size=file_size,
+        )
+
+    def upload_streaming(
+        self,
+        bucket: str,
+        object_key: str,
+        data_stream: io.IOBase,
+        content_type: str = "application/octet-stream",
+        known_size: Optional[int] = None,
+    ) -> int:
+        """流式上传到 MinIO，适合大文件（内存恒定）
+
+        Args:
+            data_stream: 可读的文件流对象
+            known_size: 已知的文件大小（如果不确定传 None，MinIO 会使用分片上传）
+        """
+        size = known_size
+        if size is None:
+            # 尝试获取流大小
+            try:
+                pos = data_stream.tell()
+                data_stream.seek(0, 2)  # seek to end
+                size = data_stream.tell()
+                data_stream.seek(pos)  # seek back
+            except (OSError, AttributeError):
+                size = -1  # 未知大小，MinIO 会走分片上传
+
+        def _do_upload():
+            self.client.put_object(
+                bucket_name=bucket,
+                object_name=object_key,
+                data=data_stream,
+                length=size if size > 0 else -1,  # -1 触发分片上传
+                content_type=content_type,
+                part_size=self.PART_SIZE if (size is None or size < 0 or size >= self.MULTIPART_THRESHOLD) else 0,
             )
-            logger.debug(f"Uploaded file {file_path} -> {bucket}/{object_key} ({file_size} bytes)")
-            return file_size
-        except S3Error as e:
-            logger.error(f"MinIO file upload failed: {file_path} -> {bucket} | {e}")
-            raise
+
+        return self._upload_with_retry(
+            _do_upload,
+            bucket=bucket,
+            object_key=object_key,
+            size=size if size and size > 0 else 0,
+        )
+
+    def _upload_with_retry(
+        self,
+        upload_fn,
+        bucket: str,
+        object_key: str,
+        size: int = 0,
+    ) -> int:
+        """带指数退避重试的上传封装
+
+        Args:
+            upload_fn: 执行上传的回调函数
+            bucket: 桶名
+            object_key: 对象键
+            size: 文件大小（用于日志）
+        Returns:
+            文件大小
+        """
+        last_error = None
+        for attempt in range(self.MAX_RETRIES + 1):
+            try:
+                import time as _time
+                start = _time.monotonic()
+                upload_fn()
+                elapsed = _time.monotonic() - start
+                logger.info(
+                    f"MinIO upload OK: {bucket}/{object_key} "
+                    f"({size:,} bytes, {elapsed:.1f}s, attempt {attempt + 1})"
+                )
+                return size
+            except (S3Error, Exception) as e:
+                last_error = e
+                if attempt < self.MAX_RETRIES:
+                    delay = self.RETRY_DELAYS[attempt] if attempt < len(self.RETRY_DELAYS) else 4.0
+                    logger.warning(
+                        f"MinIO upload failed (attempt {attempt + 1}/{self.MAX_RETRIES + 1}): "
+                        f"{bucket}/{object_key} | {type(e).__name__}: {e} | retry in {delay}s"
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(
+                        f"MinIO upload FAILED after {self.MAX_RETRIES + 1} attempts: "
+                        f"{bucket}/{object_key} | {type(e).__name__}: {e}"
+                    )
+        raise last_error  # type: ignore[misc]
+
+    # ────────────────────────────────────────────
+    # 下载方法
+    # ────────────────────────────────────────────
 
     def download_bytes(self, bucket: str, object_key: str) -> bytes:
         """从 MinIO 下载文件为字节"""
@@ -135,6 +236,10 @@ class MinioClient:
             logger.error(f"MinIO file download failed: {bucket}/{object_key} -> {file_path} | {e}")
             raise
 
+    # ────────────────────────────────────────────
+    # 删除方法
+    # ────────────────────────────────────────────
+
     def delete_object(self, bucket: str, object_key: str) -> None:
         """删除 MinIO 对象"""
         try:
@@ -159,6 +264,10 @@ class MinioClient:
         if deleted > 0:
             logger.info(f"Deleted {deleted} objects under {bucket}/{prefix}")
         return deleted
+
+    # ────────────────────────────────────────────
+    # 其他方法
+    # ────────────────────────────────────────────
 
     def object_exists(self, bucket: str, object_key: str) -> bool:
         """检查对象是否存在"""

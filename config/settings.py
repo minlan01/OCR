@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     api_key: SecretStr = SecretStr("")  # 生产环境必须设置，开发环境可空
     max_upload_size: int = 500 * 1024 * 1024  # 单文件上传最大 500 MB
     max_batch_upload_size: int = 5 * 1024 * 1024 * 1024  # 批量上传最大 5 GB（多文件合计）
-    allowed_extensions: list[str] = [".pdf"]  # 允许上传的文件扩展名
+    allowed_extensions: list[str] = [".pdf", ".mp3", ".wav", ".m4a", ".amr", ".aac"]  # 允许上传的文件扩展名
 
     # ==================== 数据库 ====================
     # 无硬编码默认值 — 必须通过 .env 或环境变量提供
@@ -122,6 +122,13 @@ class Settings(BaseSettings):
     # ==================== Celery ====================
     celery_queue_name: str = "scanstruct"
     celery_task_timeout_seconds: int = 7200  # 单个任务最大执行时间（2小时）
+
+    # ==================== LLM 限流 ====================
+    llm_rate_limiter_text: int = 5   # 文本分析全局最大并发
+    llm_rate_limiter_ocr: int = 10   # OCR 全局最大并发
+    llm_rate_limiter_flash: int = 15  # 快速模型（分类）全局最大并发
+    llm_retry_max: int = 3            # 429 重试最大次数
+    llm_retry_base_delay: float = 2.0  # 429 重试基础延迟（秒）
 
     # ==================== 预处理 ====================
     preprocess_dpi: int = 300
