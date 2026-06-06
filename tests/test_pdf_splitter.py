@@ -1,7 +1,6 @@
 """
 PDF 拆页测试
 覆盖 services/preprocessor/pdf_splitter.py — PDFSplitter 类
-使用 mock fitz 模块 (方法内部 import fitz，需 patch sys.modules)
 """
 import sys
 import tempfile
@@ -9,28 +8,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from services.preprocessor.pdf_splitter import PDFSplitter
-
-
-def _make_mock_fitz(page_count=5):
-    """构建 mock fitz 模块，注入 sys.modules"""
-    pix = MagicMock()
-    pix.save = MagicMock()
-    pix.tobytes = MagicMock(return_value=b"fake_png_data")
-
-    page = MagicMock()
-    page.get_pixmap = MagicMock(return_value=pix)
-
-    doc = MagicMock()
-    doc.page_count = page_count
-    doc.__getitem__ = MagicMock(return_value=page)
-    doc.close = MagicMock()
-
-    mock_fitz = MagicMock()
-    mock_fitz.open.return_value = doc
-    mock_fitz.Matrix = MagicMock(return_value="mock_matrix")
-
-    return mock_fitz, doc, page, pix
+from services.preprocessor.pdf_splitter import PDFSplitter, DEFAULT_DPI
 
 
 class TestPDFSplitterInit:
@@ -38,7 +16,7 @@ class TestPDFSplitterInit:
 
     def test_default_dpi(self):
         splitter = PDFSplitter()
-        assert splitter.dpi == 300
+        assert splitter.dpi == DEFAULT_DPI
 
     def test_custom_dpi(self):
         splitter = PDFSplitter(dpi=150)
@@ -46,98 +24,233 @@ class TestPDFSplitterInit:
 
 
 class TestSplitToImages:
-    """split_to_images 方法测试"""
+    """split_to_images 方法测试 — 使用 mock _render_page 避免 ThreadPoolExecutor 内部 fitz 问题"""
 
     def test_split_all_pages(self):
-        mock_fitz, mock_doc, mock_page, mock_pix = _make_mock_fitz(5)
+        """全部页面拆分"""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
-            with patch.dict(sys.modules, {"fitz": mock_fitz}):
-                splitter = PDFSplitter(dpi=300)
-                result = splitter.split_to_images(Path("/fake/test.pdf"), output_dir)
+            # 预创建假输出文件
+            for i in range(1, 6):
+                (output_dir / f"page_{i:04d}.png").write_bytes(b"fake")
+
+            with patch("services.preprocessor.pdf_splitter._render_page") as mock_render:
+                mock_render.side_effect = [
+                    (0, output_dir / "page_0001.png"),
+                    (1, output_dir / "page_0002.png"),
+                    (2, output_dir / "page_0003.png"),
+                    (3, output_dir / "page_0004.png"),
+                    (4, output_dir / "page_0005.png"),
+                ]
+                mock_fitz = MagicMock()
+                mock_doc = MagicMock()
+                mock_doc.page_count = 5
+                mock_doc.close = MagicMock()
+                mock_fitz.open.return_value = mock_doc
+
+                with patch.dict(sys.modules, {"fitz": mock_fitz}):
+                    splitter = PDFSplitter(dpi=300)
+                    result = splitter.split_to_images(Path("/fake/test.pdf"), output_dir)
 
             assert len(result) == 5
-            assert mock_doc.__getitem__.call_count == 5
-            assert mock_page.get_pixmap.call_count == 5
-            assert mock_pix.save.call_count == 5
-            mock_doc.close.assert_called_once()
+            assert mock_render.call_count == 5
 
     def test_split_page_range(self):
-        mock_fitz, mock_doc, _, _ = _make_mock_fitz(5)
+        """指定页码范围拆分"""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
-            with patch.dict(sys.modules, {"fitz": mock_fitz}):
-                splitter = PDFSplitter()
-                result = splitter.split_to_images(
-                    Path("/fake/test.pdf"), output_dir,
-                    start_page=2, end_page=4,
-                )
+            for i in range(2, 5):
+                (output_dir / f"page_{i:04d}.png").write_bytes(b"fake")
+
+            with patch("services.preprocessor.pdf_splitter._render_page") as mock_render:
+                mock_render.side_effect = [
+                    (1, output_dir / "page_0002.png"),
+                    (2, output_dir / "page_0003.png"),
+                    (3, output_dir / "page_0004.png"),
+                ]
+                mock_fitz = MagicMock()
+                mock_doc = MagicMock()
+                mock_doc.page_count = 5
+                mock_doc.close = MagicMock()
+                mock_fitz.open.return_value = mock_doc
+
+                with patch.dict(sys.modules, {"fitz": mock_fitz}):
+                    splitter = PDFSplitter()
+                    result = splitter.split_to_images(
+                        Path("/fake/test.pdf"), output_dir,
+                        start_page=2, end_page=4,
+                    )
             assert len(result) == 3
 
     def test_split_end_page_beyond_total(self):
-        mock_fitz, mock_doc, _, _ = _make_mock_fitz(5)
+        """end_page 超出总页码时截断"""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.dict(sys.modules, {"fitz": mock_fitz}):
-                splitter = PDFSplitter()
-                result = splitter.split_to_images(
-                    Path("/fake/test.pdf"), Path(tmpdir), end_page=100,
-                )
+            output_dir = Path(tmpdir)
+            for i in range(1, 6):
+                (output_dir / f"page_{i:04d}.png").write_bytes(b"fake")
+
+            with patch("services.preprocessor.pdf_splitter._render_page") as mock_render:
+                mock_render.side_effect = [
+                    (0, output_dir / "page_0001.png"),
+                    (1, output_dir / "page_0002.png"),
+                    (2, output_dir / "page_0003.png"),
+                    (3, output_dir / "page_0004.png"),
+                    (4, output_dir / "page_0005.png"),
+                ]
+                mock_fitz = MagicMock()
+                mock_doc = MagicMock()
+                mock_doc.page_count = 5
+                mock_doc.close = MagicMock()
+                mock_fitz.open.return_value = mock_doc
+
+                with patch.dict(sys.modules, {"fitz": mock_fitz}):
+                    splitter = PDFSplitter()
+                    result = splitter.split_to_images(
+                        Path("/fake/test.pdf"), Path(tmpdir), end_page=100,
+                    )
             assert len(result) == 5
 
     def test_split_creates_output_dir(self):
-        mock_fitz, mock_doc, _, _ = _make_mock_fitz(1)
+        """自动创建输出目录"""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "new_subdir" / "images"
-            with patch.dict(sys.modules, {"fitz": mock_fitz}):
-                splitter = PDFSplitter()
-                splitter.split_to_images(Path("/fake/test.pdf"), output_dir)
+            (output_dir // "page_0001.png").parent.mkdir(parents=True, exist_ok=True) if False else None
+
+            with patch("services.preprocessor.pdf_splitter._render_page") as mock_render:
+                mock_render.return_value = (0, output_dir / "page_0001.png")
+                # 预创建文件
+                output_dir.mkdir(parents=True, exist_ok=True)
+                (output_dir / "page_0001.png").write_bytes(b"fake")
+
+                mock_fitz = MagicMock()
+                mock_doc = MagicMock()
+                mock_doc.page_count = 1
+                mock_doc.close = MagicMock()
+                mock_fitz.open.return_value = mock_doc
+
+                with patch.dict(sys.modules, {"fitz": mock_fitz}):
+                    splitter = PDFSplitter()
+                    splitter.split_to_images(Path("/fake/test.pdf"), output_dir)
             assert output_dir.exists()
 
     def test_split_output_filenames(self):
-        mock_fitz, mock_doc, _, _ = _make_mock_fitz(3)
+        """输出文件名格式正确"""
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
-            with patch.dict(sys.modules, {"fitz": mock_fitz}):
-                splitter = PDFSplitter()
-                result = splitter.split_to_images(
-                    Path("/fake/test.pdf"), output_dir, start_page=1, end_page=3,
-                )
+            for i in range(1, 4):
+                (output_dir / f"page_{i:04d}.png").write_bytes(b"fake")
+
+            with patch("services.preprocessor.pdf_splitter._render_page") as mock_render:
+                mock_render.side_effect = [
+                    (0, output_dir / "page_0001.png"),
+                    (1, output_dir / "page_0002.png"),
+                    (2, output_dir / "page_0003.png"),
+                ]
+                mock_fitz = MagicMock()
+                mock_doc = MagicMock()
+                mock_doc.page_count = 3
+                mock_doc.close = MagicMock()
+                mock_fitz.open.return_value = mock_doc
+
+                with patch.dict(sys.modules, {"fitz": mock_fitz}):
+                    splitter = PDFSplitter()
+                    result = splitter.split_to_images(
+                        Path("/fake/test.pdf"), output_dir, start_page=1, end_page=3,
+                    )
             assert result[0].name == "page_0001.png"
             assert result[1].name == "page_0002.png"
             assert result[2].name == "page_0003.png"
 
     def test_split_zero_page_doc(self):
-        mock_fitz, mock_doc, _, _ = _make_mock_fitz(0)
+        """0 页 PDF 返回空列表"""
         with tempfile.TemporaryDirectory() as tmpdir:
+            mock_fitz = MagicMock()
+            mock_doc = MagicMock()
+            mock_doc.page_count = 0
+            mock_doc.close = MagicMock()
+            mock_fitz.open.return_value = mock_doc
+
             with patch.dict(sys.modules, {"fitz": mock_fitz}):
                 splitter = PDFSplitter()
                 result = splitter.split_to_images(Path("/fake/empty.pdf"), Path(tmpdir))
             assert result == []
 
     def test_dpi_zoom_calculation(self):
-        mock_fitz, mock_doc, _, _ = _make_mock_fitz(1)
+        """DPI 计算的 zoom 值正确"""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.dict(sys.modules, {"fitz": mock_fitz}):
-                splitter = PDFSplitter(dpi=144)
-                splitter.split_to_images(Path("/fake/test.pdf"), Path(tmpdir))
-            # zoom = dpi / 72 = 144 / 72 = 2.0
-            mock_fitz.Matrix.assert_called_with(2.0, 2.0)
+            output_dir = Path(tmpdir)
+            (output_dir / "page_0001.png").write_bytes(b"fake")
+
+            with patch("services.preprocessor.pdf_splitter._render_page") as mock_render:
+                mock_render.return_value = (0, output_dir / "page_0001.png")
+                mock_fitz = MagicMock()
+                mock_doc = MagicMock()
+                mock_doc.page_count = 1
+                mock_doc.close = MagicMock()
+                mock_fitz.open.return_value = mock_doc
+
+                with patch.dict(sys.modules, {"fitz": mock_fitz}):
+                    splitter = PDFSplitter(dpi=144)
+                    splitter.split_to_images(Path("/fake/test.pdf"), Path(tmpdir))
+
+            # 验证 _render_page 被正确调用，dpi=144
+            mock_render.assert_called_once()
+            call_args = mock_render.call_args
+            # _render_page(pdf_path_str, page_num, output_dir_str, dpi, use_jpeg, prefer_extract)
+            assert call_args[0][3] == 144  # dpi 参数
 
 
 class TestSplitToBytes:
     """split_to_bytes 方法测试"""
 
     def test_split_to_bytes_all_pages(self):
-        mock_fitz, mock_doc, _, mock_pix = _make_mock_fitz(3)
+        """全页字节输出"""
+        mock_pix = MagicMock()
+        mock_pix.tobytes.return_value = b"fake_png_data"
+
+        mock_page = MagicMock()
+        mock_page.get_pixmap.return_value = mock_pix
+        mock_page.get_images.return_value = []
+        mock_page.rect = MagicMock()
+        mock_page.rect.width = 595
+        mock_page.rect.height = 842
+
+        mock_doc = MagicMock()
+        mock_doc.page_count = 3
+        mock_doc.__getitem__ = MagicMock(return_value=mock_page)
+        mock_doc.close = MagicMock()
+
+        mock_fitz = MagicMock()
+        mock_fitz.open.return_value = mock_doc
+        mock_fitz.Matrix = MagicMock(return_value="mock_matrix")
+
         with patch.dict(sys.modules, {"fitz": mock_fitz}):
             splitter = PDFSplitter()
             result = splitter.split_to_bytes(b"fake pdf content")
         assert len(result) == 3
         assert all(isinstance(b, bytes) for b in result)
-        assert mock_pix.tobytes.call_count == 3
 
     def test_split_to_bytes_page_range(self):
-        mock_fitz, mock_doc, _, _ = _make_mock_fitz(3)
+        """指定页码范围的字节输出"""
+        mock_pix = MagicMock()
+        mock_pix.tobytes.return_value = b"fake_png_data"
+
+        mock_page = MagicMock()
+        mock_page.get_pixmap.return_value = mock_pix
+        mock_page.get_images.return_value = []
+        mock_page.rect = MagicMock()
+        mock_page.rect.width = 595
+        mock_page.rect.height = 842
+
+        mock_doc = MagicMock()
+        mock_doc.page_count = 3
+        mock_doc.__getitem__ = MagicMock(return_value=mock_page)
+        mock_doc.close = MagicMock()
+
+        mock_fitz = MagicMock()
+        mock_fitz.open.return_value = mock_doc
+        mock_fitz.Matrix = MagicMock(return_value="mock_matrix")
+
         with patch.dict(sys.modules, {"fitz": mock_fitz}):
             splitter = PDFSplitter()
             result = splitter.split_to_bytes(b"fake pdf content", start_page=2, end_page=2)

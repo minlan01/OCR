@@ -287,17 +287,114 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
 # 结构化上下文构建（保留原有逻辑）
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _append_layer_lines(lines: list, extracted: dict) -> None:
+    """将四层结构化数据追加到行列表"""
+    # Layer 1: 证据名称
+    layer1 = extracted.get("layer_1_evidence_name", {}) or {}
+    if layer1:
+        lines.append("**证据名称**:")
+        if layer1.get("title"):
+            lines.append(f"  - 标题: {layer1['title']}")
+        if layer1.get("doc_type"):
+            lines.append(f"  - 类型: {layer1['doc_type']}")
+        if layer1.get("date"):
+            lines.append(f"  - 日期: {layer1['date']}")
+
+    # Layer 2: 身份信息
+    layer2 = extracted.get("layer_2_identity", {}) or {}
+    if layer2:
+        lines.append("**身份信息**:")
+        for key, label in [
+            ("patient_name", "患者姓名"), ("patient_id", "身份证号"),
+            ("patient_gender", "性别"), ("patient_birth", "出生日期"),
+            ("patient_address", "住址"), ("patient_phone", "电话"),
+            ("hospital_name", "医院名称"), ("hospital_code", "统一社会信用代码"),
+            ("hospital_address", "医院地址"), ("legal_representative", "法定代表人"),
+            ("relationship", "与患者关系"),
+        ]:
+            val = layer2.get(key)
+            if val and val != "":
+                lines.append(f"  - {label}: {val}")
+
+    # Layer 3: 诊疗经过
+    layer3 = extracted.get("layer_3_treatment", {}) or {}
+    if layer3:
+        lines.append("**诊疗经过**:")
+        for key, label in [
+            ("admission_date", "入院日期"), ("discharge_date", "出院日期"),
+            ("diagnosis", "诊断结论"), ("symptoms", "主诉/症状"),
+            ("treatment_summary", "诊疗经过"), ("operation_records", "手术记录"),
+        ]:
+            val = layer3.get(key)
+            if val and val != "":
+                lines.append(f"  - {label}: {val}")
+
+    # Layer 4: 费用明细
+    layer4 = extracted.get("layer_4_fees", {}) or {}
+    if layer4:
+        lines.append("**费用明细**:")
+        items = layer4.get("items", []) or []
+        for item in items:
+            fee_type = item.get("fee_type", "")
+            amount = item.get("amount", 0)
+            try:
+                amount = float(amount)
+            except (ValueError, TypeError):
+                amount = 0.0
+            if fee_type:
+                lines.append(f"  - {fee_type}: {amount:.2f}元")
+        ta = layer4.get("total_amount", 0)
+        try:
+            ta = float(ta)
+        except (ValueError, TypeError):
+            ta = 0.0
+        if ta:
+            lines.append(f"  - 合计: {ta:.2f}元")
+
+
 def _build_structured_context(materials: list) -> str:
     """从材料的 OCR 文本 + 四层结构化数据构建供LLM分析的结构化上下文
     
-    关键改进：始终传递 OCR 原文，确保 LLM 能提取到身份证等原始信息。
-    四层结构化数据作为补充参考。
-    鉴定报告和病历材料允许更多OCR原文（最多5000字），其他材料最多2000字。
+    核心改进：智能上下文切片，按信息密度排序拼接，确保关键信息不被截断。
+    
+    排序策略：
+    1. 每份材料的OCR原文按段落拆分，给每段打重要性标签
+    2. 🔴关键段落（含死亡诊断/鉴定意见/手术/尸检/执业证等）优先拼入
+    3. 🟡重要段落（含诊断/治疗/检查/出入院等）次之
+    4. ⚪一般段落最后
+    5. 同一材料内的段落保持原文顺序（仅调整不同优先级间的顺序）
+    
+    截断上限通过 settings 配置化。
     """
     if not materials:
         return ""
 
-    parts: list[str] = []
+    # ── 重要性关键词库 ──
+    _CRITICAL_KEYWORDS = re.compile(
+        r'死亡诊断|死因分析|死亡原因|鉴定意见|鉴定结论|尸检诊断|解剖诊断|病理诊断|'
+        r'尸检报告|手术记录|执业证|执业范围|身份证号|身份证号码|统一社会信用代码|'
+        r'执业医师|鉴定人|鉴定机构|死亡诊断意见|出院诊断|死亡证明|'
+        r'尸体检验|尸体解剖|死因鉴定|解剖报告|病理鉴定|毒物鉴定'
+    )
+    _IMPORTANT_KEYWORDS = re.compile(
+        r'诊断|治疗|检查|入院|出院|医嘱|护理|手术|转院|'
+        r'主诉|现病史|既往史|用药|处方|病程|抢救|ICU|'
+        r'检验|化验|CT|MRI|B超|血气|心电图|体温|血压|'
+        r'伤残等级|过错|因果关系|参与度|不良后果|并发症'
+    )
+
+    def _classify_paragraph(text: str) -> int:
+        """给段落打重要性标签: 0=关键, 1=重要, 2=一般"""
+        if _CRITICAL_KEYWORDS.search(text):
+            return 0  # 🔴
+        if _IMPORTANT_KEYWORDS.search(text):
+            return 1  # 🟡
+        return 2  # ⚪
+
+    _DETAIL_CATEGORIES = {"appraisal", "medical_record", "death_certificate", "identity_defendant"}
+
+    # ── 收集所有材料段落（带优先级和来源标记）──
+    material_sections: list[tuple[int, str, str]] = []  # (priority, material_id, section_text)
 
     for idx, mat in enumerate(materials, 1):
         filename = mat.original_filename or ""
@@ -305,120 +402,99 @@ def _build_structured_context(materials: list) -> str:
         ocr_text = (mat.ocr_text or "").strip()
         cat = mat.effective_category or ""
         cat_name = CATEGORY_NAMES.get(cat, cat or "未分类")
+        max_ocr_chars = (
+            settings.llm_context_material_detail_limit
+            if cat in _DETAIL_CATEGORIES
+            else settings.llm_context_material_normal_limit
+        )
 
-        # ── 始终以 OCR 原文为主体（鉴定报告/病历最多 5000 字，其他最多 2000 字） ──
-        if ocr_text:
-            # 关键类别允许更多OCR原文，避免死亡诊断等关键信息被截断
-            _DETAIL_CATEGORIES = {"appraisal", "medical_record", "death_certificate"}
-            max_ocr_chars = 5000 if cat in _DETAIL_CATEGORIES else 2000
-            header = f"### 材料{idx} [{cat_name}] 文件:{filename}"
-            
-            # 同时输出四层提取结果（如果有）作为辅助
-            layers_brief = []
-            for layer_key, label in [
-                ("layer_1_evidence_name", "证据名"),
-                ("layer_2_identity", "身份"),
-                ("layer_3_treatment", "诊疗"),
-                ("layer_4_fees", "费用"),
-            ]:
-                layer_data = extracted.get(layer_key)
-                if layer_data and isinstance(layer_data, dict) and any(v for v in layer_data.values() if v):
-                    # 只输出有值的字段
-                    vals = {k: v for k, v in layer_data.items() if v}
-                    if vals:
-                        layers_brief.append(f"  {label}: {json.dumps(vals, ensure_ascii=False)}")
-            
-            layer_section = ""
-            if layers_brief:
-                layer_section = "\n**结构化提取**:\n" + "\n".join(layers_brief)
-            
-            parts.append(f"{header}\n**OCR原文**:\n{ocr_text[:max_ocr_chars]}{layer_section}")
+        # ── 四层结构化提取摘要 ──
+        layers_brief = []
+        for layer_key, label in [
+            ("layer_1_evidence_name", "证据名"),
+            ("layer_2_identity", "身份"),
+            ("layer_3_treatment", "诊疗"),
+            ("layer_4_fees", "费用"),
+        ]:
+            layer_data = extracted.get(layer_key)
+            if layer_data and isinstance(layer_data, dict) and any(v for v in layer_data.values() if v):
+                vals = {k: v for k, v in layer_data.items() if v}
+                if vals:
+                    layers_brief.append(f"  {label}: {json.dumps(vals, ensure_ascii=False)}")
+        
+        layer_section = ""
+        if layers_brief:
+            layer_section = "\n**结构化提取**:\n" + "\n".join(layers_brief)
+
+        header = f"### 材料{idx} [{cat_name}] 文件:{filename}"
+
+        if not ocr_text:
+            # 无 OCR 文本但有结构化数据的，按重要程度处理
+            if extracted and any(
+                extracted.get(layer)
+                for layer in ["layer_1_evidence_name", "layer_2_identity", "layer_3_treatment", "layer_4_fees"]
+            ):
+                # 构建结构化输出
+                lines = [header]
+                lines.append(f"**类别**: {cat_name}")
+                _append_layer_lines(lines, extracted)
+                # 结构化数据通常包含身份/诊疗信息，视为重要
+                material_sections.append((1, f"mat{idx}", "\n".join(lines)))
             continue
 
-        # 无 OCR 文本，跳过
-        if not extracted or not any(
-            extracted.get(layer)
-            for layer in ["layer_1_evidence_name", "layer_2_identity", "layer_3_treatment", "layer_4_fees"]
-        ):
-            continue
+        # ── 有 OCR 文本：智能切片排序 ──
+        # 关键改进：先从全文中提取关键段落（避免被材料级截断丢失），再截取剩余内容
+        
+        # Step 1: 从整个OCR原文中按段落拆分
+        full_paragraphs = re.split(r'\n{2,}|\n(?=[　\s]*[\u4e00-\u9fff①-⑩\d])', ocr_text)
+        full_paragraphs = [p.strip() for p in full_paragraphs if p.strip() and len(p.strip()) > 5]
+        
+        if not full_paragraphs:
+            full_paragraphs = [ocr_text[:max_ocr_chars]]
 
-        # 四层结构化输出
-        lines = [f"### 材料{idx}"]
-        lines.append(f"**类别**: {CATEGORY_NAMES.get(mat.effective_category or '', '未分类')}")
+        # Step 2: 分类所有段落
+        priority_groups: dict[int, list[str]] = {0: [], 1: [], 2: []}
+        for para in full_paragraphs:
+            priority = _classify_paragraph(para)
+            priority_groups[priority].append(para)
 
-        # Layer 1: 证据名称
-        layer1 = extracted.get("layer_1_evidence_name", {}) or {}
-        if layer1:
-            lines.append("**证据名称**:")
-            if layer1.get("title"):
-                lines.append(f"  - 标题: {layer1['title']}")
-            if layer1.get("doc_type"):
-                lines.append(f"  - 类型: {layer1['doc_type']}")
-            if layer1.get("date"):
-                lines.append(f"  - 日期: {layer1['date']}")
+        # Step 3: 按优先级拼接，在 max_ocr_chars 内尽量保留关键内容
+        sorted_parts: list[str] = []
+        total_chars = 0
+        for priority_level in [0, 1, 2]:
+            for para in priority_groups[priority_level]:
+                if total_chars + len(para) <= max_ocr_chars:
+                    sorted_parts.append(para)
+                    total_chars += len(para)
+                elif total_chars < max_ocr_chars:
+                    # 部分截取
+                    remaining = max_ocr_chars - total_chars
+                    if remaining > 50:
+                        sorted_parts.append(para[:remaining])
+                        total_chars += remaining
+                    break
+                else:
+                    break
+        
+        sorted_text = "\n\n".join(sorted_parts)
 
-        # Layer 2: 身份信息
-        layer2 = extracted.get("layer_2_identity", {}) or {}
-        if layer2:
-            lines.append("**身份信息**:")
-            for key, label in [
-                ("patient_name", "患者姓名"),
-                ("patient_id", "身份证号"),
-                ("patient_gender", "性别"),
-                ("patient_birth", "出生日期"),
-                ("patient_address", "住址"),
-                ("patient_phone", "电话"),
-                ("hospital_name", "医院名称"),
-                ("hospital_code", "统一社会信用代码"),
-                ("hospital_address", "医院地址"),
-                ("legal_representative", "法定代表人"),
-                ("relationship", "与患者关系"),
-            ]:
-                val = layer2.get(key)
-                if val and val != "":
-                    lines.append(f"  - {label}: {val}")
+        section = f"{header}\n**OCR原文**:\n{sorted_text}{layer_section}"
+        
+        # 材料本身的优先级由包含的最高优先级段落决定（基于全文，不只是截取后的）
+        min_priority = 2
+        for para in full_paragraphs:
+            p = _classify_paragraph(para)
+            if p < min_priority:
+                min_priority = p
+                if p == 0:
+                    break
 
-        # Layer 3: 诊疗经过
-        layer3 = extracted.get("layer_3_treatment", {}) or {}
-        if layer3:
-            lines.append("**诊疗经过**:")
-            for key, label in [
-                ("admission_date", "入院日期"),
-                ("discharge_date", "出院日期"),
-                ("diagnosis", "诊断结论"),
-                ("symptoms", "主诉/症状"),
-                ("treatment_summary", "诊疗经过"),
-                ("operation_records", "手术记录"),
-            ]:
-                val = layer3.get(key)
-                if val and val != "":
-                    lines.append(f"  - {label}: {val}")
+        material_sections.append((min_priority, f"mat{idx}", section))
 
-        # Layer 4: 费用明细
-        layer4 = extracted.get("layer_4_fees", {}) or {}
-        if layer4:
-            lines.append("**费用明细**:")
-            items = layer4.get("items", []) or []
-            for item in items:
-                fee_type = item.get("fee_type", "")
-                amount = item.get("amount", 0)
-                try:
-                    amount = float(amount)
-                except (ValueError, TypeError):
-                    amount = 0.0
-                if fee_type:
-                    lines.append(f"  - {fee_type}: {amount:.2f}元")
-            ta = layer4.get("total_amount", 0)
-            try:
-                ta = float(ta)
-            except (ValueError, TypeError):
-                ta = 0.0
-            if ta:
-                lines.append(f"  - 合计: {ta:.2f}元")
+    # ── 按材料优先级排序（关键材料在前）──
+    material_sections.sort(key=lambda x: (x[0], x[1]))
 
-        parts.append("\n".join(lines))
-
-    return "\n\n".join(parts)
+    return "\n\n".join(section for _, _, section in material_sections)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -432,7 +508,7 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
     """
     client = _get_analyzer_client()
 
-    max_chars = 30000
+    max_chars = settings.llm_context_merged_limit
     truncated_text = text[:max_chars]
     if len(text) > max_chars:
         truncated_text += "\n...(内容过长已截断)"

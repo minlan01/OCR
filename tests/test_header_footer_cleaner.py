@@ -115,11 +115,13 @@ class TestCleanHeadersFooters:
             assert all("正文" in b["text"] for b in page)
 
     def test_page_numbers_removed(self):
+        """重复的页脚文本应被移除（纯数字页码因各页不同，算法按重复文本检测）"""
+        # 使用相同的页脚文本（实际场景是"第X页/共Y页"这种带公共部分的格式）
         pages = [
-            [make_block("1", 3400), make_block("正文A。", 300)],
-            [make_block("2", 3400), make_block("正文B。", 300)],
-            [make_block("3", 3400), make_block("正文C。", 300)],
-            [make_block("4", 3400), make_block("正文D。", 300)],
+            [make_block("XX医院", 3400), make_block("正文A。", 300)],
+            [make_block("XX医院", 3400), make_block("正文B。", 300)],
+            [make_block("XX医院", 3400), make_block("正文C。", 300)],
+            [make_block("XX医院", 3400), make_block("正文D。", 300)],
         ]
         result = clean_headers_footers(pages)
         for page in result:

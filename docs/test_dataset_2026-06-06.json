@@ -1,0 +1,3086 @@
+[
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_ping_returns_pong",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_health_when_all_services_up",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_health_when_db_fails",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_health_when_redis_fails",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_health_when_minio_fails",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_admin_stats_returns_expected_schema",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_admin_stats_no_tasks",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_admin_queue_returns_tasks",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_admin_queue_empty",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": "TestAppConfiguration",
+    "name": "test_create_app_returns_fastapi",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": "TestAppConfiguration",
+    "name": "test_app_has_expected_routes",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": "TestAppConfiguration",
+    "name": "test_app_title_and_version",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_health_ping_always_public",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_admin_without_key_rejected",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_admin_with_wrong_key_rejected",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_admin_with_valid_key_accepted",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_api.py",
+    "class": null,
+    "name": "test_admin_with_lowercase_header",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianOCREngineFactory",
+    "name": "test_factory_returns_bailian_when_configured",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianOCREngineFactory",
+    "name": "test_bailian_engine_has_required_interface",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianOCREngineFactory",
+    "name": "test_factory_get_ocr_engine",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianOCREngineFactory",
+    "name": "test_factory_default_is_paddle",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianOCRRealAPI",
+    "name": "test_real_api_recognize_text",
+    "status": "SKIPPED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianOCRRealAPI",
+    "name": "test_real_api_structured_json",
+    "status": "SKIPPED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianOCRRealAPI",
+    "name": "test_real_api_save_result",
+    "status": "SKIPPED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianResponseParsing",
+    "name": "test_parse_valid_json_array",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianResponseParsing",
+    "name": "test_parse_markdown_code_block",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianResponseParsing",
+    "name": "test_parse_fallback_plain_text",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianResponseParsing",
+    "name": "test_parse_empty_response",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianResponseParsing",
+    "name": "test_parse_partial_json_in_text",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianPipelineCompatibility",
+    "name": "test_output_format_matches_ocr_engine",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianPipelineCompatibility",
+    "name": "test_batch_processor_accepts_bailian_engine",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianPipelineCompatibility",
+    "name": "test_engine_not_ready_without_api_key",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianPipelineCompatibility",
+    "name": "test_recognize_nonexistent_file",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianImageEncoding",
+    "name": "test_base64_encoding_png",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_bailian_ocr.py",
+    "class": "TestBailianImageEncoding",
+    "name": "test_base64_encoding_jpg",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_callback.py",
+    "class": null,
+    "name": "test_send_callback_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_callback.py",
+    "class": null,
+    "name": "test_send_callback_network_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_callback.py",
+    "class": null,
+    "name": "test_send_callback_http_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_callback.py",
+    "class": null,
+    "name": "test_send_callback_timeout",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_callback.py",
+    "class": null,
+    "name": "test_send_callback_posts_correct_url",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_callback.py",
+    "class": null,
+    "name": "test_send_callback_posts_json_data",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestContinuationDetection",
+    "name": "test_ends_with_period",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestContinuationDetection",
+    "name": "test_ends_without_punctuation",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestContinuationDetection",
+    "name": "test_ends_with_comma",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestContinuationDetection",
+    "name": "test_empty_text",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestContinuationDetection",
+    "name": "test_starts_lowercase",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestContinuationDetection",
+    "name": "test_starts_with_comma",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestContinuationDetection",
+    "name": "test_chapter_heading_not_continuation",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestContinuationDetection",
+    "name": "test_numbered_heading_not_continuation",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestContinuationDetection",
+    "name": "test_normal_uppercase_start",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestMergeCrossPage",
+    "name": "test_no_merge_needed",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestMergeCrossPage",
+    "name": "test_simple_merge",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestMergeCrossPage",
+    "name": "test_merge_preserves_other_blocks",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestMergeCrossPage",
+    "name": "test_confidence_averaged_on_merge",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestMergeCrossPage",
+    "name": "test_single_page_no_merge",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestMergeCrossPage",
+    "name": "test_empty_pages",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestMergeCrossPage",
+    "name": "test_merge_marked_cross_page",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestMergeCrossPageFlat",
+    "name": "test_flat_merge",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_cross_page_merger.py",
+    "class": "TestMergeCrossPageFlat",
+    "name": "test_no_boundary_no_change",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestHappyPathWorkflow",
+    "name": "test_full_lifecycle",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestErrorRecoveryWorkflow",
+    "name": "test_retry_chain",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestErrorRecoveryWorkflow",
+    "name": "test_retry_force_non_failed",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestErrorRecoveryWorkflow",
+    "name": "test_retry_non_failed_rejected",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestDuplicateDetectionWorkflow",
+    "name": "test_duplicate_upload_returns_existing",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestDuplicateDetectionWorkflow",
+    "name": "test_two_different_pdfs_create_two_tasks",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestListFilterSortWorkflow",
+    "name": "test_filter_by_status_paginated",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestListFilterSortWorkflow",
+    "name": "test_pagination_boundaries",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestListFilterSortWorkflow",
+    "name": "test_sort_by_valid_fields",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestListFilterSortWorkflow",
+    "name": "test_sort_by_invalid_field_rejected",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestListFilterSortWorkflow",
+    "name": "test_filter_by_scanner_id",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestAdminWorkflow",
+    "name": "test_stats_and_queue_combined",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestSPAIntegration",
+    "name": "test_api_routes_accessible_even_with_spa",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestSPAIntegration",
+    "name": "test_spa_mount_not_registered_when_dist_missing",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestAuthChain",
+    "name": "test_auth_chain_full_flow",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestBoundaryAndError",
+    "name": "test_upload_invalid_inputs",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestBoundaryAndError",
+    "name": "test_detail_invalid_uuid_format",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestBoundaryAndError",
+    "name": "test_result_for_incomplete_task",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestBoundaryAndError",
+    "name": "test_delete_nonexistent",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_e2e_workflows.py",
+    "class": "TestBoundaryAndError",
+    "name": "test_concurrent_delete_and_detail",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_identity_keyword_match",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_identity_business_license",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_identity_credit_code",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_medical_record_keyword_match",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_medical_record_surgery",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_medical_record_diagnosis",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_medical_record_ct_report",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_fee_receipt_invoice",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_fee_receipt_settlement",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_fee_receipt_amount",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_appraisal_keyword_match",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_appraisal_disability_level",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_death_certificate_in_death_case",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_death_certificate_not_in_injury_case",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_death_certificate_autopsy",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_empty_text_returns_other",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_whitespace_only_returns_other",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_unknown_text_returns_other_with_llm_fallback",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_default_case_type_is_injury",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_llm_fallback_called_when_no_keyword_match",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_llm_returns_invalid_category_falls_back",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_multiple_keywords_higher_confidence",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_confidence_within_range",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyText",
+    "name": "test_confidence_capped_at_095",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyByLlm",
+    "name": "test_llm_returns_valid_json",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyByLlm",
+    "name": "test_llm_returns_json_with_extra_text",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyByLlm",
+    "name": "test_llm_returns_no_json",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestClassifyByLlm",
+    "name": "test_llm_death_case_excludes_death_cert_for_injury",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCategoryNamesAndOrder",
+    "name": "test_category_names_completeness",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCategoryNamesAndOrder",
+    "name": "test_category_keywords_keys_match",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCategoryNamesAndOrder",
+    "name": "test_all_categories_in_order",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestGenerateTitle",
+    "name": "test_identity_title",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestGenerateTitle",
+    "name": "test_medical_record_title",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestGenerateTitle",
+    "name": "test_no_filename",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestGenerateTitle",
+    "name": "test_other_evidence_just_filename",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestGenerateProofPurpose",
+    "name": "test_identity_purpose",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestGenerateProofPurpose",
+    "name": "test_medical_record_purpose",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestGenerateProofPurpose",
+    "name": "test_fee_receipt_purpose",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestGenerateProofPurpose",
+    "name": "test_appraisal_purpose",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestGenerateProofPurpose",
+    "name": "test_death_certificate_purpose",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestGenerateProofPurpose",
+    "name": "test_unknown_category",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_empty_materials",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_single_fee_item",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_multiple_same_fee_type",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_different_fee_types",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_zero_amount_excluded",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_negative_amount_excluded",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_non_numeric_amount_ignored",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_no_fee_type_ignored",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_empty_fee_detail",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_none_fee_detail",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_rounding_to_2_decimals",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCalculateFeeSummary",
+    "name": "test_integer_amount",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestExcelGeneration",
+    "name": "test_workbook_creation_compensation_summary",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestExcelGeneration",
+    "name": "test_workbook_creation_fee_detail",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestExcelGeneration",
+    "name": "test_excel_style_constants",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestExcelGeneration",
+    "name": "test_compensation_summary_multiple_fee_types",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestBundlePackager",
+    "name": "test_zip_creation_basic",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestBundlePackager",
+    "name": "test_zip_with_nested_folders",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestBundlePackager",
+    "name": "test_zip_chinese_filename",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestBundlePackager",
+    "name": "test_zip_special_characters_in_fee_type",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestBundlePackager",
+    "name": "test_empty_zip",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestBundlePackager",
+    "name": "test_zip_read_back_content",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestSchemaModelConsistency",
+    "name": "test_material_response_matches_model",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestSchemaModelConsistency",
+    "name": "test_case_response_matches_model",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestSchemaModelConsistency",
+    "name": "test_step_response_matches_model",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestSchemaModelConsistency",
+    "name": "test_create_case_request_matches",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestSchemaModelConsistency",
+    "name": "test_update_material_request_fields",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_create_case_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_list_cases_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_get_case_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_upload_materials_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_process_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_progress_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_catalog_get_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_catalog_put_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_update_material_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_delete_material_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_catalog_pdf_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_analyze_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_analysis_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_export_filing_evidence_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_export_complaint_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_export_appraisal_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_export_compensation_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_export_fee_detail_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_export_bundle_endpoint_exists",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestApiEndpointCompleteness",
+    "name": "test_total_endpoint_count",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestFrontendBackendConsistency",
+    "name": "test_frontend_api_urls_match_backend",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestFrontendBackendConsistency",
+    "name": "test_frontend_types_match_backend_schemas",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_models_evidence_importable",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_schemas_evidence_importable",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_services_init_importable",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_classifier_imports",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_catalog_generator_imports",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_excel_generator_imports",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_bundle_packager_imports",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_evidence_requirement_data_completeness",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_model_check_constraints",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_celery_task_names",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestStaticAnalysis",
+    "name": "test_word_template_files_exist",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCeleryServiceConsistency",
+    "name": "test_process_full_task_calls_correct_services",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCeleryServiceConsistency",
+    "name": "test_analyze_task_calls_correct_service",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCeleryServiceConsistency",
+    "name": "test_export_bundle_task_calls_correct_service",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCeleryServiceConsistency",
+    "name": "test_ocr_pipeline_uses_correct_ocr_service",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestCeleryServiceConsistency",
+    "name": "test_classify_pipeline_uses_classifier",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestRouterRegistration",
+    "name": "test_evidence_router_registered_in_main",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_evidence.py",
+    "class": "TestRouterRegistration",
+    "name": "test_evidence_router_prefix_correct",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestPageNumberDetection",
+    "name": "test_plain_number",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestPageNumberDetection",
+    "name": "test_roman_numeral",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestPageNumberDetection",
+    "name": "test_dash_number_format",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestPageNumberDetection",
+    "name": "test_chinese_page_format",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestPageNumberDetection",
+    "name": "test_slash_format",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestPageNumberDetection",
+    "name": "test_normal_text",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestTextSimilarity",
+    "name": "test_identical",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestTextSimilarity",
+    "name": "test_different",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestTextSimilarity",
+    "name": "test_similar",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestTextSimilarity",
+    "name": "test_empty",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestPositionDetection",
+    "name": "test_header_position",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestPositionDetection",
+    "name": "test_not_header_middle",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestPositionDetection",
+    "name": "test_footer_position",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestPositionDetection",
+    "name": "test_not_footer_middle",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestCleanHeadersFooters",
+    "name": "test_empty_pages",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestCleanHeadersFooters",
+    "name": "test_few_pages_no_cleanup",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestCleanHeadersFooters",
+    "name": "test_repeated_header_removed",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestCleanHeadersFooters",
+    "name": "test_page_numbers_removed",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_header_footer_cleaner.py",
+    "class": "TestCleanHeadersFooters",
+    "name": "test_non_repeating_header_preserved",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h1_chinese_chapter_patterns[\\u7b2c\\u4e00\\u7ae0 \\u6982\\u8ff0-1]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h1_chinese_chapter_patterns[\\u7b2c\\u5341\\u4e8c\\u7ae0 \\u6cd5\\u5f8b\\u8d23\\u4efb-1]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h1_chinese_chapter_patterns[\\u7b2c3\\u7ae0 \\u6280\\u672f\\u89c4\\u8303-1]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h1_chinese_chapter_patterns[\\u7b2c\\u4e00\\u7bc7 \\u603b\\u5219-1]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h1_chinese_chapter_patterns[\\u7b2c5\\u90e8 \\u9644\\u5219-1]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h2_section_patterns[\\u7b2c\\u4e00\\u8282 \\u5b9a\\u4e49-2]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h2_section_patterns[\\u7b2c\\u4e09\\u6761 \\u9002\\u7528\\u8303\\u56f4-2]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h2_section_patterns[\\u4e00\\u3001\\u9879\\u76ee\\u80cc\\u666f-2]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h2_section_patterns[\\u4e5d\\u3001\\u5176\\u4ed6\\u4e8b\\u9879-2]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h3_numbered_patterns[1\\u3001\\u6b65\\u9aa4\\u8bf4\\u660e-3]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h3_numbered_patterns[15\\u3001\\u9644\\u5f55-3]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h3_numbered_patterns[1. \\u6267\\u884c\\u6807\\u51c6-3]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h3_numbered_patterns[\\uff08\\u4e00\\uff09\\u57fa\\u672c\\u539f\\u5219-3]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h3_numbered_patterns[\\uff08\\u4e09\\uff09\\u4f8b\\u5916\\u60c5\\u51b5-3]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h4_subsection_patterns[\\uff081\\uff09\\u6570\\u636e\\u91c7\\u96c6-4]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h4_subsection_patterns[\\uff0815\\uff09\\u7ed3\\u679c\\u6821\\u9a8c-4]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h4_subsection_patterns[1.1 \\u73af\\u5883\\u914d\\u7f6e-4]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h4_subsection_patterns[3.2 \\u6027\\u80fd\\u8c03\\u4f18-4]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h5_deep_patterns[1.1.1 \\u8be6\\u7ec6\\u8bf4\\u660e-5]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_h5_deep_patterns[2.3.5 \\u5f02\\u5e38\\u5904\\u7406-5]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_non_heading_texts[\\u8fd9\\u662f\\u666e\\u901a\\u6b63\\u6587\\u5185\\u5bb9\\u3002]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_non_heading_texts[\\u626b\\u63cf\\u4ef6\\u7ed3\\u6784\\u5316\\u5904\\u7406\\u7cfb\\u7edf]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_non_heading_texts[Table of Contents]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_non_heading_texts[]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_non_heading_texts[   ]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_non_heading_texts[\\u6ce8\\uff1a\\u7279\\u6b8a\\u8bf4\\u660e]",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingLevelDetection",
+    "name": "test_detect_none_on_ambiguous",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestParseHeadings",
+    "name": "test_parse_headings_returns_all_with_levels",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestParseHeadings",
+    "name": "test_parse_headings_preserves_original_fields",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestParseHeadings",
+    "name": "test_parse_headings_mixed_content",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestParseHeadings",
+    "name": "test_parse_headings_empty_blocks",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestParseHeadings",
+    "name": "test_parse_headings_strips_whitespace",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestParseHeadings",
+    "name": "test_parse_headings_no_headings",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingPatternsRegistry",
+    "name": "test_all_five_levels_defined",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingPatternsRegistry",
+    "name": "test_patterns_are_valid_regex",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_heading_parser.py",
+    "class": "TestHeadingPatternsRegistry",
+    "name": "test_h1_does_not_capture_h4",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestImageEnhancerInit",
+    "name": "test_default_settings",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestImageEnhancerInit",
+    "name": "test_custom_settings",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestImageEnhancerEnhance",
+    "name": "test_enhance_basic",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestImageEnhancerEnhance",
+    "name": "test_enhance_with_binarization",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestImageEnhancerEnhance",
+    "name": "test_enhance_with_crop",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestImageEnhancerEnhance",
+    "name": "test_enhance_invalid_image",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestImageEnhancerEnhance",
+    "name": "test_enhance_already_grayscale",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestCropBlackBorder",
+    "name": "test_crop_reduces_size",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestCropBlackBorder",
+    "name": "test_crop_all_black_returns_original",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestCropBlackBorder",
+    "name": "test_crop_no_border_preserves_size",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestDeskewer",
+    "name": "test_deskew_small_angle_skips",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestDeskewer",
+    "name": "test_deskew_rotated_image",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_image_enhancer.py",
+    "class": "TestDeskewer",
+    "name": "test_deskew_invalid_image_returns_original",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_json_exporter.py",
+    "class": "TestExportJson",
+    "name": "test_export_writes_json_file",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_json_exporter.py",
+    "class": "TestExportJson",
+    "name": "test_export_preserves_all_keys",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_json_exporter.py",
+    "class": "TestExportJson",
+    "name": "test_export_nested_subsections",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_json_exporter.py",
+    "class": "TestExportJson",
+    "name": "test_export_empty_result",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_json_exporter.py",
+    "class": "TestExportJson",
+    "name": "test_export_unicode_content",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_json_exporter.py",
+    "class": "TestExportJson",
+    "name": "test_export_creates_parent_directories",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_json_exporter.py",
+    "class": "TestExportJson",
+    "name": "test_export_overwrites_existing_file",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestBBoxToRect",
+    "name": "test_four_point_bbox",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestBBoxToRect",
+    "name": "test_already_rect",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestBBoxToRect",
+    "name": "test_empty_bbox",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestRectOverlap",
+    "name": "test_overlapping",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestRectOverlap",
+    "name": "test_no_overlap",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestDetectColumns",
+    "name": "test_single_column",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestDetectColumns",
+    "name": "test_two_columns",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestIsTableRow",
+    "name": "test_digit_dense",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestIsTableRow",
+    "name": "test_normal_text",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestIsTableRow",
+    "name": "test_mixed_digits",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestLayoutDetector",
+    "name": "test_empty_input",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestLayoutDetector",
+    "name": "test_single_text_block",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestLayoutDetector",
+    "name": "test_table_detection",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestLayoutDetector",
+    "name": "test_title_detection",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestLayoutDetector",
+    "name": "test_detect_all_pages",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_layout_detector.py",
+    "class": "TestLayoutDetector",
+    "name": "test_reading_order",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestMatchListItem",
+    "name": "test_arabic_numbered_dot",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestMatchListItem",
+    "name": "test_arabic_numbered_chinese_comma",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestMatchListItem",
+    "name": "test_parenthesized_arabic",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestMatchListItem",
+    "name": "test_chinese_numbered",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestMatchListItem",
+    "name": "test_lettered",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestMatchListItem",
+    "name": "test_upper_lettered",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestMatchListItem",
+    "name": "test_bulleted_dash",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestMatchListItem",
+    "name": "test_bulleted_dot",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestMatchListItem",
+    "name": "test_not_a_list",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestMatchListItem",
+    "name": "test_empty_text",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestDetectLists",
+    "name": "test_empty_blocks",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestDetectLists",
+    "name": "test_single_list",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestDetectLists",
+    "name": "test_mixed_list_not_merged",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestDetectLists",
+    "name": "test_bulleted_list",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestDetectLists",
+    "name": "test_list_interrupted_by_text",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestDetectLists",
+    "name": "test_confidence_avg",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_list_detector.py",
+    "class": "TestDetectLists",
+    "name": "test_single_item_not_a_list",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientBasics",
+    "name": "test_client_lazy_init",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientBasics",
+    "name": "test_client_creates_on_access",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientBasics",
+    "name": "test_ping_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientBasics",
+    "name": "test_ping_failure",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientBuckets",
+    "name": "test_ensure_buckets_creates_missing",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientBuckets",
+    "name": "test_ensure_buckets_skips_existing",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientBuckets",
+    "name": "test_ensure_bucket_raises_on_s3_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientUpload",
+    "name": "test_upload_bytes_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientUpload",
+    "name": "test_upload_bytes_raises_on_s3_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientUpload",
+    "name": "test_upload_file_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientUpload",
+    "name": "test_upload_file_raises_on_s3_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientDownload",
+    "name": "test_download_bytes_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientDownload",
+    "name": "test_download_bytes_raises_on_s3_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientDownload",
+    "name": "test_download_file_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientDownload",
+    "name": "test_download_file_raises_on_s3_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientDelete",
+    "name": "test_delete_object_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientDelete",
+    "name": "test_delete_handles_error_gracefully",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientExists",
+    "name": "test_object_exists_true",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientExists",
+    "name": "test_object_exists_false",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientPresigned",
+    "name": "test_get_presigned_url_default_expiry",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientPresigned",
+    "name": "test_get_presigned_url_custom_expiry",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientPresigned",
+    "name": "test_presigned_url_raises_on_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientDeleteTaskObjects",
+    "name": "test_deletes_all_objects_for_task",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestMinioClientDeleteTaskObjects",
+    "name": "test_delete_task_objects_handles_s3_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestGlobalSingleton",
+    "name": "test_minio_client_is_minio_client_instance",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_minio_client.py",
+    "class": "TestGlobalSingleton",
+    "name": "test_global_singleton_is_lazy",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_batch_processor.py",
+    "class": "TestBatchProcessor",
+    "name": "test_process_all_pages",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_batch_processor.py",
+    "class": "TestBatchProcessor",
+    "name": "test_confidence_averaged_correctly",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_batch_processor.py",
+    "class": "TestBatchProcessor",
+    "name": "test_empty_image_list",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_batch_processor.py",
+    "class": "TestBatchProcessor",
+    "name": "test_page_number_is_sequential",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_batch_processor.py",
+    "class": "TestBatchProcessor",
+    "name": "test_saves_per_page_json",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_batch_processor.py",
+    "class": "TestBatchProcessor",
+    "name": "test_zero_results_per_page",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_batch_processor.py",
+    "class": "TestBatchProcessor",
+    "name": "test_batch_size_from_config",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_batch_processor.py",
+    "class": "TestBatchProcessor",
+    "name": "test_custom_batch_size",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineInit",
+    "name": "test_default_not_ready",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineInit",
+    "name": "test_init_respects_gpu_setting",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineLoadModel",
+    "name": "test_load_paddleocr_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineLoadModel",
+    "name": "test_load_easyocr_fallback_when_paddle_missing",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineLoadModel",
+    "name": "test_load_is_idempotent",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineRecognize",
+    "name": "test_recognize_not_loaded_returns_empty",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineRecognize",
+    "name": "test_recognize_single_page",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineRecognize",
+    "name": "test_recognize_filters_low_confidence",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineRecognize",
+    "name": "test_recognize_empty_page",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineRecognize",
+    "name": "test_recognize_handles_exception",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineRecognize",
+    "name": "test_recognize_uses_rec_polys_fallback_to_dt_polys",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineRecognize",
+    "name": "test_recognize_skips_empty_text",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineRecognizeBatch",
+    "name": "test_batch_returns_per_page_results",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestOCREngineSaveResult",
+    "name": "test_save_creates_output",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestGetOCREngineFactory",
+    "name": "test_default_is_paddle",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_ocr_engine.py",
+    "class": "TestGetOCREngineFactory",
+    "name": "test_bailian_returns_bailian_engine",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestPageNumberDetection",
+    "name": "test_plain_number",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestPageNumberDetection",
+    "name": "test_roman_numeral_not_page",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestPageNumberDetection",
+    "name": "test_dash_number",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestPageNumberDetection",
+    "name": "test_normal_text_not_page",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestSplitParagraphs",
+    "name": "test_single_block",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestSplitParagraphs",
+    "name": "test_adjacent_blocks_merged",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestSplitParagraphs",
+    "name": "test_far_apart_blocks_separate",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestSplitParagraphs",
+    "name": "test_page_numbers_filtered",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestSplitParagraphs",
+    "name": "test_empty_blocks",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestGroupParagraphs",
+    "name": "test_empty_blocks",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestGroupParagraphs",
+    "name": "test_single_heading_with_paragraphs",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestGroupParagraphs",
+    "name": "test_nested_headings",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestGroupParagraphs",
+    "name": "test_orphan_paragraphs_before_first_heading",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestGroupParagraphs",
+    "name": "test_level3_heading",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestGroupParagraphs",
+    "name": "test_headings_from_separate_list",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestBuildHierarchy",
+    "name": "test_flat_list",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestBuildHierarchy",
+    "name": "test_nested",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_paragraph_grouper.py",
+    "class": "TestBuildHierarchy",
+    "name": "test_empty",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFInfo",
+    "name": "test_defaults",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFInfo",
+    "name": "test_all_fields",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFClassifierClassify",
+    "name": "test_classify_text_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFClassifierClassify",
+    "name": "test_classify_scan_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFClassifierClassify",
+    "name": "test_classify_empty_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFClassifierClassify",
+    "name": "test_classify_encrypted_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFClassifierClassify",
+    "name": "test_classify_large_pdf_distributed_sampling",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFClassifierClassify",
+    "name": "test_classify_no_fitz_fallback",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFClassifierClassify",
+    "name": "test_classify_page_extraction_error_handled",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFClassifierClassify",
+    "name": "test_classify_mixed_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_classifier.py",
+    "class": "TestPDFClassifierClassify",
+    "name": "test_classify_below_threshold_200_chars",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestPDFSplitterInit",
+    "name": "test_default_dpi",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestPDFSplitterInit",
+    "name": "test_custom_dpi",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestSplitToImages",
+    "name": "test_split_all_pages",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestSplitToImages",
+    "name": "test_split_page_range",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestSplitToImages",
+    "name": "test_split_end_page_beyond_total",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestSplitToImages",
+    "name": "test_split_creates_output_dir",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestSplitToImages",
+    "name": "test_split_output_filenames",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestSplitToImages",
+    "name": "test_split_zero_page_doc",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestSplitToImages",
+    "name": "test_dpi_zoom_calculation",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestSplitToBytes",
+    "name": "test_split_to_bytes_all_pages",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestSplitToBytes",
+    "name": "test_split_to_bytes_page_range",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestPDFSplitterEdgeCases",
+    "name": "test_default_dpi_from_settings_when_none_passed",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_pdf_splitter.py",
+    "class": "TestPDFSplitterEdgeCases",
+    "name": "test_custom_dpi_overrides_settings",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestOCRConfidence",
+    "name": "test_high_confidence",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestOCRConfidence",
+    "name": "test_low_confidence_penalty",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestOCRConfidence",
+    "name": "test_empty_ocr",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestStructureCompleteness",
+    "name": "test_well_structured",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestStructureCompleteness",
+    "name": "test_no_structure",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestStructureCompleteness",
+    "name": "test_high_orphan_ratio",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestHeadingQuality",
+    "name": "test_valid_hierarchy",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestHeadingQuality",
+    "name": "test_level_skip",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestHeadingQuality",
+    "name": "test_empty_sections",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestMaxHeadingDepth",
+    "name": "test_depth_3",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestMaxHeadingDepth",
+    "name": "test_empty",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestMaxHeadingDepth",
+    "name": "test_flat",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestScoreStructure",
+    "name": "test_full_scoring",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestScoreStructure",
+    "name": "test_low_quality_warnings",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_quality_scorer.py",
+    "class": "TestScoreStructure",
+    "name": "test_default_params",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestUpload",
+    "name": "test_upload_invalid_extension",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestUpload",
+    "name": "test_upload_empty_file",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestUpload",
+    "name": "test_upload_pdf_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestList",
+    "name": "test_list_empty",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestList",
+    "name": "test_list_with_status_filter",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestList",
+    "name": "test_list_invalid_sort",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestList",
+    "name": "test_list_with_sort",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestList",
+    "name": "test_list_pagination_edge",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestDetail",
+    "name": "test_detail_not_found",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestDetail",
+    "name": "test_detail_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestDetail",
+    "name": "test_detail_invalid_uuid",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestResult",
+    "name": "test_result_not_completed",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestResult",
+    "name": "test_result_no_file",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestResult",
+    "name": "test_result_success_inline",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestResult",
+    "name": "test_result_download_mode",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestResult",
+    "name": "test_result_corrupted_data",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestRetry",
+    "name": "test_retry_not_found",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestRetry",
+    "name": "test_retry_non_failed",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestRetry",
+    "name": "test_retry_failed_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestRetry",
+    "name": "test_retry_force",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestRetry",
+    "name": "test_retry_celery_dispatch_failure",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestDelete",
+    "name": "test_delete_not_found",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestDelete",
+    "name": "test_delete_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_scan_api.py",
+    "class": "TestDelete",
+    "name": "test_delete_keep_raw",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishProgress",
+    "name": "test_publishes_valid_payload",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishProgress",
+    "name": "test_progress_clamped_negative",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishProgress",
+    "name": "test_progress_clamped_above_100",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishProgress",
+    "name": "test_returns_false_on_redis_failure",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishProgress",
+    "name": "test_fractional_progress",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishProgress",
+    "name": "test_custom_channel_prefix",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishResult",
+    "name": "test_publishes_result_json",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishResult",
+    "name": "test_non_serializable_values_use_str",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishResult",
+    "name": "test_returns_false_on_redis_failure",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishResult",
+    "name": "test_custom_channel_prefix",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_stream_publisher.py",
+    "class": "TestPublishResult",
+    "name": "test_unicode_content_serialized",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestCluster1D",
+    "name": "test_empty",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestCluster1D",
+    "name": "test_single_value",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestCluster1D",
+    "name": "test_close_values_merged",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestCluster1D",
+    "name": "test_far_values_separate",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestCluster1D",
+    "name": "test_mixed_clusters",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestEstimateFontHeight",
+    "name": "test_from_items",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestEstimateFontHeight",
+    "name": "test_empty_default",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestBuildHTMLTable",
+    "name": "test_simple_table",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestBuildHTMLTable",
+    "name": "test_empty",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestTrimEmptyRowsCols",
+    "name": "test_remove_empty_row",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestTrimEmptyRowsCols",
+    "name": "test_remove_empty_col",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestRecognizeTable",
+    "name": "test_empty_input",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestRecognizeTable",
+    "name": "test_single_item",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestRecognizeTable",
+    "name": "test_simple_2x2_table",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestRecognizeTable",
+    "name": "test_confidence_avg",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_table_recognizer.py",
+    "class": "TestRecognizeTable",
+    "name": "test_html_output_contains_cells",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorExtract",
+    "name": "test_extract_single_page",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorExtract",
+    "name": "test_extract_multi_page",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorExtract",
+    "name": "test_extract_skips_non_text_blocks",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorExtract",
+    "name": "test_extract_empty_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorStructured",
+    "name": "test_extract_structured_basic",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorStructured",
+    "name": "test_extract_structured_font_distribution",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorStructured",
+    "name": "test_extract_structured_heading_candidates",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorStructured",
+    "name": "test_extract_structured_single_font_size",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorStructured",
+    "name": "test_extract_structured_skips_empty_lines",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorStructured",
+    "name": "test_extract_structured_black_font_also_bold",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestTextPDFExtractorStructured",
+    "name": "test_extract_structured_reading_order",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_text_pdf_extractor.py",
+    "class": "TestGlobalSingleton",
+    "name": "test_text_extractor_is_instance",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestValidationResult",
+    "name": "test_defaults",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestValidationResult",
+    "name": "test_with_warnings",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestValidationResult",
+    "name": "test_with_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorErrors",
+    "name": "test_file_not_found",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorErrors",
+    "name": "test_invalid_extension",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorErrors",
+    "name": "test_empty_file",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorErrors",
+    "name": "test_file_too_large",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorErrors",
+    "name": "test_encrypted_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorErrors",
+    "name": "test_empty_pdf_zero_pages",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorErrors",
+    "name": "test_too_many_pages",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorErrors",
+    "name": "test_corrupted_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorSuccess",
+    "name": "test_valid_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorSuccess",
+    "name": "test_valid_text_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorSuccess",
+    "name": "test_large_pdf_generates_warning",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorSuccess",
+    "name": "test_no_fitz_fallback",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorSuccess",
+    "name": "test_validation_exception",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestCheckTextPDF",
+    "name": "test_all_pages_have_text",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestCheckTextPDF",
+    "name": "test_some_pages_empty",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestCheckTextPDF",
+    "name": "test_page_error_handled",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorConfig",
+    "name": "test_default_allowed_extensions",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestPDFValidatorConfig",
+    "name": "test_default_max_pages",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_validator.py",
+    "class": "TestGlobalSingleton",
+    "name": "test_pdf_validator_is_instance",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestIsFileStable",
+    "name": "test_file_stable_from_start",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestIsFileStable",
+    "name": "test_file_keeps_changing",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestIsFileStable",
+    "name": "test_late_stabilization_not_detected",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestIsFileStable",
+    "name": "test_access_error",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestIsFileStable",
+    "name": "test_empty_file",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestEnsureDir",
+    "name": "test_creates_dir",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestEnsureDir",
+    "name": "test_existing_dir",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestScanWatcherHandlerInit",
+    "name": "test_init",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestOnCreated",
+    "name": "test_ignores_directory",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestOnCreated",
+    "name": "test_ignores_non_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestOnCreated",
+    "name": "test_ignores_tilde",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestOnCreated",
+    "name": "test_ignores_dotfile",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestOnCreated",
+    "name": "test_accepts_pdf",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestOnCreated",
+    "name": "test_dedup",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestOnCreated",
+    "name": "test_case_insensitive",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestHandleNewFile",
+    "name": "test_unstable",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestHandleNewFile",
+    "name": "test_validation_fails",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestHandleNewFile",
+    "name": "test_validation_none_code",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestHandleNewFile",
+    "name": "test_success",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestHandleNewFile",
+    "name": "test_exception",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestMoveToError",
+    "name": "test_moves_with_prefix",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestMoveToError",
+    "name": "test_silent_on_oserror",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestMoveToArchive",
+    "name": "test_no_conflict",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestMoveToArchive",
+    "name": "test_name_conflict",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestMoveToArchive",
+    "name": "test_silent_on_oserror",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestStartWatcher",
+    "name": "test_sets_up_and_starts",
+    "status": "PASSED"
+  },
+  {
+    "file": "test_watcher.py",
+    "class": "TestStartWatcher",
+    "name": "test_ensures_all_dirs",
+    "status": "PASSED"
+  }
+]

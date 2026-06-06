@@ -127,7 +127,7 @@ def extract_slot_info(slot: str, text: str) -> dict[str, Any]:
         return {}
 
     client = _get_client()
-    max_chars = 8000
+    max_chars = settings.llm_context_slot_limit
     truncated_text = text[:max_chars]
     if len(text) > max_chars:
         truncated_text += "\n...(文本过长已截断)"

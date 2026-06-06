@@ -352,7 +352,7 @@ class TestBailianImageEncoding:
     """图片编码测试"""
 
     def test_base64_encoding_png(self):
-        """PNG 图片正确编码为 Base64 Data URL"""
+        """PNG 图片编码时会被压缩为 JPEG 格式的 Base64 Data URL"""
         import tempfile
         from services.ocr.bailian_engine import _image_to_base64_url
 
@@ -361,7 +361,8 @@ class TestBailianImageEncoding:
             _create_test_image(png_path)
 
             url = _image_to_base64_url(png_path)
-            assert url.startswith("data:image/png;base64,")
+            # PNG 文件会被压缩转换为 JPEG（降低传输体积）
+            assert url.startswith("data:image/jpeg;base64,")
             # 验证 base64 部分可解码
             import base64
             b64_part = url.split(",", 1)[1]

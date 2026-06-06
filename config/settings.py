@@ -130,6 +130,12 @@ class Settings(BaseSettings):
     llm_retry_max: int = 3            # 429 重试最大次数
     llm_retry_base_delay: float = 2.0  # 429 重试基础延迟（秒）
 
+    # ==================== LLM 上下文截断 ====================
+    llm_context_material_detail_limit: int = 12000  # 关键类别材料OCR原文最大字数（鉴定/病历/死亡证明）
+    llm_context_material_normal_limit: int = 5000   # 普通类别材料OCR原文最大字数
+    llm_context_merged_limit: int = 60000           # 合并上下文最大字数（Slot提取）
+    llm_context_slot_limit: int = 15000             # 单槽位提取上下文最大字数
+
     # ==================== 预处理 ====================
     preprocess_dpi: int = 300
     preprocess_deskew: bool = True

@@ -118,8 +118,8 @@ class TestPDFValidatorErrors:
         assert result.error_code == "EMPTY_PDF"
 
     def test_too_many_pages(self):
-        """超过 500 页限制"""
-        mock_fitz = _make_mock_fitz(page_count=501, is_encrypted=False)
+        """超过 2000 页限制"""
+        mock_fitz = _make_mock_fitz(page_count=2001, is_encrypted=False)
         with patch.dict(sys.modules, {"fitz": mock_fitz}):
             with patch("pathlib.Path.exists", return_value=True):
                 with patch("pathlib.Path.stat") as mock_stat:
@@ -273,10 +273,10 @@ class TestCheckTextPDF:
 
 class TestPDFValidatorConfig:
     def test_default_allowed_extensions(self):
-        assert PDFValidator.ALLOWED_EXTENSIONS == {".pdf"}
+        assert PDFValidator.ALLOWED_EXTENSIONS == {".pdf", ".mp3", ".wav", ".m4a", ".amr", ".aac"}
 
     def test_default_max_pages(self):
-        assert PDFValidator.MAX_PAGES == 500
+        assert PDFValidator.MAX_PAGES == 2000
 
 
 # ── 全局单例 ──────────────────────────────────────────────
