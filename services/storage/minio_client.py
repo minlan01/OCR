@@ -34,9 +34,11 @@ class MinioClient:
         if self._client is None:
             import urllib3
             # 设置 HTTP 超时防止挂起（连接 5s，读取 30s）
+            # maxsize=10: 连接池大小调大，避免并发下载时 "Connection pool is full" 丢弃连接
             http_client = urllib3.PoolManager(
                 timeout=urllib3.Timeout(connect=5.0, read=30.0),
                 retries=urllib3.Retry(total=3, backoff_factor=0.5),
+                maxsize=10,
             )
             self._client = Minio(
                 endpoint=settings.minio_endpoint,

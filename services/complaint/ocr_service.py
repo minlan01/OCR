@@ -112,33 +112,39 @@ def _extract_pptx_text(file_bytes: bytes) -> dict:
 
 
 def ocr_image(image_bytes: bytes, filename: str = "upload.png") -> dict:
+    """OCR 识别图片文件
+
+    使用 TemporaryDirectory 确保临时文件在退出时自动清理，
+    避免 /tmp 残留撑满 tmpfs。
+    """
     engine = _get_engine()
 
     suffix = Path(filename).suffix.lower() or ".png"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(image_bytes)
-        tmp_path = Path(tmp.name)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / f"input{suffix}"
+        tmp_path.write_bytes(image_bytes)
 
-    try:
         results = engine.recognize(tmp_path)
-        text_lines = []
-        for r in results:
-            text_lines.append(r.get("text", ""))
-        full_text = "\n".join(text_lines)
-        return {
-            "full_text": full_text,
-            "blocks": results,
-            "block_count": len(results),
-            "source_type": "image_ocr",
-        }
-    finally:
-        tmp_path.unlink(missing_ok=True)
+
+    text_lines = []
+    for r in results:
+        text_lines.append(r.get("text", ""))
+    full_text = "\n".join(text_lines)
+    return {
+        "full_text": full_text,
+        "blocks": results,
+        "block_count": len(results),
+        "source_type": "image_ocr",
+    }
 
 
 def ocr_pdf(pdf_bytes: bytes, filename: str = "upload.pdf") -> dict:
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(pdf_bytes)
-        tmp_path = Path(tmp.name)
+    """OCR 识别 PDF 文件
+
+    优化：直接从内存打开 PDF（fitz.open(stream=...)），无需将整份 PDF
+    再写入 /tmp，避免并发处理大 PDF 时撑满 tmpfs。
+    """
+    import fitz as _fitz
 
     try:
         from services.preprocessor.pdf_splitter import PDFSplitter
@@ -146,16 +152,26 @@ def ocr_pdf(pdf_bytes: bytes, filename: str = "upload.pdf") -> dict:
         use_cloud_ocr = settings.ocr_engine_type in ("bailian", "dashscope", "qwen")
         split_dpi = 150 if use_cloud_ocr else settings.preprocess_dpi
 
-        with tempfile.TemporaryDirectory() as pages_dir:
+        with tempfile.TemporaryDirectory() as work_dir:
+            work_path = Path(work_dir)
+            pages_dir = work_path / "pages"
+            pages_dir.mkdir()
+
+            # 从内存流打开 PDF，再保存到临时目录供 PDFSplitter 使用
+            doc = _fitz.open(stream=pdf_bytes, filetype="pdf")
+            pdf_tmp = work_path / "input.pdf"
+            doc.save(str(pdf_tmp))
+            doc.close()
+
             splitter = PDFSplitter(dpi=split_dpi)
-            image_paths = splitter.split_to_images(tmp_path, Path(pages_dir))
+            image_paths = splitter.split_to_images(pdf_tmp, pages_dir)
 
             if not image_paths:
                 return {"full_text": "", "blocks": [], "block_count": 0, "page_count": 0, "source_type": "pdf_ocr"}
 
             from services.ocr.batch_processor import OCRBatchProcessor
             processor = OCRBatchProcessor()
-            ocr_summary = processor.process_pages(image_paths, Path(pages_dir) / "ocr")
+            ocr_summary = processor.process_pages(image_paths, pages_dir / "ocr")
 
         all_text_parts = []
         all_blocks = []
@@ -176,8 +192,9 @@ def ocr_pdf(pdf_bytes: bytes, filename: str = "upload.pdf") -> dict:
             "page_count": ocr_summary.get("total_pages", len(image_paths)),
             "source_type": "pdf_ocr",
         }
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    except Exception:
+        logger.exception(f"ocr_pdf failed for {filename}")
+        raise
 
 
 OFFICE_SUFFIXES = {".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt"}

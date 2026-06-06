@@ -157,6 +157,8 @@ services:
       - "${API_HOST_PORT:-8900}:8900"
     volumes:
       - scanstruct_templates:/app/template_output
+    tmpfs:
+      - /tmp:size=512M
     depends_on:
       postgres:
         condition: service_healthy
@@ -202,7 +204,7 @@ services:
       minio:
         condition: service_healthy
     tmpfs:
-      - /tmp:size=128M
+      - /tmp:size=512M
     deploy:
       resources:
         limits:
@@ -243,12 +245,16 @@ services:
 volumes:
   scanstruct_pgdata:
     name: ocrscanstruct_scanstruct_pgdata
+    external: true
   scanstruct_redisdata:
     name: ocrscanstruct_scanstruct_redisdata
+    external: true
   scanstruct_miniodata:
     name: ocrscanstruct_scanstruct_miniodata
+    external: true
   scanstruct_templates:
     name: ocrscanstruct_scanstruct_templates
+    external: true
 
 networks:
   scanstruct-net:
