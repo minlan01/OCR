@@ -158,7 +158,7 @@ services:
       - "${API_HOST_PORT:-8900}:8900"
     volumes:
       - scanstruct_templates:/app/template_output
-      - scanstruct_logs_api:/app/logs
+      - ./logs/api:/app/logs
     tmpfs:
       - /tmp:size=512M
     depends_on:
@@ -211,7 +211,7 @@ services:
       minio:
         condition: service_healthy
     volumes:
-      - scanstruct_logs_worker:/app/logs
+      - ./logs/worker:/app/logs
     tmpfs:
       - /tmp:size=512M
     deploy:
@@ -264,10 +264,6 @@ volumes:
   scanstruct_templates:
     name: ocrscanstruct_scanstruct_templates
     external: true
-  scanstruct_logs_api:
-    name: ocrscanstruct_scanstruct_logs_api
-  scanstruct_logs_worker:
-    name: ocrscanstruct_scanstruct_logs_worker
 
 networks:
   scanstruct-net:
