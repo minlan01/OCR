@@ -25,6 +25,7 @@ Thumbs.db
 scan_input/
 scan_error/
 scan_archive/
+logs/
 *.log
 
 # Docker

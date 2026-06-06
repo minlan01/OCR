@@ -144,6 +144,9 @@ class Settings(BaseSettings):
     preprocess_crop_border: bool = True
     skip_classify: bool = False
 
+    # ==================== 日志 ====================
+    log_dir: str = str(PROJECT_ROOT / "logs")  # 日志目录（Docker 环境设为 /app/logs）
+
     # ==================== Callback ====================
     callback_timeout_seconds: int = 10
     callback_retry_delays: str | list[int] = [10, 30, 60]

@@ -1,6 +1,10 @@
 """
 ScanStruct 统一日志配置
 使用 loguru，输出到控制台 + 文件
+
+日志目录通过 settings.log_dir 配置:
+- 本地开发: 默认 PROJECT_ROOT/logs
+- Docker: 环境变量 LOG_DIR=/app/logs（挂载到宿主机）
 """
 from __future__ import annotations
 
@@ -9,7 +13,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from config.settings import settings, PROJECT_ROOT
+from config.settings import settings
 
 
 def setup_logging() -> None:
@@ -17,9 +21,9 @@ def setup_logging() -> None:
     # 移除默认 handler
     logger.remove()
 
-    # 日志目录
-    log_dir = PROJECT_ROOT / "logs"
-    log_dir.mkdir(exist_ok=True)
+    # 日志目录（支持环境变量配置，Docker 用 /app/logs，本地开发用项目根目录/logs）
+    log_dir = Path(settings.log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     # 日志格式
     log_format = (
@@ -71,4 +75,4 @@ def setup_logging() -> None:
         encoding="utf-8",
     )
 
-    logger.info(f"Logging initialized | env={settings.app_env} | app={settings.app_name}")
+    logger.info(f"Logging initialized | env={settings.app_env} | app={settings.app_name} | log_dir={log_dir}")
