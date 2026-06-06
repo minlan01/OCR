@@ -6,7 +6,7 @@ FROM node:22-slim AS frontend-builder
 WORKDIR /build/static
 
 COPY static/package.json static/package-lock.json ./
-RUN npm ci --prefer-offline
+RUN npm ci --prefer-offline --registry=https://registry.npmmirror.com
 
 COPY static/ ./
 ARG VITE_API_KEY
@@ -24,7 +24,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 WORKDIR /build
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir --target=/install -r requirements.txt
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --target=/install -r requirements.txt
 
 # =====================================================
 # Stage 3: Runtime
