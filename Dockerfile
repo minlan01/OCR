@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0t64 \
     libgomp1 \
+    fonts-wqy-zenhei \
     fonts-noto-cjk \
     fontconfig \
     && fc-cache -f \
@@ -55,6 +56,10 @@ RUN groupadd -r scanstruct -g 10000 \
 WORKDIR /app
 
 COPY --from=python-builder /install /usr/local/lib/python3.12/site-packages
+
+# 内置中文字体 (simhei.ttf — reportlab 兼容的纯 TTF 格式)
+RUN mkdir -p /app/fonts
+COPY fonts/simhei.ttf /app/fonts/simhei.ttf
 
 COPY --chown=scanstruct:scanstruct . .
 

@@ -1232,28 +1232,19 @@ async def export_filing_evidence(
     _cleanup_old_export(case, "立案证据.docx")
 
     try:
-        from services.evidence.word_generator import generate_filing_evidence
-        doc_key = generate_filing_evidence(str(case_id))
+        from services.evidence.word_generator import generate_filing_evidence_inline_data
+        catalog_data = case.catalog_data or {}
+        analysis_result = case.analysis_result or {}
+        doc_bytes = generate_filing_evidence_inline_data(catalog_data, analysis_result)
+        if not doc_bytes:
+            raise ValueError("Generated document is empty")
     except Exception as e:
         logger.error(f"Failed to generate filing evidence for case {case_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate document")
 
-    # 追踪新文件
-    _track_export(case, "立案证据.docx", doc_key)
-
-    try:
-        from services.storage.minio_client import minio_client
-        data = minio_client.download_bytes(
-            bucket=EVIDENCE_MINIO_BUCKET,
-            object_key=doc_key,
-        )
-    except Exception as e:
-        logger.error(f"Failed to download filing evidence for case {case_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve document")
-
     safe_filename = quote(f"立案证据_{case.case_name}.docx")
     return Response(
-        content=data,
+        content=doc_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}",
@@ -1329,28 +1320,19 @@ async def export_appraisal_app(
     _cleanup_old_export(case, "司法鉴定申请书.docx")
 
     try:
-        from services.evidence.word_generator import generate_appraisal_application
-        doc_key = generate_appraisal_application(str(case_id))
+        from services.evidence.word_generator import generate_appraisal_inline_data
+        catalog_data = case.catalog_data or {}
+        analysis_result = case.analysis_result or {}
+        doc_bytes = generate_appraisal_inline_data(catalog_data, analysis_result)
+        if not doc_bytes:
+            raise ValueError("Generated document is empty")
     except Exception as e:
         logger.error(f"Failed to generate appraisal application for case {case_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate document")
 
-    # 追踪新文件
-    _track_export(case, "司法鉴定申请书.docx", doc_key)
-
-    try:
-        from services.storage.minio_client import minio_client
-        data = minio_client.download_bytes(
-            bucket=EVIDENCE_MINIO_BUCKET,
-            object_key=doc_key,
-        )
-    except Exception as e:
-        logger.error(f"Failed to download appraisal application for case {case_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve document")
-
     safe_filename = quote(f"司法鉴定申请书_{case.case_name}.docx")
     return Response(
-        content=data,
+        content=doc_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}",
@@ -1372,28 +1354,19 @@ async def export_compensation(
     _cleanup_old_export(case, "赔偿费用清单.xlsx")
 
     try:
-        from services.evidence.excel_generator import generate_compensation_summary
-        doc_key = generate_compensation_summary(str(case_id))
+        from services.evidence.excel_generator import generate_compensation_inline_data
+        catalog_data = case.catalog_data or {}
+        analysis_result = case.analysis_result or {}
+        doc_bytes = generate_compensation_inline_data(catalog_data, analysis_result)
+        if not doc_bytes:
+            raise ValueError("Generated document is empty")
     except Exception as e:
         logger.error(f"Failed to generate compensation summary for case {case_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate document")
 
-    # 追踪新文件
-    _track_export(case, "赔偿费用清单.xlsx", doc_key)
-
-    try:
-        from services.storage.minio_client import minio_client
-        data = minio_client.download_bytes(
-            bucket=EVIDENCE_MINIO_BUCKET,
-            object_key=doc_key,
-        )
-    except Exception as e:
-        logger.error(f"Failed to download compensation summary for case {case_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve document")
-
     safe_filename = quote(f"赔偿费用清单_{case.case_name}.xlsx")
     return Response(
-        content=data,
+        content=doc_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}",

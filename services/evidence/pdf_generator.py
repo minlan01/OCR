@@ -29,6 +29,7 @@ MINIO_BUCKET = "scan-result"
 
 # 中文字体注册标记
 _FONT_REGISTERED = False
+_REGISTERED_FONT_NAME = ""
 
 # 身份证明类别（小图网格，需要身份证配对等特殊处理）
 IDENTITY_CATEGORIES_FULL = {
@@ -89,9 +90,9 @@ def _get_output_group(cat_code: str, filename: str) -> tuple[str | None, bool]:
 
 def _ensure_chinese_font() -> str:
     """确保中文字体已注册，返回字体名称"""
-    global _FONT_REGISTERED
+    global _FONT_REGISTERED, _REGISTERED_FONT_NAME
     if _FONT_REGISTERED:
-        return "ChineseFont"
+        return _REGISTERED_FONT_NAME
 
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
@@ -100,11 +101,13 @@ def _ensure_chinese_font() -> str:
         ("/app/fonts/simhei.ttf", "ChineseFont"),
         ("/app/fonts/NotoSansSC-Regular.ttf", "ChineseFont"),
         ("/app/fonts/SourceHanSansSC-Regular.otf", "ChineseFont"),
+        ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", "ChineseFont"),
+        ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", "ChineseFont"),
         ("C:/Windows/Fonts/msyh.ttc", "ChineseFont"),
         ("C:/Windows/Fonts/simsun.ttc", "ChineseFont"),
         ("C:/Windows/Fonts/simhei.ttf", "ChineseFont"),
-        ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "ChineseFont"),
         ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "ChineseFont"),
+        ("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "ChineseFont"),
         ("/System/Library/Fonts/PingFang.ttc", "ChineseFont"),
     ]
 
@@ -113,6 +116,7 @@ def _ensure_chinese_font() -> str:
             try:
                 pdfmetrics.registerFont(TTFont(name, fp))
                 _FONT_REGISTERED = True
+                _REGISTERED_FONT_NAME = name
                 logger.info(f"Registered Chinese font: {name} from {fp}")
                 return name
             except Exception as e:
@@ -121,6 +125,7 @@ def _ensure_chinese_font() -> str:
 
     logger.warning("No Chinese font found, PDF may not render Chinese correctly")
     _FONT_REGISTERED = True
+    _REGISTERED_FONT_NAME = "Helvetica"
     return "Helvetica"
 
 
