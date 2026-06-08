@@ -64,3 +64,4 @@ minio/minio.exe
 .file_monitor_state.json
 monitor_files.ps1
 monitor_files.py
+docs/test_docstrings.json

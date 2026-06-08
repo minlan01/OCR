@@ -1100,20 +1100,21 @@ class TestCeleryServiceConsistency:
 
     def test_process_full_task_calls_correct_services(self):
         """process_evidence_full 任务应依次调用 OCR → 分类 → 生成清单"""
-        # 静态验证：检查 evidence_tasks.py 中 process_evidence_full 的调用链
+        # 静态验证：检查 evidence_tasks.py 中 _do_process_evidence_full 的调用链
+        # （实际逻辑已从 process_evidence_full 移至 _do_process_evidence_full，并发控制在入口层）
         import inspect
         from worker import evidence_tasks
 
-        source = inspect.getsource(evidence_tasks.process_evidence_full)
+        source = inspect.getsource(evidence_tasks._do_process_evidence_full)
 
         # 应包含 OCR pipeline
-        assert "_run_ocr_pipeline" in source, "process_evidence_full missing _run_ocr_pipeline call"
+        assert "_run_ocr_pipeline" in source, "_do_process_evidence_full missing _run_ocr_pipeline call"
         # 应包含分类 pipeline
-        assert "_run_classify_pipeline" in source, "process_evidence_full missing _run_classify_pipeline call"
+        assert "_run_classify_pipeline" in source, "_do_process_evidence_full missing _run_classify_pipeline call"
         # 应包含清单生成
-        assert "generate_catalog" in source, "process_evidence_full missing generate_catalog call"
+        assert "generate_catalog" in source, "_do_process_evidence_full missing generate_catalog call"
         # 应更新状态为 catalog_ready
-        assert "catalog_ready" in source, "process_evidence_full should set status to catalog_ready"
+        assert "catalog_ready" in source, "_do_process_evidence_full should set status to catalog_ready"
 
     def test_analyze_task_calls_correct_service(self):
         """analyze_evidence 任务应调用 analyze_catalog"""

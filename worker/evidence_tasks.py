@@ -133,15 +133,31 @@ def generate_evidence_catalog(self, case_id: str):
         raise self.retry(exc=e)
 
 
-@celery_app.task(bind=True, name="process_evidence_full", max_retries=1)
+@celery_app.task(bind=True, name="process_evidence_full", max_retries=5)
 def process_evidence_full(self, case_id: str):
     """一键处理（优化版）：流水线并发 OCR → 分类+提取 → 目录
 
     改造要点：
-    1. OCR 阶段：多线程并发（max_workers = bailian_text_max_concurrent）
+    1. OCR 阶段：多线程并发（max_workers = 2，保守值防止10人并发时CPU过载）
     2. 分类+提取：OCR 完成后立即批量分类+提取（合并 LLM 调用）
     3. 目录生成：全部分类完成后生成
+    4. 并发控制：通过 Redis 信号量限制同时处理的案件数（默认3个）
     """
+    from services.utils.task_concurrency import try_acquire_case, release_case
+
+    # 并发控制：超过上限则排队等待
+    if not try_acquire_case():
+        logger.warning(f"[并发控制] case_id={case_id} 系统繁忙，60秒后重试")
+        raise self.retry(countdown=60)
+
+    try:
+        return _do_process_evidence_full(self, case_id)
+    finally:
+        release_case()
+
+
+def _do_process_evidence_full(self, case_id: str):
+    """process_evidence_full 的实际处理逻辑（已获取并发许可）"""
     logger.info(f"Evidence full processing (pipeline) started: case_id={case_id}")
 
     try:
@@ -379,7 +395,7 @@ def _run_ocr_pipeline(case_id: str) -> dict:
                     return _ocr_single_material(mid)
 
                 mat_ids = [str(m.id) for m in materials]
-                with ThreadPoolExecutor(max_workers=settings.bailian_text_max_concurrent) as pool:
+                with ThreadPoolExecutor(max_workers=2) as pool:
                     futures = {pool.submit(_process_one, mid): mid for mid in mat_ids}
                     for future in futures:
                         try:
@@ -655,7 +671,7 @@ def _run_classify_pipeline(case_id: str) -> dict:
                         return {"success": False, "error": str(e)}
 
                 mat_ids = [str(m.id) for m in materials]
-                with ThreadPoolExecutor(max_workers=3) as pool:
+                with ThreadPoolExecutor(max_workers=2) as pool:
                     futures = {pool.submit(_classify_one, mid): mid for mid in mat_ids}
                     for future in futures:
                         try:

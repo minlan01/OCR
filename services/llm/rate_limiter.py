@@ -36,11 +36,11 @@ from loguru import logger
 from config.settings import settings
 
 
-# 默认并发上限
+# 默认并发上限（保守值，适合4核8G服务器10人并发场景）
 DEFAULT_LIMITS = {
-    "text": 5,   # 文本深度分析
-    "ocr": 10,   # OCR 识别
-    "flash": 15,  # 快速模型（分类/提取）
+    "text": 2,   # 文本深度分析（最耗API配额）
+    "ocr": 5,    # OCR 识别
+    "flash": 8,  # 快速模型（分类/提取）
 }
 
 # 信号量键前缀

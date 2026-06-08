@@ -121,12 +121,12 @@ class Settings(BaseSettings):
 
     # ==================== Celery ====================
     celery_queue_name: str = "scanstruct"
-    celery_task_timeout_seconds: int = 7200  # 单个任务最大执行时间（2小时）
+    celery_task_timeout_seconds: int = 1800  # 单个任务最大执行时间（30分钟，防止卡任务堆积）
 
     # ==================== LLM 限流 ====================
-    llm_rate_limiter_text: int = 5   # 文本分析全局最大并发
-    llm_rate_limiter_ocr: int = 10   # OCR 全局最大并发
-    llm_rate_limiter_flash: int = 15  # 快速模型（分类）全局最大并发
+    llm_rate_limiter_text: int = 2   # 文本分析全局最大并发（保守值，防10人并发时API限流）
+    llm_rate_limiter_ocr: int = 5    # OCR 全局最大并发
+    llm_rate_limiter_flash: int = 8  # 快速模型（分类）全局最大并发
     llm_retry_max: int = 3            # 429 重试最大次数
     llm_retry_base_delay: float = 2.0  # 429 重试基础延迟（秒）
 
