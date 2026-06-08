@@ -303,6 +303,65 @@ async def update_case(
     return _build_case_out(case)
 
 
+@router.post("/cases/{case_id}/cancel", response_model=MessageResponse)
+@limiter.limit("10/minute")
+async def cancel_case(
+    request: Request,
+    case_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """取消正在处理的案件：杀掉 Celery 任务 + 清理 OCR 进程 + 标记为 failed"""
+    case = await _get_case_or_404(case_id, db)
+
+    ACTIVE_STATUSES = {"processing", "analyzing", "exporting"}
+    if case.status not in ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"案件当前状态为 '{case.status}'，无法取消。只能取消正在处理的案件。",
+        )
+
+    # 1. 查找并撤销该案件关联的 Celery 任务
+    cancelled_tasks = []
+    try:
+        from worker.celery_app import celery_app as _celery
+        # 查找活跃任务
+        active = _celery.control.inspect().get("active", {})
+        task_names = [
+            "process_evidence_full",
+            "analyze_evidence",
+            "export_evidence_bundle",
+        ]
+        for worker_name, tasks in active.items():
+            for t in tasks:
+                if (
+                    t.get("name") in task_names
+                    and t.get("args")
+                    and len(t["args"]) > 0
+                    and str(t["args"][0]) == str(case_id)
+                ):
+                    task_id = t["id"]
+                    _celery.control.revoke(task_id, terminate=True, signal="SIGKILL")
+                    cancelled_tasks.append(task_id)
+                    logger.warning(f"Revoked Celery task {task_id} for case {case_id}")
+    except Exception as e:
+        logger.warning(f"Failed to revoke Celery tasks for case {case_id}: {e}")
+
+    # 2. 清理 worker /tmp 下该案件的 OCR 临时文件（通过 Redis pub/sub 或直接标记）
+    # Worker 进程被 SIGKILL 后会自动释放资源
+
+    # 3. 更新案件状态为 failed
+    case.status = "failed"
+    await db.commit()
+
+    logger.info(
+        f"Cancelled case {case_id}: revoked {len(cancelled_tasks)} tasks, "
+        f"tasks={cancelled_tasks}"
+    )
+    return MessageResponse(
+        message=f"案件 '{case.case_name}' 已取消，{len(cancelled_tasks)} 个后台任务已终止"
+    )
+
+
 @router.delete("/cases/{case_id}", response_model=MessageResponse)
 @limiter.limit("30/minute")
 async def delete_case(
@@ -310,8 +369,21 @@ async def delete_case(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """删除案件及其所有材料、步骤（ORM级联删除）+ 清理MinIO存储"""
+    """删除案件及其所有材料、步骤（ORM级联删除）+ 清理MinIO存储
+
+    processing/analyzing/exporting 状态的案件必须先调用 /cancel 取消后才能删除。
+    """
     case = await _get_case_or_404(case_id, db)
+
+    # 状态保护：正在处理的案件不允许直接删除（会导致数据库锁竞争）
+    ACTIVE_STATUSES = {"processing", "analyzing", "exporting"}
+    if case.status in ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"案件正在{ {'processing':'处理','analyzing':'分析','exporting':'导出'}.get(case.status, '处理') }中"
+                   f"（状态: {case.status}），请先取消后再删除。"
+                   f"可调用 POST /api/v1/evidence/cases/{case_id}/cancel 取消处理。",
+        )
 
     # 清理 MinIO 中该案件的所有文件（上传素材 + 生成文档 + 导出包）
     try:
@@ -694,8 +766,20 @@ async def delete_material(
     material_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """删除材料（同时清理 MinIO 文件）"""
-    await _check_case_exists(case_id, db)
+    """删除材料（同时清理 MinIO 文件）
+
+    案件正在 processing 时禁止删除材料（会导致锁竞争），
+    请先取消案件处理后再删除。
+    """
+    case = await _check_case_exists(case_id, db)
+
+    # 状态保护
+    ACTIVE_STATUSES = {"processing", "analyzing", "exporting"}
+    if case.status in ACTIVE_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"案件正在处理中（状态: {case.status}），无法删除材料。请先取消处理。",
+        )
 
     stmt = select(EvidenceMaterial).where(
         EvidenceMaterial.id == material_id,

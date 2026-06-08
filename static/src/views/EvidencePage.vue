@@ -1888,13 +1888,26 @@ async function handleSaveEdit() {
 }
 
 function confirmDeleteCase(row: EvidenceCaseListItem) {
+  const isActive = ['processing', 'analyzing', 'exporting'].includes(row.status)
+  const contentText = isActive
+    ? `案件「${row.case_name}」正在处理中，需要先停止处理才能删除。确定要停止并删除吗？`
+    : `确定要删除案件「${row.case_name}」吗？所有素材和进度将一并删除，此操作不可恢复。`
+
   dialog.error({
-    title: '确认删除',
-    content: `确定要删除案件「${row.case_name}」吗？所有素材和进度将一并删除，此操作不可恢复。`,
-    positiveText: '删除',
+    title: isActive ? '停止并删除' : '确认删除',
+    content: contentText,
+    positiveText: isActive ? '停止并删除' : '删除',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
+        // 如果案件正在处理中，先取消（杀掉 Celery 任务）
+        if (isActive) {
+          try {
+            await evidenceApi.cancelCase(row.id)
+          } catch {
+            // 取消失败也继续尝试删除
+          }
+        }
         await evidenceApi.deleteCase(row.id)
         message.success('案件已删除')
         await loadCaseList()

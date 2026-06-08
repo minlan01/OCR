@@ -163,7 +163,12 @@ export async function updateCase(caseId: string, data: {
   return api.put<EvidenceCase>(`/evidence/cases/${caseId}`, data)
 }
 
-/** 删除案件 */
+/** 取消正在处理的案件（杀掉 Celery 任务 + 标记 failed） */
+export async function cancelCase(caseId: string): Promise<{ message: string }> {
+  return api.post<{ message: string }>(`/evidence/cases/${caseId}/cancel`)
+}
+
+/** 删除案件（processing 状态需先 cancel） */
 export async function deleteCase(caseId: string): Promise<{ message: string }> {
   return api.del(`/evidence/cases/${caseId}`)
 }
