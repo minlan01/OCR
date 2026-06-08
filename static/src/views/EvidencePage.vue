@@ -1584,14 +1584,54 @@ async function handleRetryFailed() {
   }
 }
 
-// 停止处理（前端停止轮询，后端 Celery 任务继续跑但不等结果）
+// 停止处理（真正杀掉后端 Celery 任务 + OCR 进程）
 const stoppingProcess = ref(false)
-function handleStopProcess() {
+async function handleStopProcess() {
+  if (!currentCase.value) return
   stoppingProcess.value = true
-  stopProgressPoll()
-  processing.value = false
-  message.info('已停止轮询进度（后台处理不会中断，重新进入案件可继续查看）')
-  setTimeout(() => { stoppingProcess.value = false }, 500)
+  try {
+    await evidenceApi.cancelCase(currentCase.value.id)
+    stopProgressPoll()
+    processing.value = false
+    message.success('已停止处理，后台 OCR/LLM 进程已终止')
+    // 刷新案件数据以反映 failed 状态
+    await loadCaseList()
+    if (currentCase.value) {
+      currentCase.value.status = 'failed'
+    }
+  } catch (e: unknown) {
+    message.error('停止处理失败：' + (e as Error).message)
+  } finally {
+    stoppingProcess.value = false
+  }
+}
+
+// 案件列表中的停止按钮（独立于删除）
+const cancellingCase = ref<string | null>(null)
+async function confirmCancelCase(row: EvidenceCaseListItem) {
+  const ACTIVE_STATUSES = ['processing', 'analyzing', 'exporting']
+  if (!ACTIVE_STATUSES.includes(row.status)) {
+    message.warning('该案件当前不在处理中，无需停止')
+    return
+  }
+  dialog.warning({
+    title: '停止处理',
+    content: `确定要停止案件「${row.case_name}」的处理吗？所有 OCR 和 LLM 进程将被终止，案件状态将变为"失败"。`,
+    positiveText: '停止处理',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      cancellingCase.value = row.id
+      try {
+        await evidenceApi.cancelCase(row.id)
+        message.success('案件已停止处理')
+        await loadCaseList()
+      } catch (e: unknown) {
+        message.error('停止失败：' + (e as Error).message)
+      } finally {
+        cancellingCase.value = null
+      }
+    },
+  })
 }
 
 // 加载目录
@@ -1888,26 +1928,23 @@ async function handleSaveEdit() {
 }
 
 function confirmDeleteCase(row: EvidenceCaseListItem) {
-  const isActive = ['processing', 'analyzing', 'exporting'].includes(row.status)
-  const contentText = isActive
-    ? `案件「${row.case_name}」正在处理中，需要先停止处理才能删除。确定要停止并删除吗？`
-    : `确定要删除案件「${row.case_name}」吗？所有素材和进度将一并删除，此操作不可恢复。`
+  const ACTIVE_STATUSES = ['processing', 'analyzing', 'exporting']
+  if (ACTIVE_STATUSES.includes(row.status)) {
+    dialog.warning({
+      title: '无法删除',
+      content: `案件「${row.case_name}」正在处理中，请先点击"停止"按钮终止处理后再删除。`,
+      positiveText: '知道了',
+    })
+    return
+  }
 
   dialog.error({
-    title: isActive ? '停止并删除' : '确认删除',
-    content: contentText,
-    positiveText: isActive ? '停止并删除' : '删除',
+    title: '确认删除',
+    content: `确定要删除案件「${row.case_name}」吗？所有素材和进度将一并删除，此操作不可恢复。`,
+    positiveText: '删除',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        // 如果案件正在处理中，先取消（杀掉 Celery 任务）
-        if (isActive) {
-          try {
-            await evidenceApi.cancelCase(row.id)
-          } catch {
-            // 取消失败也继续尝试删除
-          }
-        }
         await evidenceApi.deleteCase(row.id)
         message.success('案件已删除')
         await loadCaseList()
@@ -1926,15 +1963,24 @@ const caseListColumns = [
   { title: '状态', key: 'status', width: 120, render: (row: EvidenceCaseListItem) => h(NTag, { type: statusTagType(row.status), size: 'small' }, { default: () => statusLabel(row.status) }) },
   { title: '创建时间', key: 'created_at', width: 160, render: (row: EvidenceCaseListItem) => new Date(row.created_at).toLocaleString() },
   {
-    title: '操作', key: 'action', width: 200,
-    render: (row: EvidenceCaseListItem) =>
-      h(NSpace, { size: 'small' }, {
-        default: () => [
-          h(NButton, { size: 'small', type: 'primary', onClick: () => continueCase(row.id) }, { default: () => '继续' }),
-          h(NButton, { size: 'small', onClick: () => openEditModal(row) }, { default: () => '编辑' }),
-          h(NButton, { size: 'small', type: 'error', onClick: () => confirmDeleteCase(row) }, { default: () => '删除' }),
-        ],
-      }),
+    title: '操作', key: 'action', width: 260,
+    render: (row: EvidenceCaseListItem) => {
+      const ACTIVE_STATUSES = ['processing', 'analyzing', 'exporting']
+      const isActive = ACTIVE_STATUSES.includes(row.status)
+      const buttons = [
+        h(NButton, { size: 'small', type: 'primary', onClick: () => continueCase(row.id) }, { default: () => '继续' }),
+        h(NButton, { size: 'small', onClick: () => openEditModal(row) }, { default: () => '编辑' }),
+      ]
+      if (isActive) {
+        buttons.push(
+          h(NButton, { size: 'small', type: 'warning', loading: cancellingCase.value === row.id, onClick: () => confirmCancelCase(row) }, { default: () => '停止' }),
+        )
+      }
+      buttons.push(
+        h(NButton, { size: 'small', type: 'error', onClick: () => confirmDeleteCase(row) }, { default: () => '删除' }),
+      )
+      return h(NSpace, { size: 'small' }, { default: () => buttons })
+    },
   },
 ]
 
