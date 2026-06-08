@@ -207,7 +207,10 @@ def _do_process_evidence_full(self, case_id: str):
                 f"Full processing will retry ({self.request.retries + 1}/{self.max_retries}) "
                 f"for case {case_id}, keeping current status"
             )
-        raise self.retry(exc=e)@celery_app.task(bind=True, name="analyze_evidence", max_retries=2)
+        raise self.retry(exc=e)
+
+
+@celery_app.task(bind=True, name="analyze_evidence", max_retries=2)
 def analyze_evidence(self, case_id: str):
     """分析证据清单 → 提取槽位数据 → 生成文档数据"""
     logger.info(f"Evidence analysis started: case_id={case_id}")
