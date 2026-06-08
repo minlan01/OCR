@@ -84,6 +84,14 @@ def process_evidence_ocr(self, case_id: str):
         return {"case_id": case_id, "status": result.get("status", "completed"), "summary": result}
     except Exception as e:
         logger.error(f"Evidence OCR fatal error: case_id={case_id} | {e}")
+        # 重试期间保持当前状态，仅最后一次重试失败设 failed
+        if self.request.retries >= self.max_retries:
+            _update_case_status(case_id, "failed")
+        else:
+            logger.info(
+                f"OCR will retry ({self.request.retries + 1}/{self.max_retries}) "
+                f"for case {case_id}, keeping current status"
+            )
         raise self.retry(exc=e)
 
 
@@ -102,6 +110,14 @@ def process_evidence_classify(self, case_id: str):
         return {"case_id": case_id, "status": result.get("status", "completed"), "summary": result}
     except Exception as e:
         logger.error(f"Evidence classification fatal error: case_id={case_id} | {e}")
+        # 重试期间保持当前状态，仅最后一次重试失败设 failed
+        if self.request.retries >= self.max_retries:
+            _update_case_status(case_id, "failed")
+        else:
+            logger.info(
+                f"Classification will retry ({self.request.retries + 1}/{self.max_retries}) "
+                f"for case {case_id}, keeping current status"
+            )
         raise self.retry(exc=e)
 
 
@@ -249,8 +265,156 @@ def analyze_evidence(self, case_id: str):
 
 @celery_app.task(bind=True, name="export_evidence_bundle", max_retries=1)
 def export_evidence_bundle(self, case_id: str):
-    """一键打包导出"""
+    """一键打包导出 — 异步生成所有文档并上传 MinIO
+
+    生成文件列表：
+    1. 立案证据.docx
+    2. 民事起诉状.docx
+    3. 司法鉴定申请书.docx
+    4. 赔偿费用清单.xlsx
+    5. 医疗费用汇总表.xlsx
+    """
     logger.info(f"Evidence bundle export started: case_id={case_id}")
+
+    try:
+        uuid.UUID(case_id)
+    except ValueError:
+        return {"case_id": case_id, "status": "failed", "error": "Invalid case_id format"}
+
+    try:
+        _update_case_status(case_id, "exporting")
+
+        async def _do_export():
+            import zipfile
+            from io import BytesIO
+            from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+            from db.models_evidence import EvidenceCase
+            from sqlalchemy import select
+            from services.storage.minio_client import minio_client
+
+            engine = _create_worker_engine()
+            factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+            try:
+                async with factory() as db:
+                    stmt = select(EvidenceCase).where(EvidenceCase.id == uuid.UUID(case_id))
+                    result = await db.execute(stmt)
+                    case = result.scalar_one_or_none()
+                    if not case:
+                        return {"case_id": case_id, "status": "failed", "error": "Case not found"}
+
+                    catalog_data = case.catalog_data or {}
+                    analysis_result = case.analysis_result or {}
+                    lawyer_info = case.lawyer_info or []
+                    case_name = case.case_name or "案件"
+
+                    if not catalog_data.get("groups"):
+                        return {"case_id": case_id, "status": "failed", "error": "Catalog not generated"}
+
+                    # 同步生成所有文档（纯CPU操作）
+                    def _gen_docs():
+                        from services.evidence.word_generator import (
+                            generate_filing_evidence_inline_data,
+                            generate_complaint_inline_data,
+                            generate_appraisal_inline_data,
+                        )
+                        from services.evidence.excel_generator import (
+                            generate_compensation_inline_data,
+                            generate_fee_details_inline_data,
+                        )
+                        files = {}
+                        try:
+                            b = generate_filing_evidence_inline_data(catalog_data, analysis_result)
+                            if b:
+                                files["01_立案证据.docx"] = b
+                        except Exception as e:
+                            logger.error(f"Failed to generate filing evidence: {e}")
+                        try:
+                            b = generate_complaint_inline_data(catalog_data, analysis_result, lawyer_info=lawyer_info)
+                            if b:
+                                files["02_民事起诉状.docx"] = b
+                        except Exception as e:
+                            logger.error(f"Failed to generate complaint: {e}")
+                        try:
+                            b = generate_appraisal_inline_data(catalog_data, analysis_result)
+                            if b:
+                                files["03_司法鉴定申请书.docx"] = b
+                        except Exception as e:
+                            logger.error(f"Failed to generate appraisal: {e}")
+                        try:
+                            b = generate_compensation_inline_data(catalog_data, analysis_result)
+                            if b:
+                                files["04_赔偿费用清单.xlsx"] = b
+                        except Exception as e:
+                            logger.error(f"Failed to generate compensation: {e}")
+                        try:
+                            details = generate_fee_details_inline_data(catalog_data, analysis_result)
+                            for sheet_name, fb in details.items():
+                                safe_name = sheet_name.replace("/", "_").replace("\\", "_")
+                                files[f"05_{safe_name}.xlsx"] = fb
+                        except Exception as e:
+                            logger.error(f"Failed to generate fee details: {e}")
+                        return files
+
+                    files = await asyncio.to_thread(_gen_docs)
+
+                    if not files:
+                        return {"case_id": case_id, "status": "failed", "error": "No documents generated"}
+
+                    # 打包为 ZIP
+                    def _zip_files():
+                        buf = BytesIO()
+                        folder_name = f"{case_name}立案立档包"
+                        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+                            for fname, data in files.items():
+                                zf.writestr(f"{folder_name}/{fname}", data)
+                        return buf.getvalue()
+
+                    zip_bytes = await asyncio.to_thread(_zip_files)
+
+                    # 上传到 MinIO
+                    from config.settings import settings as _s
+                    bucket = getattr(_s, "evidence_minio_bucket", "evidence")
+                    bundle_key = f"bundles/{case_id}/{case_name}立案立档包.zip"
+                    await asyncio.to_thread(
+                        minio_client.upload_bytes,
+                        bucket, bundle_key, zip_bytes, "application/zip",
+                    )
+
+                    # 更新案件记录
+                    case.export_bundle_path = bundle_key
+                    await db.commit()
+
+                    logger.info(
+                        f"Bundle export completed for {case_id}: "
+                        f"{len(files)} docs, {len(zip_bytes)} bytes"
+                    )
+                    return {
+                        "case_id": case_id,
+                        "status": "completed",
+                        "bundle_path": bundle_key,
+                        "doc_count": len(files),
+                    }
+            finally:
+                await engine.dispose()
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(_do_export())
+        finally:
+            loop.close()
+
+        if result.get("status") == "completed":
+            _update_case_status(case_id, "completed")
+        else:
+            _update_case_status(case_id, "failed")
+
+        return result
+    except Exception as e:
+        logger.error(f"Evidence bundle export fatal error: case_id={case_id} | {e}")
+        if self.request.retries >= self.max_retries:
+            _update_case_status(case_id, "failed")
+        raise self.retry(exc=e)
 
 
 @celery_app.task(bind=True, name="process_single_material_ocr", max_retries=2)
@@ -362,29 +526,6 @@ def process_single_material_ocr(self, material_id: str):
         raise self.retry(exc=e)
     finally:
         loop.close()
-
-    try:
-        uuid.UUID(case_id)
-    except ValueError:
-        return {"case_id": case_id, "status": "failed", "error": "Invalid case_id format"}
-
-    try:
-        _update_case_status(case_id, "exporting")
-
-        from services.evidence.bundle_packager import create_export_bundle
-        bundle_path = create_export_bundle(case_id)
-
-        _update_case_status(case_id, "completed")
-
-        return {
-            "case_id": case_id,
-            "status": "completed",
-            "bundle_path": bundle_path,
-        }
-    except Exception as e:
-        logger.error(f"Evidence bundle export fatal error: case_id={case_id} | {e}")
-        _update_case_status(case_id, "failed")
-        raise self.retry(exc=e)
 
 
 # ─── 内部管线函数 ────────────────────────────────────────────────────────────
