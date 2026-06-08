@@ -1689,7 +1689,9 @@ async function handleAnalyze() {
   if (!currentCase.value) return
   analyzing.value = true
   let attempts = 0
+  let pollErrors = 0 // 连续轮询失败计数
   const maxAttempts = 200 // 最多轮询 200 次 × 3秒 = 10分钟
+  const maxPollErrors = 3 // 连续失败3次才终止轮询
   try {
     await evidenceApi.analyzeCase(currentCase.value.id)
     analysisPollId = setInterval(async () => {
@@ -1702,6 +1704,7 @@ async function handleAnalyze() {
       }
       try {
         const res = await evidenceApi.getAnalysis(currentCase.value!.id)
+        pollErrors = 0 // 成功后重置连续失败计数
         if (['analysis_done', 'completed', 'exporting'].includes(res.status)) {
           analysisResult.value = res; analyzing.value = false
           if (analysisPollId) { clearInterval(analysisPollId); analysisPollId = null }
@@ -1713,8 +1716,15 @@ async function handleAnalyze() {
           message.error(`分析失败：${errorMsg}。请检查素材完整性后重试。`)
         }
       } catch {
-        if (analysisPollId) { clearInterval(analysisPollId); analysisPollId = null }
-        analyzing.value = false
+        pollErrors++
+        if (pollErrors >= maxPollErrors) {
+          // 连续失败多次才终止，单次网络抖动不会中断
+          console.warn(`Analysis polling failed ${pollErrors} times consecutively, stopping`)
+          if (analysisPollId) { clearInterval(analysisPollId); analysisPollId = null }
+          analyzing.value = false
+          message.warning('网络连接不稳定，请刷新页面后查看分析状态。')
+        }
+        // 连续失败未达阈值，继续轮询
       }
     }, 3000)
   } catch (e: unknown) { message.error((e as Error).message); analyzing.value = false }

@@ -129,7 +129,14 @@ def generate_evidence_catalog(self, case_id: str):
         }
     except Exception as e:
         logger.error(f"Evidence catalog generation fatal error: case_id={case_id} | {e}")
-        _update_case_status(case_id, "failed")
+        # 重试期间保持 processing 状态，仅最后一次重试失败设 failed
+        if self.request.retries >= self.max_retries:
+            _update_case_status(case_id, "failed")
+        else:
+            logger.info(
+                f"Catalog generation will retry ({self.request.retries + 1}/{self.max_retries}) "
+                f"for case {case_id}, keeping current status"
+            )
         raise self.retry(exc=e)
 
 
@@ -192,11 +199,15 @@ def _do_process_evidence_full(self, case_id: str):
         }
     except Exception as e:
         logger.error(f"Evidence full processing fatal error: case_id={case_id} | {e}")
-        _update_case_status(case_id, "failed")
-        raise self.retry(exc=e)
-
-
-@celery_app.task(bind=True, name="analyze_evidence", max_retries=2)
+        # 重试期间保持 processing 状态，仅最后一次重试失败设 failed
+        if self.request.retries >= self.max_retries:
+            _update_case_status(case_id, "failed")
+        else:
+            logger.info(
+                f"Full processing will retry ({self.request.retries + 1}/{self.max_retries}) "
+                f"for case {case_id}, keeping current status"
+            )
+        raise self.retry(exc=e)@celery_app.task(bind=True, name="analyze_evidence", max_retries=2)
 def analyze_evidence(self, case_id: str):
     """分析证据清单 → 提取槽位数据 → 生成文档数据"""
     logger.info(f"Evidence analysis started: case_id={case_id}")
@@ -221,7 +232,15 @@ def analyze_evidence(self, case_id: str):
         }
     except Exception as e:
         logger.error(f"Evidence analysis fatal error: case_id={case_id} | {e}")
-        _update_case_status(case_id, "failed")
+        # 重试期间保持 analyzing 状态，避免前端轮询到 failed 提前终止
+        # 只有最后一次重试失败时才设为 failed
+        if self.request.retries >= self.max_retries:
+            _update_case_status(case_id, "failed")
+        else:
+            logger.info(
+                f"Analysis will retry ({self.request.retries + 1}/{self.max_retries}) "
+                f"for case {case_id}, keeping status=analyzing"
+            )
         raise self.retry(exc=e)
 
 
