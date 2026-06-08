@@ -425,6 +425,26 @@ async def upload_materials(
     MULTIPART_THRESHOLD = 100 * 1024 * 1024  # 100MB 以上走流式
     from services.storage.minio_client import minio_client
 
+    # 查询当前案件已有的非终态素材文件名（用于去重）
+    existing_stmt = select(EvidenceMaterial.original_filename).where(
+        EvidenceMaterial.evidence_case_id == case_id,
+        EvidenceMaterial.ocr_status.notin_(["failed"]),
+    )
+    existing_result = await db.execute(existing_stmt)
+    existing_filenames = {name for name in existing_result.scalars().all() if name}
+
+    # 检查同名文件
+    duplicate_names = []
+    for file in files:
+        fname = file.filename or ""
+        if fname in existing_filenames:
+            duplicate_names.append(fname)
+    if duplicate_names:
+        raise HTTPException(
+            status_code=409,
+            detail=f"以下文件已存在（如需重新上传，请先删除旧文件）：{', '.join(duplicate_names)}",
+        )
+
     uploaded = []
     for file in files:
         # 先检查 Content-Length 避免读取超大文件到内存

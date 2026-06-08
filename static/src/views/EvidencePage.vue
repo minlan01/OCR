@@ -1295,14 +1295,31 @@ function handleDrop(e: DragEvent) {
   }
 }
 
-/** 实际执行上传：每 5 个一批提交 */
+/** 实际执行上传：每 5 个一批提交，跳过已存在的同名文件 */
 async function doUploadFiles(files: File[]) {
   if (!currentCase.value || files.length === 0) return
+
+  // 本地去重：跳过和已有材料同名的文件（failed 除外）
+  const existingNames = new Set(
+    materials.value
+      .filter(m => m.ocr_status !== 'failed')
+      .map(m => m.original_filename)
+  )
+  const duplicates = files.filter(f => existingNames.has(f.name))
+  const uniqueFiles = files.filter(f => !existingNames.has(f.name))
+
+  if (duplicates.length > 0) {
+    message.warning(`跳过 ${duplicates.length} 个已存在的同名文件：${duplicates.map(f => f.name).join('、')}（如需重新上传，请先删除旧文件）`)
+  }
+  if (uniqueFiles.length === 0) {
+    return
+  }
+
   uploadingFiles.value = true
   const BATCH_SIZE = 5
   let totalSuccess = 0
-  for (let i = 0; i < files.length; i += BATCH_SIZE) {
-    const chunk = files.slice(i, i + BATCH_SIZE)
+  for (let i = 0; i < uniqueFiles.length; i += BATCH_SIZE) {
+    const chunk = uniqueFiles.slice(i, i + BATCH_SIZE)
     try {
       const res = await evidenceApi.uploadMaterials(currentCase.value.id, chunk)
       materials.value.push(...res)
