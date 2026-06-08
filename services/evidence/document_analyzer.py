@@ -93,6 +93,10 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
                 analysis_result = _extract_document_slots(
                     structured_context, case.case_type, case.is_minor
                 )
+                # 防御性检查：确保返回有效 dict
+                if not isinstance(analysis_result, dict):
+                    logger.warning(f"LLM extraction returned non-dict: {type(analysis_result)}, resetting to {{}}")
+                    analysis_result = {}
             else:
                 analysis_result = {}
 
@@ -374,7 +378,8 @@ def _build_structured_context(materials: list) -> str:
         r'死亡诊断|死因分析|死亡原因|鉴定意见|鉴定结论|尸检诊断|解剖诊断|病理诊断|'
         r'尸检报告|手术记录|执业证|执业范围|身份证号|身份证号码|统一社会信用代码|'
         r'执业医师|鉴定人|鉴定机构|死亡诊断意见|出院诊断|死亡证明|'
-        r'尸体检验|尸体解剖|死因鉴定|解剖报告|病理鉴定|毒物鉴定'
+        r'尸体检验|尸体解剖|死因鉴定|解剖报告|病理鉴定|毒物鉴定|'
+        r'居民身份|户口|户籍|户主|身份号码|出生日期|住址|姓名|性别|民族'
     )
     _IMPORTANT_KEYWORDS = re.compile(
         r'诊断|治疗|检查|入院|出院|医嘱|护理|手术|转院|'
@@ -391,7 +396,7 @@ def _build_structured_context(materials: list) -> str:
             return 1  # 🟡
         return 2  # ⚪
 
-    _DETAIL_CATEGORIES = {"appraisal", "medical_record", "death_certificate", "identity_defendant"}
+    _DETAIL_CATEGORIES = {"appraisal", "medical_record", "death_certificate", "identity_defendant", "identity"}
 
     # ── 收集所有材料段落（带优先级和来源标记）──
     material_sections: list[tuple[int, str, str]] = []  # (priority, material_id, section_text)
@@ -734,10 +739,12 @@ def _generate_facts_paragraph(
     context_parts = []
 
     # 原告信息
-    plaintiffs = extracted_data.get("plaintiffs", [])
+    plaintiffs = extracted_data.get("plaintiffs", []) or []
     if plaintiffs:
         context_parts.append("【原告信息】")
         for i, p in enumerate(plaintiffs, 1):
+            if not p or not isinstance(p, dict):
+                continue  # 跳过 LLM 返回的 null 元素
             context_parts.append(
                 f"  原告{i}：{p.get('name', '')}，{p.get('relationship', '')}，"
                 f"{p.get('gender', '')}，{p.get('ethnicity', '')}，"
@@ -896,30 +903,32 @@ def _generate_conclusion(extracted_data: dict, case_type: str) -> str:
 
 def _populate_legacy_fields(analysis_result: dict) -> None:
     """将新的结构化数据映射到旧字段，确保旧代码兼容"""
-    plaintiffs = analysis_result.get("plaintiffs", [])
+    plaintiffs = analysis_result.get("plaintiffs", []) or []
     if plaintiffs:
-        # 旧字段：取第一个原告
-        p1 = plaintiffs[0]
-        analysis_result.setdefault("原告姓名1", p1.get("name", ""))
-        analysis_result.setdefault("性别1", p1.get("gender", ""))
-        analysis_result.setdefault("民族1", p1.get("ethnicity", ""))
-        analysis_result.setdefault("出生年月日1", p1.get("birth_date", ""))
-        analysis_result.setdefault("住址1", p1.get("address", ""))
-        analysis_result.setdefault("身份证号1", p1.get("id_number", ""))
-        analysis_result.setdefault("亲属关系1", p1.get("relationship", ""))
-        analysis_result.setdefault("律师电话1", p1.get("phone", ""))
-        analysis_result.setdefault("plaintiff_name", p1.get("name", ""))
+        # 过滤掉 None 元素（LLM 可能返回 [null, {...}]）
+        valid_plaintiffs = [p for p in plaintiffs if isinstance(p, dict)]
+        if valid_plaintiffs:
+            p1 = valid_plaintiffs[0]
+            analysis_result.setdefault("原告姓名1", p1.get("name", ""))
+            analysis_result.setdefault("性别1", p1.get("gender", ""))
+            analysis_result.setdefault("民族1", p1.get("ethnicity", ""))
+            analysis_result.setdefault("出生年月日1", p1.get("birth_date", ""))
+            analysis_result.setdefault("住址1", p1.get("address", ""))
+            analysis_result.setdefault("身份证号1", p1.get("id_number", ""))
+            analysis_result.setdefault("亲属关系1", p1.get("relationship", ""))
+            analysis_result.setdefault("律师电话1", p1.get("phone", ""))
+            analysis_result.setdefault("plaintiff_name", p1.get("name", ""))
 
-        # 多原告: 额外存储 原告姓名2, 原告姓名3...
-        for i, p in enumerate(plaintiffs[1:], 2):
-            analysis_result[f"原告姓名{i}"] = p.get("name", "")
-            analysis_result[f"性别{i}"] = p.get("gender", "")
-            analysis_result[f"民族{i}"] = p.get("ethnicity", "")
-            analysis_result[f"出生年月日{i}"] = p.get("birth_date", "")
-            analysis_result[f"住址{i}"] = p.get("address", "")
-            analysis_result[f"身份证号{i}"] = p.get("id_number", "")
-            analysis_result[f"亲属关系{i}"] = p.get("relationship", "")
-            analysis_result[f"律师电话{i}"] = p.get("phone", "")
+            # 多原告: 额外存储 原告姓名2, 原告姓名3...
+            for i, p in enumerate(valid_plaintiffs[1:], 2):
+                analysis_result[f"原告姓名{i}"] = p.get("name", "")
+                analysis_result[f"性别{i}"] = p.get("gender", "")
+                analysis_result[f"民族{i}"] = p.get("ethnicity", "")
+                analysis_result[f"出生年月日{i}"] = p.get("birth_date", "")
+                analysis_result[f"住址{i}"] = p.get("address", "")
+                analysis_result[f"身份证号{i}"] = p.get("id_number", "")
+                analysis_result[f"亲属关系{i}"] = p.get("relationship", "")
+                analysis_result[f"律师电话{i}"] = p.get("phone", "")
 
     # 被告
     defendant_name = analysis_result.get("defendant_name", "")

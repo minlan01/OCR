@@ -244,10 +244,10 @@ def process_single_material_ocr(self, material_id: str):
     async def _process():
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-        from db.models_evidence import EvidenceMaterial
+        from db.models_evidence import EvidenceMaterial, EvidenceCase
         from services.ocr.bailian_engine import BailianOCREngine
         from services.storage.minio_client import minio_client
-        from services.evidence.catalog_generator import _classify_and_extract_single
+        from services.evidence.classifier import classify_with_filename_fallback, extract_structured_info
 
         engine = _create_worker_engine()
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -261,6 +261,12 @@ def process_single_material_ocr(self, material_id: str):
                 if not material:
                     logger.error(f"Material not found: {material_id}")
                     return {"material_id": material_id, "status": "failed", "error": "Material not found"}
+
+                # 获取案件类型
+                case_stmt = select(EvidenceCase).where(EvidenceCase.id == material.evidence_case_id)
+                case_result = await db.execute(case_stmt)
+                case = case_result.scalar_one_or_none()
+                case_type = case.case_type if case else "injury"
 
                 # 从 MinIO 下载文件
                 bucket = material.minio_bucket or "evidence"
@@ -278,20 +284,31 @@ def process_single_material_ocr(self, material_id: str):
                 )
 
                 # 更新 OCR 结果
+                ocr_text = ocr_result.get("text", "")
                 material.ocr_status = "completed"
-                material.ocr_text = ocr_result.get("text", "")
+                material.ocr_text = ocr_text
                 material.ocr_result = ocr_result
 
-                # 执行分类和提取
-                classify_result = await _classify_and_extract_single(material, ocr_result)
-                if classify_result:
-                    material.auto_category = classify_result.get("category")
-                    material.effective_category = classify_result.get("category")
-                    material.category_confidence = classify_result.get("confidence")
-                    material.extracted_data = classify_result.get("extracted_data", {})
+                # 执行分类（使用 classifier 模块的正确函数）
+                category, confidence = await asyncio.to_thread(
+                    classify_with_filename_fallback,
+                    ocr_text,
+                    material.original_filename or "",
+                    case_type,
+                )
+
+                # 执行结构化提取
+                extracted_data = await asyncio.to_thread(
+                    extract_structured_info, ocr_text, case_type
+                )
+
+                material.auto_category = category
+                material.effective_category = category
+                material.category_confidence = confidence
+                material.extracted_data = extracted_data
 
                 await db.commit()
-                logger.info(f"Single material OCR completed: {material_id}")
+                logger.info(f"Single material OCR completed: {material_id}, category={category}")
                 return {"material_id": material_id, "status": "completed"}
 
         except Exception as e:
