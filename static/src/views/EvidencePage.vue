@@ -375,7 +375,7 @@
         </thead>
         <tbody>
           <tr v-for="(item, idx) in compensationData.items" :key="item.fee_type">
-            <td>{{ idx + 1 }}</td>
+            <td>{{ Number(idx) + 1 }}</td>
             <td>{{ item.fee_name }}</td>
             <td>
               <n-input-number
@@ -779,14 +779,14 @@
             <n-divider>分析结果摘要</n-divider>
 
             <!-- 缺失项提示 -->
-            <template v-if="analysisResult.missing_items && Array.isArray(analysisResult.missing_items) && analysisResult.missing_items.length > 0">
+            <template v-if="analysisResult?.missing_items && Array.isArray(analysisResult.missing_items) && analysisResult.missing_items.length > 0">
               <n-alert type="warning" title="以下证据材料可能缺失" style="margin-bottom: 12px">
                 <ul style="margin: 0; padding-left: 20px">
-                  <li v-for="(item, idx) in analysisResult.missing_items" :key="idx">{{ item }}</li>
+                  <li v-for="(item, idx) in analysisResult!.missing_items" :key="idx">{{ item }}</li>
                 </ul>
               </n-alert>
             </template>
-            <template v-else-if="analysisResult.validation_result">
+            <template v-else-if="analysisResult?.validation_result">
               <n-alert type="success" style="margin-bottom: 12px">
                 证据材料完整性校验通过
               </n-alert>
@@ -806,7 +806,7 @@
             <!-- 完整分析数据折叠 -->
             <n-collapse style="margin-top: 8px">
               <n-collapse-item title="查看完整分析数据" name="full">
-                <n-code :code="JSON.stringify(analysisResult.analysis_result, null, 2)" language="json" />
+                <n-code :code="JSON.stringify(analysisResult?.analysis_result, null, 2)" language="json" />
               </n-collapse-item>
             </n-collapse>
           </template>
@@ -1024,7 +1024,7 @@ const STEP = {
 
 // ─── 状态 ─────────────────────────────────────────────────────────────────────
 
-const currentStep = ref(STEP.CREATE)
+const currentStep = ref<number>(STEP.CREATE)
 const currentCase = ref<evidenceApi.EvidenceCase | null>(null)
 const showCaseListModal = ref(false)
 const showCreateForm = ref(false)
@@ -1977,15 +1977,6 @@ async function handleRecalculate() {
     message.error('重新计算失败')
   } finally {
     calculatingCompensation.value = false
-  }
-}
-
-async function handleExportCompensation() {
-  if (!currentCase.value) return
-  try {
-    await evidenceApi.exportCompensationCalc(currentCase.value.id)
-  } catch (e: any) {
-    message.error('导出失败')
   }
 }
 

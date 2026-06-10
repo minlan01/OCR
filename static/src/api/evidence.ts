@@ -439,7 +439,7 @@ export async function updateCompensation(caseId: string, data: CompensationUpdat
 /** 导出赔偿费用清单 */
 export async function exportCompensationCalc(caseId: string): Promise<void> {
   const resp = await api.get(`/evidence/cases/${caseId}/compensation/export`, { responseType: 'blob' })
-  const url = window.URL.createObjectURL(new Blob([resp]))
+  const url = window.URL.createObjectURL(new Blob([resp as BlobPart]))
   const link = document.createElement('a')
   link.href = url
   link.download = '赔偿费用清单.xlsx'
