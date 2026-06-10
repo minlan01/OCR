@@ -401,59 +401,59 @@
         </tbody>
       </n-table>
 
-      <!-- 参数配置（折叠） -->
-      <n-collapse v-if="compensationData" style="margin-bottom: 16px">
-        <n-collapse-item title="参数配置" name="params">
-          <n-grid :cols="3" :x-gap="12" :y-gap="8">
-            <n-gi>
-              <n-form-item label="上年度人均可支配收入(元/年)" label-placement="top">
-                <n-input-number v-model:value="compParams.annual_income" size="small" :min="0" style="width:100%" />
-              </n-form-item>
-            </n-gi>
-            <n-gi>
-              <n-form-item label="上年度人均消费支出(元/年)" label-placement="top">
-                <n-input-number v-model:value="compParams.annual_consumption" size="small" :min="0" style="width:100%" />
-              </n-form-item>
-            </n-gi>
-            <n-gi>
-              <n-form-item label="上年度职工月均工资(元/月)" label-placement="top">
-                <n-input-number v-model:value="compParams.monthly_salary" size="small" :min="0" style="width:100%" />
-              </n-form-item>
-            </n-gi>
-            <n-gi>
-              <n-form-item label="住院伙食补助(元/天)" label-placement="top">
-                <n-input-number v-model:value="compParams.daily_food_subsidy" size="small" :min="0" style="width:100%" />
-              </n-form-item>
-            </n-gi>
-            <n-gi>
-              <n-form-item label="营养费(元/天)" label-placement="top">
-                <n-input-number v-model:value="compParams.daily_nutrition" size="small" :min="0" style="width:100%" />
-              </n-form-item>
-            </n-gi>
-            <n-gi>
-              <n-form-item label="赔偿年限(年)" label-placement="top">
-                <n-input-number v-model:value="compParams.compensation_years" size="small" :min="1" :max="30" style="width:100%" />
-              </n-form-item>
-            </n-gi>
-            <n-gi>
-              <n-form-item label="伤残系数" label-placement="top">
-                <n-input-number v-model:value="compParams.disability_coefficient" size="small" :min="0.1" :max="1" :step="0.01" style="width:100%" />
-              </n-form-item>
-            </n-gi>
-            <n-gi>
-              <n-form-item label="住院天数" label-placement="top">
-                <n-input-number v-model:value="compParams.hospital_days" size="small" :min="0" style="width:100%" />
-              </n-form-item>
-            </n-gi>
-            <n-gi>
-              <n-form-item label="误工天数" label-placement="top">
-                <n-input-number v-model:value="compParams.lost_wage_days" size="small" :min="0" style="width:100%" />
-              </n-form-item>
-            </n-gi>
-          </n-grid>
+      <!-- 参数配置（默认展开） -->
+      <n-card v-if="compensationData" title="参数配置" size="small" style="margin-bottom: 16px">
+        <n-grid :cols="3" :x-gap="12" :y-gap="8">
+          <n-gi>
+            <n-form-item label="上年度人均可支配收入(元/年)" label-placement="top">
+              <n-input-number v-model:value="compParams.annual_income" size="small" :min="0" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="上年度人均消费支出(元/年)" label-placement="top">
+              <n-input-number v-model:value="compParams.annual_consumption" size="small" :min="0" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="上年度职工月均工资(元/月)" label-placement="top">
+              <n-input-number v-model:value="compParams.monthly_salary" size="small" :min="0" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="住院伙食补助(元/天)" label-placement="top">
+              <n-input-number v-model:value="compParams.daily_food_subsidy" size="small" :min="0" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="营养费(元/天)" label-placement="top">
+              <n-input-number v-model:value="compParams.daily_nutrition" size="small" :min="0" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="赔偿年限(年)" label-placement="top">
+              <n-input-number v-model:value="compParams.compensation_years" size="small" :min="1" :max="30" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="伤残系数" label-placement="top">
+              <n-input-number v-model:value="compParams.disability_coefficient" size="small" :min="0.1" :max="1" :step="0.01" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="住院天数" label-placement="top">
+              <n-input-number v-model:value="compParams.hospital_days" size="small" :min="0" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="误工天数" label-placement="top">
+              <n-input-number v-model:value="compParams.lost_wage_days" size="small" :min="0" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+        </n-grid>
+        <template #action>
           <n-button type="primary" size="small" @click="handleRecalculate">重新计算</n-button>
-        </n-collapse-item>
-      </n-collapse>
+        </template>
+      </n-card>
 
       <!-- 底部按钮 -->
       <n-divider />
