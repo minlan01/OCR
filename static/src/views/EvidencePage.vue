@@ -3,43 +3,24 @@
     <n-space align="center" justify="space-between" style="margin-bottom: 20px">
       <n-page-header title="证据整理" subtitle="上传素材 → 生成目录 → 智能分析 → 导出文档" />
       <n-space>
-        <n-button v-if="currentStep !== STEP.CREATE" :loading="refreshing" secondary @click="handleRefresh">
+        <n-button v-if="!showHomePage" :loading="refreshing" secondary @click="handleRefresh">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
         </n-button>
-        <n-button v-if="currentStep !== STEP.CREATE" secondary @click="handleGoHome">
+        <n-button v-if="!showHomePage" secondary @click="handleGoHome">
           <template #icon><n-icon><HomeOutline /></n-icon></template>
           案件列表
         </n-button>
       </n-space>
     </n-space>
 
-    <!-- 案件列表弹窗（仅非 Step 0 时使用） -->
-    <n-modal v-if="currentStep !== STEP.CREATE" v-model:show="showCaseListModal" preset="card" title="已有案件" style="width: 800px; max-width: 90vw">
+    <!-- 案件列表弹窗（仅案件内使用） -->
+    <n-modal v-if="!showHomePage" v-model:show="showCaseListModal" preset="card" title="已有案件" style="width: 800px; max-width: 90vw">
       <n-data-table :columns="caseListColumns" :data="caseList" :loading="caseListLoading" :bordered="false" size="small" />
     </n-modal>
 
-    <!-- 五步流程（可点击切换，仅继续案件时） -->
-    <n-steps :current="currentStep + 1" style="margin-bottom: 24px">
-      <n-step title="创建案件"
-        :style="{ cursor: canGoStep(STEP.CREATE) ? 'pointer' : 'default' }"
-        @click="canGoStep(STEP.CREATE) && navigateToStep(STEP.CREATE)" />
-      <n-step title="上传素材"
-        :style="{ cursor: canGoStep(STEP.UPLOAD) ? 'pointer' : 'default' }"
-        @click="canGoStep(STEP.UPLOAD) && navigateToStep(STEP.UPLOAD)" />
-      <n-step title="赔偿金额计算"
-        :style="{ cursor: canGoStep(STEP.COMPENSATION) ? 'pointer' : 'default' }"
-        @click="canGoStep(STEP.COMPENSATION) && navigateToStep(STEP.COMPENSATION)" />
-      <n-step title="证据目录"
-        :style="{ cursor: canGoStep(STEP.CATALOG) ? 'pointer' : 'default' }"
-        @click="canGoStep(STEP.CATALOG) && navigateToStep(STEP.CATALOG)" />
-      <n-step title="分析与导出"
-        :style="{ cursor: canGoStep(STEP.ANALYSIS) ? 'pointer' : 'default' }"
-        @click="canGoStep(STEP.ANALYSIS) && navigateToStep(STEP.ANALYSIS)" />
-    </n-steps>
-
-    <!-- Step 0: 案件列表（默认显示） + 创建案件表单（点按钮后显示） -->
-    <template v-if="currentStep === STEP.CREATE">
+    <!-- ═══ 案件首页（独立于步骤条之外） ═══ -->
+    <template v-if="showHomePage">
       <n-card v-if="showCreateForm" title="创建证据案件" style="margin-bottom: 16px">
         <n-form ref="formRef" :model="form" label-placement="left" label-width="120">
           <n-form-item label="案件名称" path="case_name">
@@ -77,6 +58,24 @@
         <n-data-table :columns="caseListColumns" :data="caseList" :loading="caseListLoading" :bordered="false" size="small" />
       </n-card>
     </template>
+
+    <!-- ═══ 案件内工作区（步骤条 + 步骤内容） ═══ -->
+    <template v-if="!showHomePage">
+    <!-- 四步流程 -->
+    <n-steps :current="currentStep" style="margin-bottom: 24px">
+      <n-step title="上传素材"
+        :style="{ cursor: canGoStep(STEP.UPLOAD) ? 'pointer' : 'default' }"
+        @click="canGoStep(STEP.UPLOAD) && navigateToStep(STEP.UPLOAD)" />
+      <n-step title="赔偿金额计算"
+        :style="{ cursor: canGoStep(STEP.COMPENSATION) ? 'pointer' : 'default' }"
+        @click="canGoStep(STEP.COMPENSATION) && navigateToStep(STEP.COMPENSATION)" />
+      <n-step title="证据目录"
+        :style="{ cursor: canGoStep(STEP.CATALOG) ? 'pointer' : 'default' }"
+        @click="canGoStep(STEP.CATALOG) && navigateToStep(STEP.CATALOG)" />
+      <n-step title="分析与导出"
+        :style="{ cursor: canGoStep(STEP.ANALYSIS) ? 'pointer' : 'default' }"
+        @click="canGoStep(STEP.ANALYSIS) && navigateToStep(STEP.ANALYSIS)" />
+    </n-steps>
 
     <!-- Step 1: 上传素材 -->
     <n-card v-if="currentStep === STEP.UPLOAD" title="上传原始素材">
@@ -299,7 +298,7 @@
 
       <template #action>
         <n-space>
-          <n-button @click="navigateToStep(STEP.CREATE)">返回</n-button>
+          <n-button @click="handleGoHome">返回</n-button>
           <n-button
             v-if="failedCount > 0"
             type="warning"
@@ -941,6 +940,7 @@
         </template>
       </n-drawer-content>
     </n-drawer>
+    </template><!-- end 案件内工作区 -->
   </div>
 </template>
 
@@ -1015,7 +1015,6 @@ const dialog = useDialog()
 // ─── 步骤常量 ─────────────────────────────────────────────────────────────────
 
 const STEP = {
-  CREATE: 0,
   UPLOAD: 1,
   COMPENSATION: 2,
   CATALOG: 3,
@@ -1024,7 +1023,8 @@ const STEP = {
 
 // ─── 状态 ─────────────────────────────────────────────────────────────────────
 
-const currentStep = ref<number>(STEP.CREATE)
+const showHomePage = ref(true) // 案件首页（独立于步骤条）
+const currentStep = ref<number>(STEP.UPLOAD)
 const currentCase = ref<evidenceApi.EvidenceCase | null>(null)
 const showCaseListModal = ref(false)
 const showCreateForm = ref(false)
@@ -1197,16 +1197,15 @@ const progressStatus = computed(() => {
 
 // ─── 步骤切换 ─────────────────────────────────────────────────────────────
 
-/** 是否可以跳到某步骤（Step 0 不允许通过步骤条跳回，Step 1-4 案件内自由切换） */
+/** 是否可以跳到某步骤（只要在案件内即可自由切换 Step 1-4） */
 function canGoStep(step: number): boolean {
-  if (step === STEP.CREATE) return false
   if (!currentCase.value) return false
-  return true
+  return step >= STEP.UPLOAD && step <= STEP.ANALYSIS
 }
 
 /** 导航到指定步骤（支持浏览器后退/前进） */
 async function navigateToStep(step: number) {
-  if (!canGoStep(step) && step !== STEP.CREATE) return
+  if (!canGoStep(step)) return
 
   // 离开证据目录步骤时自动保存目录修改
   if (currentStep.value === STEP.CATALOG && catalogDirty.value && pendingUpdates.value.size > 0) {
@@ -1229,11 +1228,12 @@ async function navigateToStep(step: number) {
   }
 }
 
-/** 返回首页（案件列表） */
+/** 返回案件首页 */
 function handleGoHome() {
   _resetAllState()
   currentCase.value = null
-  currentStep.value = STEP.CREATE
+  currentStep.value = STEP.UPLOAD
+  showHomePage.value = true
   isContinuedCase.value = false
   showCreateForm.value = false
   window.location.hash = ''
@@ -1274,7 +1274,7 @@ function handleHashChange() {
   const match = hash.match(/step=(\d)/)
   if (match) {
     const step = parseInt(match[1], 10)
-    if (step >= STEP.CREATE && step <= STEP.ANALYSIS && step !== currentStep.value) {
+    if (step >= STEP.UPLOAD && step <= STEP.ANALYSIS && step !== currentStep.value) {
       if (canGoStep(step)) {
         if (step === STEP.COMPENSATION) {
           currentStep.value = step
@@ -1499,6 +1499,7 @@ async function handleCreate() {
     syncLawyerInfo(res)
     syncDefendantPhone(res)
     currentStep.value = STEP.UPLOAD
+    showHomePage.value = false
     showCreateForm.value = false
     message.success('案件创建成功')
   } catch (e: unknown) {
@@ -2187,10 +2188,11 @@ async function loadCaseList() {
 async function continueCase(caseId: string) {
   // 切换案件前清理所有状态，防止数据泄漏
   _resetAllState()
-  // 标记为"继续案件"模式（允许步骤条点击跳转）
+  // 标记为"继续案件"模式
   isContinuedCase.value = true
-  // 关闭案件列表弹窗
+  // 关闭案件列表弹窗 & 隐藏首页
   showCaseListModal.value = false
+  showHomePage.value = false
 
   try {
     const res = await evidenceApi.getCase(caseId)
@@ -2374,8 +2376,7 @@ onMounted(async () => {
   await loadCaseList()
   // 监听浏览器后退/前进按钮
   window.addEventListener('hashchange', handleHashChange)
-  // 始终显示 Step 0（创建案件/案件列表），不自动恢复上次的案件
-  // 用户需点击"继续案件"来进入具体案件
+  // 默认显示案件首页，用户点击"继续"或"创建"后进入案件内步骤
 })
 
 // 监听案件和步骤变化，保存到 sessionStorage
