@@ -1203,7 +1203,7 @@ function handleStepClick(newStep: number) {
   }
 }
 
-/** 导航到指定步骤（支持浏览器后退/前进） */
+/** 导航到指定步骤 */
 async function navigateToStep(step: number) {
   if (!canGoStep(step)) return
 
@@ -1212,8 +1212,8 @@ async function navigateToStep(step: number) {
     await handleSaveCatalog()
   }
 
-  // 更新 URL hash
-  window.location.hash = `step=${step}`
+  // 注意：不能用 window.location.hash 保存步骤，因为 AdminLayout 用 :key="$route.fullPath"
+  // hash 变化会导致 EvidencePage 组件被销毁重建，所有状态丢失
 
   // 根据步骤执行相应操作
   if (step === STEP.COMPENSATION) {
@@ -1236,7 +1236,7 @@ function handleGoHome() {
   showHomePage.value = true
   isContinuedCase.value = false
   showCreateForm.value = false
-  window.location.hash = ''
+  // 不用 window.location.hash，避免组件重建
   // 重置创建表单
   form.value = { case_name: '', case_type: 'injury', is_minor: false }
 }
@@ -1265,29 +1265,6 @@ async function handleRefresh() {
     message.error('刷新失败：' + (e as Error).message)
   } finally {
     refreshing.value = false
-  }
-}
-
-/** 监听浏览器后退/前进按钮 */
-function handleHashChange() {
-  const hash = window.location.hash
-  const match = hash.match(/step=(\d)/)
-  if (match) {
-    const step = parseInt(match[1], 10)
-    if (step >= STEP.UPLOAD && step <= STEP.ANALYSIS && step !== currentStep.value) {
-      if (canGoStep(step)) {
-        if (step === STEP.COMPENSATION) {
-          currentStep.value = step
-          loadCompensation()
-        } else if (step === STEP.CATALOG) {
-          goStep3()
-        } else if (step === STEP.ANALYSIS) {
-          goStep4()
-        } else {
-          currentStep.value = step
-        }
-      }
-    }
   }
 }
 
@@ -2374,8 +2351,6 @@ const caseListColumns = [
 
 onMounted(async () => {
   await loadCaseList()
-  // 监听浏览器后退/前进按钮
-  window.addEventListener('hashchange', handleHashChange)
   // 默认显示案件首页，用户点击"继续"或"创建"后进入案件内步骤
 })
 
@@ -2391,7 +2366,6 @@ watch([currentCase, currentStep], ([newCase, newStep]) => {
 })
 
 onUnmounted(() => {
-  window.removeEventListener('hashchange', handleHashChange)
   stopProgressPoll()
   if (analysisPollId) { clearInterval(analysisPollId); analysisPollId = null }
   if (ocrPollId) { clearInterval(ocrPollId); ocrPollId = null }
