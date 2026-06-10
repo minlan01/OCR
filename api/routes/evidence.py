@@ -1373,6 +1373,11 @@ async def export_complaint(
     analysis_result = case.analysis_result or {}
     lawyer_info = case.lawyer_info or []
 
+    # 注入赔偿计算总额（供民事起诉状诉讼请求引用）
+    compensation_data = case.compensation_data or {}
+    if compensation_data.get("total_amount"):
+        analysis_result["compensation_total_amount"] = compensation_data["total_amount"]
+
     # 校验：检查是否有LLM生成失败的段落（硬性阻断）
     from services.evidence.word_generator import validate_analysis_result, validate_required_fields
     failed_sections = validate_analysis_result(analysis_result)
@@ -1603,6 +1608,11 @@ async def download_bundle(
     analysis_result = case.analysis_result or {}
     lawyer_info = case.lawyer_info or []
     export_files: dict[str, bytes] = {}
+
+    # 注入赔偿计算总额（供民事起诉状诉讼请求引用）
+    compensation_data = case.compensation_data or {}
+    if compensation_data.get("total_amount"):
+        analysis_result["compensation_total_amount"] = compensation_data["total_amount"]
 
     # 校验：确保目录和分析结果已生成
     if not catalog_data or not catalog_data.get("groups"):

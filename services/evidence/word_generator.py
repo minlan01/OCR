@@ -798,16 +798,29 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
     _set_run_font(run, BODY_FONT, BODY_SIZE)
     run.font.bold = True
 
-    # 第一条：赔偿请求（金额挖空，根据案件类型选择赔偿项目）
+    # 第一条：赔偿请求（根据案件类型选择赔偿项目，金额从赔偿计算结果填充）
     case_type = context.get("case_type", "death")
+    total_amount = context.get("compensation_total_amount", 0)
+    try:
+        total_amount = float(total_amount)
+    except (ValueError, TypeError):
+        total_amount = 0.0
+
+    # 格式化金额为中文大写 + 阿拉伯数字
+    if total_amount > 0:
+        amount_str = f"{total_amount:,.2f}"
+        amount_display = f"{amount_str}元"
+    else:
+        amount_display = "______元"
+
     if case_type == "injury":
-        claim_items = "医疗费、误工费、护理费、住院伙食补助费、营养费、伤残赔偿金（包含被扶养人生活费）、后续治疗费、交通费、精神损害抚慰金等暂计人民币______元"
+        claim_items = f"医疗费、误工费、护理费、住院伙食补助费、营养费、伤残赔偿金（包含被扶养人生活费）、后续治疗费、交通费、精神损害抚慰金等暂计人民币{amount_display}"
         retention_clause = "因本案尚未鉴定，上述赔偿费用待鉴定后再行补充变更"
     elif case_type == "neonatal":
-        claim_items = "医疗费、护理费、住院伙食补助费、营养费、伤残赔偿金（包含被扶养人生活费）、后续护理费、交通费、精神损害抚慰金等暂计人民币______元"
+        claim_items = f"医疗费、护理费、住院伙食补助费、营养费、伤残赔偿金（包含被扶养人生活费）、后续护理费、交通费、精神损害抚慰金等暂计人民币{amount_display}"
         retention_clause = "因本案尚未鉴定，上述赔偿费用待鉴定后再行补充变更"
     else:  # death
-        claim_items = "医疗费、误工费、护理费、住院伙食补助费、营养费、死亡赔偿金（包含被扶养人生活费）、丧葬费、交通费、精神损害抚慰金等暂计人民币______元"
+        claim_items = f"医疗费、误工费、护理费、住院伙食补助费、营养费、死亡赔偿金（包含被扶养人生活费）、丧葬费、交通费、精神损害抚慰金等暂计人民币{amount_display}"
         retention_clause = ""
     p = doc.add_paragraph()
     _set_body_para(p)
