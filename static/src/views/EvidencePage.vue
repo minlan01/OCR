@@ -61,20 +61,12 @@
 
     <!-- ═══ 案件内工作区（步骤条 + 步骤内容） ═══ -->
     <template v-if="!showHomePage">
-    <!-- 四步流程 -->
-    <n-steps :current="currentStep" style="margin-bottom: 24px">
-      <n-step title="上传素材"
-        :style="{ cursor: canGoStep(STEP.UPLOAD) ? 'pointer' : 'default' }"
-        @click="canGoStep(STEP.UPLOAD) && navigateToStep(STEP.UPLOAD)" />
-      <n-step title="赔偿金额计算"
-        :style="{ cursor: canGoStep(STEP.COMPENSATION) ? 'pointer' : 'default' }"
-        @click="canGoStep(STEP.COMPENSATION) && navigateToStep(STEP.COMPENSATION)" />
-      <n-step title="证据目录"
-        :style="{ cursor: canGoStep(STEP.CATALOG) ? 'pointer' : 'default' }"
-        @click="canGoStep(STEP.CATALOG) && navigateToStep(STEP.CATALOG)" />
-      <n-step title="分析与导出"
-        :style="{ cursor: canGoStep(STEP.ANALYSIS) ? 'pointer' : 'default' }"
-        @click="canGoStep(STEP.ANALYSIS) && navigateToStep(STEP.ANALYSIS)" />
+    <!-- 四步流程 — 使用 @update:current 监听步骤点击（n-step 不支持 @click） -->
+    <n-steps :current="currentStep" @update:current="handleStepClick" style="margin-bottom: 24px">
+      <n-step title="上传素材" />
+      <n-step title="赔偿金额计算" />
+      <n-step title="证据目录" />
+      <n-step title="分析与导出" />
     </n-steps>
 
     <!-- Step 1: 上传素材 -->
@@ -1201,6 +1193,14 @@ const progressStatus = computed(() => {
 function canGoStep(step: number): boolean {
   if (!currentCase.value) return false
   return step >= STEP.UPLOAD && step <= STEP.ANALYSIS
+}
+
+/** n-steps @update:current 回调 — 步骤条点击入口 */
+function handleStepClick(newStep: number) {
+  // n-steps 默认 1-based index，和 STEP 常量一致（UPLOAD=1 ... ANALYSIS=4）
+  if (canGoStep(newStep)) {
+    navigateToStep(newStep)
+  }
 }
 
 /** 导航到指定步骤（支持浏览器后退/前进） */
