@@ -31,6 +31,9 @@ numpy>=1.26.0
 # OCR & 版面分析
 paddlepaddle>=3.0.0
 paddleocr>=2.9.0
+rapidocr>=2.0.0
+onnxruntime>=1.17.0
+baidu-aip>=4.0.0
 
 # Word 文档生成
 python-docx>=1.1.0

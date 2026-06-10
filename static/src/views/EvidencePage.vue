@@ -3,61 +3,83 @@
     <n-space align="center" justify="space-between" style="margin-bottom: 20px">
       <n-page-header title="证据整理" subtitle="上传素材 → 生成目录 → 智能分析 → 导出文档" />
       <n-space>
-        <n-button v-if="currentStep !== 0" :loading="refreshing" secondary @click="handleRefresh">
+        <n-button v-if="currentStep !== STEP.CREATE" :loading="refreshing" secondary @click="handleRefresh">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
         </n-button>
-        <n-button v-if="currentStep !== 0" secondary @click="handleGoHome">
+        <n-button v-if="currentStep !== STEP.CREATE" secondary @click="handleGoHome">
           <template #icon><n-icon><HomeOutline /></n-icon></template>
-          新建案件
-        </n-button>
-        <n-button type="primary" secondary @click="showCaseListModal = true; loadCaseList()">
-          <template #icon><n-icon><ListOutline /></n-icon></template>
           案件列表
         </n-button>
       </n-space>
     </n-space>
 
-    <!-- 案件列表弹窗 -->
-    <n-modal v-model:show="showCaseListModal" preset="card" title="已有案件" style="width: 800px; max-width: 90vw">
+    <!-- 案件列表弹窗（仅非 Step 0 时使用） -->
+    <n-modal v-if="currentStep !== STEP.CREATE" v-model:show="showCaseListModal" preset="card" title="已有案件" style="width: 800px; max-width: 90vw">
       <n-data-table :columns="caseListColumns" :data="caseList" :loading="caseListLoading" :bordered="false" size="small" />
     </n-modal>
 
-    <!-- 四步流程（可点击切换，仅继续案件时） -->
+    <!-- 五步流程（可点击切换，仅继续案件时） -->
     <n-steps :current="currentStep + 1" style="margin-bottom: 24px">
-      <n-step title="创建案件" :style="{ cursor: canGoStep(0) ? 'pointer' : 'default' }" @click="canGoStep(0) && navigateToStep(0)" />
-      <n-step title="上传素材" :style="{ cursor: canGoStep(1) ? 'pointer' : 'default' }" @click="canGoStep(1) && navigateToStep(1)" />
-      <n-step title="证据目录" :style="{ cursor: canGoStep(2) ? 'pointer' : 'default' }" @click="canGoStep(2) && navigateToStep(2)" />
-      <n-step title="分析与导出" :style="{ cursor: canGoStep(3) ? 'pointer' : 'default' }" @click="canGoStep(3) && navigateToStep(3)" />
+      <n-step title="创建案件"
+        :style="{ cursor: canGoStep(STEP.CREATE) ? 'pointer' : 'default' }"
+        @click="canGoStep(STEP.CREATE) && navigateToStep(STEP.CREATE)" />
+      <n-step title="上传素材"
+        :style="{ cursor: canGoStep(STEP.UPLOAD) ? 'pointer' : 'default' }"
+        @click="canGoStep(STEP.UPLOAD) && navigateToStep(STEP.UPLOAD)" />
+      <n-step title="赔偿金额计算"
+        :style="{ cursor: canGoStep(STEP.COMPENSATION) ? 'pointer' : 'default' }"
+        @click="canGoStep(STEP.COMPENSATION) && navigateToStep(STEP.COMPENSATION)" />
+      <n-step title="证据目录"
+        :style="{ cursor: canGoStep(STEP.CATALOG) ? 'pointer' : 'default' }"
+        @click="canGoStep(STEP.CATALOG) && navigateToStep(STEP.CATALOG)" />
+      <n-step title="分析与导出"
+        :style="{ cursor: canGoStep(STEP.ANALYSIS) ? 'pointer' : 'default' }"
+        @click="canGoStep(STEP.ANALYSIS) && navigateToStep(STEP.ANALYSIS)" />
     </n-steps>
 
-    <!-- Step 0: 创建案件 -->
-    <n-card v-if="currentStep === 0" title="创建证据案件">
-      <n-form ref="formRef" :model="form" label-placement="left" label-width="120">
-        <n-form-item label="案件名称" path="case_name">
-          <n-input v-model:value="form.case_name" placeholder="例：张三诉XX医院医疗损害赔偿" />
-        </n-form-item>
-        <n-form-item label="案件类型" path="case_type">
-          <n-radio-group v-model:value="form.case_type">
-            <n-radio value="injury">医疗损害（伤残）</n-radio>
-            <n-radio value="death">医疗损害（死亡）</n-radio>
-            <n-radio value="neonatal">医疗损害（新生儿）</n-radio>
-          </n-radio-group>
-        </n-form-item>
-        <n-form-item label="是否未成年人" path="is_minor">
-          <n-switch v-model:value="form.is_minor" />
-        </n-form-item>
-        <n-alert type="info" style="margin-top: 4px">
-          原被告信息将在上传素材后自动从证据材料中提取，无需手动填写
-        </n-alert>
-      </n-form>
-      <template #action>
-        <n-button type="primary" :loading="creating" @click="handleCreate">创建案件</n-button>
-      </template>
-    </n-card>
+    <!-- Step 0: 案件列表（默认显示） + 创建案件表单（点按钮后显示） -->
+    <template v-if="currentStep === STEP.CREATE">
+      <n-card v-if="showCreateForm" title="创建证据案件" style="margin-bottom: 16px">
+        <n-form ref="formRef" :model="form" label-placement="left" label-width="120">
+          <n-form-item label="案件名称" path="case_name">
+            <n-input v-model:value="form.case_name" placeholder="例：张三诉XX医院医疗损害赔偿" />
+          </n-form-item>
+          <n-form-item label="案件类型" path="case_type">
+            <n-radio-group v-model:value="form.case_type">
+              <n-radio value="injury">医疗损害（伤残）</n-radio>
+              <n-radio value="death">医疗损害（死亡）</n-radio>
+            </n-radio-group>
+          </n-form-item>
+          <n-form-item label="是否未成年人（新生儿）" path="is_minor">
+            <n-switch v-model:value="form.is_minor" />
+          </n-form-item>
+          <n-alert type="info" style="margin-top: 4px">
+            原被告信息将在上传素材后自动从证据材料中提取，无需手动填写
+          </n-alert>
+        </n-form>
+        <template #action>
+          <n-space>
+            <n-button @click="showCreateForm = false">取消</n-button>
+            <n-button type="primary" :loading="creating" @click="handleCreate">创建案件</n-button>
+          </n-space>
+        </template>
+      </n-card>
+
+      <!-- 已有案件列表 -->
+      <n-card title="已有案件">
+        <template #header-extra>
+          <n-button type="primary" @click="showCreateForm = true">
+            <template #icon><n-icon><AddOutline /></n-icon></template>
+            创建案件
+          </n-button>
+        </template>
+        <n-data-table :columns="caseListColumns" :data="caseList" :loading="caseListLoading" :bordered="false" size="small" />
+      </n-card>
+    </template>
 
     <!-- Step 1: 上传素材 -->
-    <n-card v-if="currentStep === 1" title="上传原始素材">
+    <n-card v-if="currentStep === STEP.UPLOAD" title="上传原始素材">
       <template #header-extra>
         <n-tag :type="statusTagType(currentCase?.status)">{{ statusLabel(currentCase?.status) }}</n-tag>
       </template>
@@ -277,7 +299,7 @@
 
       <template #action>
         <n-space>
-          <n-button @click="currentStep = 0">返回</n-button>
+          <n-button @click="navigateToStep(STEP.CREATE)">返回</n-button>
           <n-button
             v-if="failedCount > 0"
             type="warning"
@@ -299,8 +321,159 @@
       </template>
     </n-card>
 
-    <!-- Step 2: 证据目录 -->
-    <n-card v-if="currentStep === 2" title="证据目录">
+    <!-- Step 2: 赔偿金额计算 -->
+    <n-card v-if="currentStep === STEP.COMPENSATION" title="赔偿金额计算">
+      <!-- 相关素材（折叠面板） -->
+      <n-collapse style="margin-bottom: 16px">
+        <n-collapse-item title="相关素材（医疗费用类）" name="materials">
+          <n-table :bordered="false" :single-line="false" size="small">
+            <thead>
+              <tr><th>文件名</th><th>分类</th><th>状态</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="mat in feeReceiptMaterials" :key="mat.id">
+                <td>{{ mat.original_filename }}</td>
+                <td>{{ mat.effective_category }}</td>
+                <td>
+                  <n-tag :type="mat.ocr_status === 'completed' ? 'success' : 'warning'" size="small">
+                    {{ mat.ocr_status === 'completed' ? '已识别' : '识别中' }}
+                  </n-tag>
+                </td>
+                <td>
+                  <n-button size="small" quaternary @click="openPagePreview(mat)">查看</n-button>
+                </td>
+              </tr>
+              <tr v-if="feeReceiptMaterials.length === 0">
+                <td colspan="4" style="text-align:center;color:#999">暂无费用类素材</td>
+              </tr>
+            </tbody>
+          </n-table>
+        </n-collapse-item>
+      </n-collapse>
+
+      <!-- 操作按钮 -->
+      <n-space style="margin-bottom: 16px">
+        <n-button type="primary" :loading="calculatingCompensation" @click="handleCalculateCompensation">
+          自动计算赔偿
+        </n-button>
+        <n-button @click="handleExportCompensation" :disabled="!compensationData">
+          导出 Excel
+        </n-button>
+      </n-space>
+
+      <!-- 赔偿费用清单表格 -->
+      <n-table v-if="compensationData" :bordered="true" :single-line="false" size="small" style="margin-bottom: 16px">
+        <thead>
+          <tr>
+            <th style="width:40px">序号</th>
+            <th>赔偿项目</th>
+            <th style="width:150px">金额(元)</th>
+            <th>计算依据</th>
+            <th>来源素材</th>
+            <th style="width:60px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(item, idx) in compensationData.items" :key="item.fee_type">
+            <td>{{ idx + 1 }}</td>
+            <td>{{ item.fee_name }}</td>
+            <td>
+              <n-input-number
+                v-if="editingFeeType === item.fee_type"
+                v-model:value="editAmount"
+                size="small"
+                :min="0"
+                :precision="2"
+                @blur="saveFeeEdit(item)"
+                @keyup.enter="saveFeeEdit(item)"
+              />
+              <span v-else style="cursor:pointer" @click="startFeeEdit(item)">
+                {{ formatMoney(item.manual_amount ?? item.amount) }}
+                <n-icon size="14" style="vertical-align:middle;color:#999"><CreateOutline /></n-icon>
+              </span>
+            </td>
+            <td style="font-size:12px;color:#666">{{ item.calculation_basis }}</td>
+            <td style="font-size:12px">
+              <span v-for="s in item.sources" :key="s.material_id">{{ s.filename }}; </span>
+              <span v-if="!item.sources?.length" style="color:#999">-</span>
+            </td>
+            <td>
+              <n-button v-if="item.manual_amount !== null" size="tiny" quaternary type="warning"
+                @click="resetFeeEdit(item)">重置</n-button>
+            </td>
+          </tr>
+          <tr style="font-weight:bold;background:#f5f5f5">
+            <td colspan="2">合计</td>
+            <td>{{ formatMoney(compensationTotal) }}</td>
+            <td colspan="3"></td>
+          </tr>
+        </tbody>
+      </n-table>
+
+      <!-- 参数配置（折叠） -->
+      <n-collapse v-if="compensationData" style="margin-bottom: 16px">
+        <n-collapse-item title="参数配置" name="params">
+          <n-grid :cols="3" :x-gap="12" :y-gap="8">
+            <n-gi>
+              <n-form-item label="上年度人均可支配收入(元/年)" label-placement="top">
+                <n-input-number v-model:value="compParams.annual_income" size="small" :min="0" style="width:100%" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="上年度人均消费支出(元/年)" label-placement="top">
+                <n-input-number v-model:value="compParams.annual_consumption" size="small" :min="0" style="width:100%" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="上年度职工月均工资(元/月)" label-placement="top">
+                <n-input-number v-model:value="compParams.monthly_salary" size="small" :min="0" style="width:100%" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="住院伙食补助(元/天)" label-placement="top">
+                <n-input-number v-model:value="compParams.daily_food_subsidy" size="small" :min="0" style="width:100%" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="营养费(元/天)" label-placement="top">
+                <n-input-number v-model:value="compParams.daily_nutrition" size="small" :min="0" style="width:100%" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="赔偿年限(年)" label-placement="top">
+                <n-input-number v-model:value="compParams.compensation_years" size="small" :min="1" :max="30" style="width:100%" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="伤残系数" label-placement="top">
+                <n-input-number v-model:value="compParams.disability_coefficient" size="small" :min="0.1" :max="1" :step="0.01" style="width:100%" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="住院天数" label-placement="top">
+                <n-input-number v-model:value="compParams.hospital_days" size="small" :min="0" style="width:100%" />
+              </n-form-item>
+            </n-gi>
+            <n-gi>
+              <n-form-item label="误工天数" label-placement="top">
+                <n-input-number v-model:value="compParams.lost_wage_days" size="small" :min="0" style="width:100%" />
+              </n-form-item>
+            </n-gi>
+          </n-grid>
+          <n-button type="primary" size="small" @click="handleRecalculate">重新计算</n-button>
+        </n-collapse-item>
+      </n-collapse>
+
+      <!-- 底部按钮 -->
+      <n-divider />
+      <n-space justify="space-between">
+        <n-button @click="navigateToStep(STEP.UPLOAD)">返回</n-button>
+        <n-button type="primary" @click="navigateToStep(STEP.CATALOG)">下一步：证据目录</n-button>
+      </n-space>
+    </n-card>
+
+    <!-- Step 3: 证据目录 -->
+    <n-card v-if="currentStep === STEP.CATALOG" title="证据目录">
       <template #header-extra>
         <n-space>
           <n-button size="small" @click="handleExportCatalogPdf">
@@ -458,15 +631,15 @@
 
       <template #action>
         <n-space>
-          <n-button @click="currentStep = 1">返回</n-button>
+          <n-button @click="navigateToStep(STEP.COMPENSATION)">返回</n-button>
           <n-button type="primary" @click="handleSaveCatalog">保存目录修改</n-button>
-          <n-button type="primary" @click="currentStep = 3">下一步：分析与导出</n-button>
+          <n-button type="primary" @click="navigateToStep(STEP.ANALYSIS)">下一步：分析与导出</n-button>
         </n-space>
       </template>
     </n-card>
 
-    <!-- Step 3: 分析与导出 -->
-    <n-card v-if="currentStep === 3" title="分析与导出">
+    <!-- Step 4: 分析与导出 -->
+    <n-card v-if="currentStep === STEP.ANALYSIS" title="分析与导出">
 
       <!-- 素材管理（可折叠，任意步骤可删除素材） -->
       <n-collapse style="margin-bottom: 16px">
@@ -560,24 +733,49 @@
 
       <n-space vertical>
         <n-card size="small" title="智能分析" embedded>
-          <n-space>
+          <n-space vertical>
+            <!-- 状态1: 未分析 — 显示"开始智能分析"可点击 -->
             <n-button
-              :type="currentCase?.status === 'failed' ? 'warning' : 'primary'"
+              v-if="!hasAnalysisResult && !analyzing && currentCase?.status !== 'failed'"
+              type="primary"
               :loading="analyzing"
-              @click="handleAnalyze"
-              :disabled="analyzing"
+              @click="handleStartAnalysis"
             >
-              {{ analyzing ? '分析中...' : (currentCase?.status === 'failed' ? '重新分析' : '开始智能分析') }}
+              开始智能分析
             </n-button>
-            <n-tag v-if="analysisResult" :type="statusTagType(analysisResult.status)">
-              {{ statusLabel(analysisResult.status) }}
-            </n-tag>
-            <n-tag v-if="currentCase?.status === 'failed'" type="error">
-              分析失败 — 可点击重新分析
-            </n-tag>
+
+            <!-- 状态2: 分析中 — loading -->
+            <n-button
+              v-if="analyzing"
+              type="primary"
+              loading
+              disabled
+            >
+              分析中...
+            </n-button>
+
+            <!-- 状态3: 分析完成 — "开始"变灰 + "再次分析" -->
+            <template v-if="hasAnalysisResult && !analyzing">
+              <n-space align="center">
+                <n-button disabled>开始智能分析</n-button>
+                <n-tag type="success" size="small">✓ 分析完成</n-tag>
+              </n-space>
+              <n-button type="warning" secondary @click="handleReAnalysis">
+                再次智能分析
+              </n-button>
+            </template>
+
+            <!-- 状态4: 分析失败 — "重新分析"可点击 -->
+            <n-button
+              v-if="currentCase?.status === 'failed' && !analyzing"
+              type="warning"
+              @click="handleStartAnalysis"
+            >
+              重新分析
+            </n-button>
           </n-space>
 
-          <template v-if="analysisResult && Object.keys(analysisResult.analysis_result || {}).length > 0">
+          <template v-if="hasAnalysisResult">
             <n-divider>分析结果摘要</n-divider>
 
             <!-- 缺失项提示 -->
@@ -615,7 +813,7 @@
         </n-card>
 
         <n-card size="small" title="文档导出" embedded>
-          <n-alert v-if="!analysisResult || Object.keys(analysisResult.analysis_result || {}).length === 0" type="info" style="margin-bottom: 12px">
+          <n-alert v-if="!hasAnalysisResult" type="info" style="margin-bottom: 12px">
             请先完成智能分析，然后导出文档
           </n-alert>
           <n-space wrap>
@@ -653,14 +851,10 @@
       </n-space>
 
       <template #action>
-        <n-button @click="currentStep = 2">返回</n-button>
+        <n-button @click="navigateToStep(STEP.CATALOG)">返回</n-button>
       </template>
     </n-card>
 
-    <!-- 案件列表（快速入口 + 编辑/删除） -->
-    <n-card v-if="currentStep === 0" title="已有案件" style="margin-top: 16px">
-      <n-data-table :columns="caseListColumns" :data="caseList" :loading="caseListLoading" :bordered="false" size="small" />
-    </n-card>
 
     <!-- 编辑案件弹窗 -->
     <n-modal v-model:show="showEditModal" preset="dialog" title="编辑案件" positive-text="保存" negative-text="取消"
@@ -673,10 +867,9 @@
           <n-radio-group v-model:value="editForm.case_type">
             <n-radio value="injury">医疗损害（伤残）</n-radio>
             <n-radio value="death">医疗损害（死亡）</n-radio>
-            <n-radio value="neonatal">医疗损害（新生儿）</n-radio>
           </n-radio-group>
         </n-form-item>
-        <n-form-item label="是否未成年人">
+        <n-form-item label="是否未成年人（新生儿）">
           <n-switch v-model:value="editForm.is_minor" />
         </n-form-item>
       </n-form>
@@ -752,7 +945,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted, watch, h } from 'vue'
 import {
   useMessage,
   useDialog,
@@ -795,6 +988,7 @@ import {
   NGi,
   NSelect,
   NTooltip,
+  NInputNumber,
 } from 'naive-ui'
 import {
   CloudUploadOutline,
@@ -803,6 +997,8 @@ import {
   ListOutline,
   HomeOutline,
   RefreshOutline,
+  AddOutline,
+  CreateOutline,
 } from '@vicons/ionicons5'
 import * as evidenceApi from '@/api/evidence'
 import type {
@@ -816,16 +1012,27 @@ import type {
 const message = useMessage()
 const dialog = useDialog()
 
+// ─── 步骤常量 ─────────────────────────────────────────────────────────────────
+
+const STEP = {
+  CREATE: 0,
+  UPLOAD: 1,
+  COMPENSATION: 2,
+  CATALOG: 3,
+  ANALYSIS: 4,
+} as const
+
 // ─── 状态 ─────────────────────────────────────────────────────────────────────
 
-const currentStep = ref(0)
+const currentStep = ref(STEP.CREATE)
 const currentCase = ref<evidenceApi.EvidenceCase | null>(null)
 const showCaseListModal = ref(false)
+const showCreateForm = ref(false)
 
 // 创建表单
 const form = ref({
   case_name: '',
-  case_type: 'injury' as 'injury' | 'death' | 'neonatal',
+  case_type: 'injury' as 'injury' | 'death',
   is_minor: false,
 })
 const creating = ref(false)
@@ -856,6 +1063,31 @@ const analyzing = ref(false)
 let analysisPollId: ReturnType<typeof setInterval> | null = null
 let ocrPollId: ReturnType<typeof setInterval> | null = null
 
+// ── 赔偿计算相关状态 ──
+const compensationData = ref<any>(null)
+const calculatingCompensation = ref(false)
+const feeReceiptMaterials = computed(() =>
+  materials.value.filter((m: any) =>
+    ['fee_receipt', 'invoice', 'receipt'].includes(m.effective_category) && m.ocr_status === 'completed'
+  )
+)
+const compensationTotal = computed(() => {
+  if (!compensationData.value?.items) return 0
+  return compensationData.value.items.reduce((sum: number, item: any) =>
+    sum + (item.manual_amount ?? item.amount), 0
+  )
+})
+
+// 参数编辑
+const compParams = reactive<any>({})
+const editingFeeType = ref<string | null>(null)
+const editAmount = ref<number>(0)
+
+const hasAnalysisResult = computed(() => {
+  if (!analysisResult.value?.analysis_result) return false
+  return Object.keys(analysisResult.value.analysis_result).length > 0
+})
+
 // 导出
 const bundling = ref(false)
 const exportingDoc = ref<string | null>(null) // 跟踪正在导出的文档类型
@@ -867,7 +1099,6 @@ const caseListLoading = ref(false)
 // 编辑弹窗
 const showEditModal = ref(false)
 const editForm = ref({ id: '', case_name: '', case_type: 'injury' as 'injury' | 'death', is_minor: false })
-
 // 多页文档预览
 const showPageDrawer = ref(false)
 const pagePreviewLoading = ref(false)
@@ -900,6 +1131,12 @@ function _resetAllState() {
   retryingMaterialId.value = null
   stoppingProcess.value = false
   materials.value = []
+  // 赔偿计算状态重置
+  compensationData.value = null
+  calculatingCompensation.value = false
+  editingFeeType.value = null
+  editAmount.value = 0
+  Object.keys(compParams).forEach(k => delete compParams[k])
 }
 
 // 律师信息（2组）
@@ -960,17 +1197,19 @@ const progressStatus = computed(() => {
 
 // ─── 步骤切换 ─────────────────────────────────────────────────────────────
 
-/** 是否可以跳到某步骤（仅"继续案件"时允许跳转 1/2/3） */
+/** 是否可以跳到某步骤（Step 0 不允许通过步骤条跳回，Step 1-4 案件内自由切换） */
 function canGoStep(step: number): boolean {
-  if (step === 0) return true
+  if (step === STEP.CREATE) return false
   if (!currentCase.value || !isContinuedCase.value) return false
   return true
 }
 
 /** 导航到指定步骤（支持浏览器后退/前进） */
 async function navigateToStep(step: number) {
-  // 离开步骤2时自动保存目录修改
-  if (currentStep.value === 2 && catalogDirty.value && pendingUpdates.value.size > 0) {
+  if (!canGoStep(step) && step !== STEP.CREATE) return
+
+  // 离开证据目录步骤时自动保存目录修改
+  if (currentStep.value === STEP.CATALOG && catalogDirty.value && pendingUpdates.value.size > 0) {
     await handleSaveCatalog()
   }
 
@@ -978,21 +1217,25 @@ async function navigateToStep(step: number) {
   window.location.hash = `step=${step}`
 
   // 根据步骤执行相应操作
-  if (step === 2) {
-    await goStep2()
-  } else if (step === 3) {
+  if (step === STEP.COMPENSATION) {
+    currentStep.value = step
+    await loadCompensation()
+  } else if (step === STEP.CATALOG) {
     await goStep3()
+  } else if (step === STEP.ANALYSIS) {
+    await goStep4()
   } else {
     currentStep.value = step
   }
 }
 
-/** 返回首页（新建案件） */
+/** 返回首页（案件列表） */
 function handleGoHome() {
   _resetAllState()
   currentCase.value = null
-  currentStep.value = 0
+  currentStep.value = STEP.CREATE
   isContinuedCase.value = false
+  showCreateForm.value = false
   window.location.hash = ''
   // 重置创建表单
   form.value = { case_name: '', case_type: 'injury', is_minor: false }
@@ -1008,11 +1251,14 @@ async function handleRefresh() {
     currentCase.value = res
     materials.value = res.materials || []
     // 根据当前步骤刷新对应数据
-    if (currentStep.value === 2 || currentStep.value === 3) {
+    if (currentStep.value === STEP.CATALOG || currentStep.value === STEP.ANALYSIS) {
       await loadCatalog()
     }
-    if (currentStep.value === 3) {
+    if (currentStep.value === STEP.ANALYSIS) {
       try { analysisResult.value = await evidenceApi.getAnalysis(currentCase.value.id) } catch { /* ignore */ }
+    }
+    if (currentStep.value === STEP.COMPENSATION) {
+      await loadCompensation()
     }
     message.success('已刷新')
   } catch (e: unknown) {
@@ -1028,12 +1274,15 @@ function handleHashChange() {
   const match = hash.match(/step=(\d)/)
   if (match) {
     const step = parseInt(match[1], 10)
-    if (step >= 0 && step <= 3 && step !== currentStep.value) {
+    if (step >= STEP.CREATE && step <= STEP.ANALYSIS && step !== currentStep.value) {
       if (canGoStep(step)) {
-        if (step === 2) {
-          goStep2()
-        } else if (step === 3) {
+        if (step === STEP.COMPENSATION) {
+          currentStep.value = step
+          loadCompensation()
+        } else if (step === STEP.CATALOG) {
           goStep3()
+        } else if (step === STEP.ANALYSIS) {
+          goStep4()
         } else {
           currentStep.value = step
         }
@@ -1042,17 +1291,17 @@ function handleHashChange() {
   }
 }
 
-/** 跳到步骤2（加载目录） */
-async function goStep2() {
+/** 跳到步骤3（加载目录） */
+async function goStep3() {
   if (!currentCase.value) return
-  currentStep.value = 2
+  currentStep.value = STEP.CATALOG
   await loadCatalog()
 }
 
-/** 跳到步骤3（加载目录 + 分析结果） */
-async function goStep3() {
+/** 跳到步骤4（加载目录 + 分析结果） */
+async function goStep4() {
   if (!currentCase.value) return
-  currentStep.value = 3
+  currentStep.value = STEP.ANALYSIS
   await loadCatalog()
   try { analysisResult.value = await evidenceApi.getAnalysis(currentCase.value.id) } catch { /* ignore */ }
 }
@@ -1173,7 +1422,7 @@ function stepStatusLabel(status: string): string {
 }
 
 function caseTypeLabel(t: string): string {
-  return t === 'injury' ? '伤残' : t === 'death' ? '死亡' : t === 'neonatal' ? '新生儿' : t
+  return t === 'injury' ? '伤残' : t === 'death' ? '死亡' : t
 }
 
 // ─── 进度轮询 ─────────────────────────────────────────────────────────────────
@@ -1207,12 +1456,12 @@ function startProgressPoll(caseId: string) {
           } catch { /* 静默 */ }
         } else if (p.status === 'catalog_ready') {
           message.success('OCR识别与分类完成，已生成证据目录')
-          currentStep.value = 2
-          await loadCatalog()
+          currentStep.value = STEP.COMPENSATION
+          await loadCompensation()
         } else {
           // analysis_done / completed — 跳到分析步骤
           message.success('OCR识别与分类完成')
-          currentStep.value = 3
+          currentStep.value = STEP.ANALYSIS
           await loadCatalog()
           try { analysisResult.value = await evidenceApi.getAnalysis(caseId) } catch { /* ignore */ }
         }
@@ -1249,7 +1498,8 @@ async function handleCreate() {
     materials.value = res.materials || []
     syncLawyerInfo(res)
     syncDefendantPhone(res)
-    currentStep.value = 1
+    currentStep.value = STEP.UPLOAD
+    showCreateForm.value = false
     message.success('案件创建成功')
   } catch (e: unknown) {
     message.error((e as Error).message)
@@ -1337,7 +1587,7 @@ async function doUploadFiles(files: File[]) {
 // 删除单个材料（删除后重新加载完整案件数据确保一致性）
 async function handleDeleteMaterial(materialId: string) {
   if (!currentCase.value) return
-  const isStep1 = currentStep.value === 1
+  const isStep1 = currentStep.value === STEP.UPLOAD
   dialog.warning({
     title: '确认删除',
     content: isStep1
@@ -1353,7 +1603,7 @@ async function handleDeleteMaterial(materialId: string) {
         materials.value = fresh.materials || []
         selectedMaterialIds.value.delete(materialId)
         message.success('素材已删除')
-        // Step 2/3 时提示用户重新处理
+        // Step 2/3/4 时提示用户重新处理
         if (!isStep1) {
           message.warning('素材已变更，建议返回 Step 1 重新处理以更新证据目录和分析结果')
         }
@@ -1448,7 +1698,7 @@ function clearSelection() {
 async function handleBatchDelete() {
   if (!currentCase.value || selectedMaterialIds.value.size === 0) return
   const count = selectedMaterialIds.value.size
-  const isStep1 = currentStep.value === 1
+  const isStep1 = currentStep.value === STEP.UPLOAD
   dialog.error({
     title: '确认批量删除',
     content: isStep1
@@ -1651,6 +1901,122 @@ async function confirmCancelCase(row: EvidenceCaseListItem) {
   })
 }
 
+// ─── 赔偿计算 ─────────────────────────────────────────────────────────────────
+
+function formatMoney(val: number | string): string {
+  const num = typeof val === 'string' ? parseFloat(val) : val
+  if (isNaN(num)) return '0.00'
+  return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+async function handleCalculateCompensation() {
+  if (!currentCase.value) return
+  calculatingCompensation.value = true
+  try {
+    const res = await evidenceApi.calculateCompensation(currentCase.value.id, compParams)
+    compensationData.value = res
+    // 同步参数
+    if (res.params) Object.assign(compParams, res.params)
+  } catch (e: any) {
+    message.error('计算失败: ' + (e.message || '未知错误'))
+  } finally {
+    calculatingCompensation.value = false
+  }
+}
+
+function startFeeEdit(item: any) {
+  editingFeeType.value = item.fee_type
+  editAmount.value = item.manual_amount ?? item.amount
+}
+
+async function saveFeeEdit(item: any) {
+  editingFeeType.value = null
+  if (!currentCase.value || !compensationData.value) return
+
+  // 更新本地数据
+  const target = compensationData.value.items.find((i: any) => i.fee_type === item.fee_type)
+  if (target) {
+    target.manual_amount = editAmount.value
+  }
+
+  // 保存到后端
+  try {
+    const updateItems = compensationData.value.items.map((i: any) => ({
+      fee_type: i.fee_type,
+      manual_amount: i.manual_amount,
+    }))
+    await evidenceApi.updateCompensation(currentCase.value.id, { items: updateItems })
+  } catch (e: any) {
+    message.error('保存失败')
+  }
+}
+
+function resetFeeEdit(item: any) {
+  const target = compensationData.value?.items?.find((i: any) => i.fee_type === item.fee_type)
+  if (target) {
+    target.manual_amount = null
+    // 保存到后端
+    if (currentCase.value && compensationData.value) {
+      const updateItems = compensationData.value.items.map((i: any) => ({
+        fee_type: i.fee_type,
+        manual_amount: i.manual_amount,
+      }))
+      evidenceApi.updateCompensation(currentCase.value.id, { items: updateItems })
+    }
+  }
+}
+
+async function handleRecalculate() {
+  if (!currentCase.value) return
+  calculatingCompensation.value = true
+  try {
+    const res = await evidenceApi.calculateCompensation(currentCase.value.id, compParams)
+    compensationData.value = res
+    if (res.params) Object.assign(compParams, res.params)
+  } catch (e: any) {
+    message.error('重新计算失败')
+  } finally {
+    calculatingCompensation.value = false
+  }
+}
+
+async function handleExportCompensation() {
+  if (!currentCase.value) return
+  try {
+    await evidenceApi.exportCompensationCalc(currentCase.value.id)
+  } catch (e: any) {
+    message.error('导出失败')
+  }
+}
+
+async function loadCompensation() {
+  if (!currentCase.value) return
+  try {
+    const res = await evidenceApi.getCompensation(currentCase.value.id)
+    if (res.compensation_data && res.compensation_data.items) {
+      compensationData.value = res.compensation_data
+      if (res.compensation_data.params) Object.assign(compParams, res.compensation_data.params)
+    }
+  } catch { /* 静默 */ }
+}
+
+// 智能分析（新入口函数）
+function handleStartAnalysis() {
+  handleAnalyze()
+}
+
+function handleReAnalysis() {
+  dialog.warning({
+    title: '确认重新分析',
+    content: '重新分析将覆盖已有分析结果，是否继续？',
+    positiveText: '确认重新分析',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      handleStartAnalysis()
+    },
+  })
+}
+
 // 加载目录
 async function loadCatalog() {
   if (!currentCase.value) return
@@ -1840,12 +2206,12 @@ async function continueCase(caseId: string) {
     currentCase.value = res
     materials.value = res.materials || []
     if (['catalog_ready'].includes(res.status)) {
-      currentStep.value = 2; await loadCatalog()
+      currentStep.value = STEP.COMPENSATION; await loadCompensation()
     } else if (['analysis_done', 'completed', 'exporting'].includes(res.status)) {
-      currentStep.value = 3; await loadCatalog()
+      currentStep.value = STEP.ANALYSIS; await loadCatalog()
       try { analysisResult.value = await evidenceApi.getAnalysis(caseId) } catch { /* ignore */ }
     } else if (['analyzing'].includes(res.status)) {
-      currentStep.value = 3; await loadCatalog()
+      currentStep.value = STEP.ANALYSIS; await loadCatalog()
       analyzing.value = true
       // 恢复分析轮询（使用模块级变量追踪）
       analysisPollId = setInterval(async () => {
@@ -1868,12 +2234,12 @@ async function continueCase(caseId: string) {
       }, 3000)
     } else if (res.status === 'processing') {
       // 恢复进度轮询（后台 Celery 任务不会因为退出而中断）
-      currentStep.value = 1
+      currentStep.value = STEP.UPLOAD
       showProgress.value = true
       processing.value = true
       startProgressPoll(caseId)
     } else {
-      currentStep.value = 1
+      currentStep.value = STEP.UPLOAD
     }
     message.info('已加载案件：' + res.case_name)
     // 同步律师信息到本地状态

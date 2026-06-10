@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     archive_dir: str = str(PROJECT_ROOT / "scan_archive")
 
     # ==================== OCR ====================
-    ocr_engine_type: Literal["paddle", "bailian"] = "paddle"
+    ocr_engine_type: Literal["paddle", "rapid", "bailian", "baidu", "glm", "multi"] = "paddle"
     ocr_use_gpu: bool = False
     ocr_lang: str = "ch"
     ocr_gpu_mem: int = 8000
@@ -118,6 +118,35 @@ class Settings(BaseSettings):
     siliconflow_api_key: SecretStr = SecretStr("")
     siliconflow_ocr_base_url: str = "https://api.siliconflow.cn/v1"
     siliconflow_ocr_model: str = "deepseek-ai/DeepSeek-OCR"
+
+    # ==================== GLM-4V-Flash OCR (智谱免费多模态) ====================
+    glm_api_key: SecretStr = SecretStr("")
+    glm_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
+    glm_model: str = "glm-4v-flash"
+    glm_timeout: int = 120
+    glm_max_concurrent: int = 5  # 免费模型保守并发
+
+    # ==================== DeepSeek LLM (文本分析 + 段落生成) ====================
+    deepseek_api_key: SecretStr = SecretStr("")
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    deepseek_text_model: str = "deepseek-chat"  # DeepSeek-V3
+    deepseek_flash_model: str = "deepseek-chat"  # 同上，flash 暂无独立模型
+    deepseek_timeout: int = 120
+    deepseek_max_concurrent: int = 10
+
+    # ==================== 百度云 OCR ====================
+    baidu_ocr_app_id: str = ""
+    baidu_ocr_api_key: str = ""
+    baidu_ocr_secret_key: str = ""
+    baidu_ocr_timeout: int = 30
+    baidu_ocr_max_concurrent: int = 10
+
+    # ==================== 多引擎 OCR 调度 ====================
+    # 引擎优先级列表（从左到右依次尝试，成功则停止）
+    # 可选值: "baidu" / "glm" / "bailian"
+    # 典型配置: ["baidu", "glm", "bailian"]
+    #   百度云(主力,0.006元/次) → GLM(降级,免费) → 百炼(兜底,最贵)
+    ocr_multi_engines: list[str] = ["baidu", "glm", "bailian"]
 
     # ==================== Celery ====================
     celery_queue_name: str = "scanstruct"
@@ -208,14 +237,42 @@ class Settings(BaseSettings):
     @field_validator("bailian_api_key")
     @classmethod
     def require_bailian_key_if_selected(cls, v, info):
-        """选择百炼引擎时必须配置 API Key"""
+        """选择百炼引擎或多引擎模式时必须配置 API Key"""
         engine_type = info.data.get("ocr_engine_type", "")
-        if engine_type == "bailian":
+        if engine_type in ("bailian", "multi"):
             key = v.get_secret_value() if isinstance(v, SecretStr) else v
             if not key:
                 raise ValueError(
-                    "bailian_api_key is required when OCR_ENGINE_TYPE=bailian. "
+                    "bailian_api_key is required when OCR_ENGINE_TYPE=bailian or multi. "
                     "Set BAILIAN_API_KEY in your .env file."
+                )
+        return v
+
+    @field_validator("baidu_ocr_app_id", "baidu_ocr_api_key", "baidu_ocr_secret_key")
+    @classmethod
+    def require_baidu_credentials_if_selected(cls, v, info):
+        """选择百度云引擎或多引擎模式时必须配置凭证"""
+        engine_type = info.data.get("ocr_engine_type", "")
+        if engine_type in ("baidu", "multi"):
+            if not v:
+                field = info.field_name
+                raise ValueError(
+                    f"{field} is required when OCR_ENGINE_TYPE=baidu or multi. "
+                    f"Set {field.upper()} in your .env file."
+                )
+        return v
+
+    @field_validator("glm_api_key")
+    @classmethod
+    def require_glm_key_if_selected(cls, v, info):
+        """选择 GLM 引擎或多引擎模式时必须配置 API Key"""
+        engine_type = info.data.get("ocr_engine_type", "")
+        if engine_type in ("glm", "multi"):
+            key = v.get_secret_value() if isinstance(v, SecretStr) else v
+            if not key:
+                raise ValueError(
+                    "glm_api_key is required when OCR_ENGINE_TYPE=glm or multi. "
+                    "Set GLM_API_KEY in your .env file."
                 )
         return v
 
@@ -324,6 +381,16 @@ class Settings(BaseSettings):
     def siliconflow_api_key_plain(self) -> str:
         """获取硅基流动 API Key 明文（安全访问 SecretStr）"""
         return self.siliconflow_api_key.get_secret_value()
+
+    @property
+    def glm_api_key_plain(self) -> str:
+        """获取 GLM-4V-Flash API Key 明文（安全访问 SecretStr）"""
+        return self.glm_api_key.get_secret_value()
+
+    @property
+    def deepseek_api_key_plain(self) -> str:
+        """获取 DeepSeek API Key 明文（安全访问 SecretStr）"""
+        return self.deepseek_api_key.get_secret_value()
 
     @property
     def all_minio_buckets(self) -> list[str]:

@@ -1,6 +1,6 @@
 """
 起诉状模块 OCR 服务
-复用现有 bailian_engine 对上传文件做 OCR 识别
+通过 get_ocr_engine() 工厂函数获取当前配置的 OCR 引擎
 支持 docx/xlsx/pptx/pdf/图片 的文本提取
 """
 from __future__ import annotations
@@ -12,16 +12,18 @@ from typing import Optional
 from loguru import logger
 
 from config.settings import settings
-from services.ocr.bailian_engine import BailianOCREngine
+from services.ocr.base import BaseOCREngine
+from services.ocr.engine import get_ocr_engine
 
 
-_complaint_ocr_engine: Optional[BailianOCREngine] = None
+_complaint_ocr_engine: Optional[BaseOCREngine] = None
 
 
-def _get_engine() -> BailianOCREngine:
+def _get_engine() -> BaseOCREngine:
+    """获取当前配置的 OCR 引擎（工厂函数）"""
     global _complaint_ocr_engine
     if _complaint_ocr_engine is None:
-        _complaint_ocr_engine = BailianOCREngine()
+        _complaint_ocr_engine = get_ocr_engine()
     return _complaint_ocr_engine
 
 

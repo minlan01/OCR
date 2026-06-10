@@ -57,6 +57,11 @@ WORKDIR /app
 
 COPY --from=python-builder /install /usr/local/lib/python3.12/site-packages
 
+# 预下载 RapidOCR 模型到可写目录（避免运行时权限问题）
+RUN mkdir -p /app/rapidocr_models && \
+    python -c "from pathlib import Path; Path('/app/rapidocr_models').mkdir(parents=True, exist_ok=True); from rapidocr import RapidOCR; RapidOCR(params={'Global.model_root_dir': '/app/rapidocr_models'})" && \
+    chown -R scanstruct:scanstruct /app/rapidocr_models
+
 # 内置中文字体 (simhei.ttf — reportlab 兼容的纯 TTF 格式)
 RUN mkdir -p /app/fonts
 COPY fonts/simhei.ttf /app/fonts/simhei.ttf

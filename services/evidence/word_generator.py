@@ -67,6 +67,7 @@ def _build_legacy_plaintiff(context: dict) -> dict:
     return {
         "name": context.get("原告姓名1", context.get("plaintiff_name", "")),
         "relationship": context.get("亲属关系1", ""),
+        "is_patient": context.get("is_patient1", False),
         "gender": context.get("性别1", ""),
         "ethnicity": context.get("民族1", ""),
         "birth_date": context.get("出生年月日1", ""),
@@ -310,6 +311,7 @@ def _get_plaintiffs(context: dict, catalog_data: dict = None) -> list[dict]:
         plaintiffs.append({
             "name": name,
             "relationship": context.get(f"亲属关系{i}", ""),
+            "is_patient": context.get(f"is_patient{i}", False),
             "gender": context.get(f"性别{i}", ""),
             "ethnicity": context.get(f"民族{i}", ""),
             "birth_date": context.get(f"出生年月日{i}", ""),
@@ -703,8 +705,9 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
         phone = p_info.get("phone") or ""
 
         # 格式：原告：赵光远（系患者父亲），男，汉族，...
-        # 如果有关系则加括号（加"系患者"前缀），如果是"本人"则不加
-        rel_str = f"（系患者{rel}）" if rel and rel != "本人" else ""
+        # 如果有关系则加括号（加"系患者"前缀），如果是"本人"或is_patient则不加
+        is_patient = p_info.get("is_patient", False) or rel == "本人"
+        rel_str = f"（系患者{rel}）" if rel and rel != "本人" and not is_patient else ""
         parts = [f"{label}{name}{rel_str}"]
         if gender:
             parts.append(gender)

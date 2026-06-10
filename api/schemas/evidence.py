@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any, Literal, Optional
+from decimal import Decimal
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -14,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class CreateEvidenceCaseRequest(BaseModel):
     case_name: str = Field(..., min_length=1, max_length=500, description="案件名称")
-    case_type: Literal["injury", "death", "neonatal"] = Field(..., description="案件类型: injury=医疗损害（伤残）, death=医疗损害（死亡）, neonatal=医疗损害（新生儿）")
+    case_type: Literal["injury", "death"] = Field(..., description="案件类型: injury=医疗损害（伤残）, death=医疗损害（死亡）")
     is_minor: bool = Field(default=False, description="是否未成年人")
     # 原被告信息从素材中自动提取，创建时无需手动填写
     plaintiff_info: dict[str, Any] = Field(default_factory=dict, description="原告信息（自动提取）")
@@ -100,7 +101,7 @@ class UpdateMaterialRequest(BaseModel):
 
 class UpdateCaseRequest(BaseModel):
     case_name: str | None = Field(default=None, min_length=1, max_length=500, description="案件名称")
-    case_type: Literal["injury", "death", "neonatal"] | None = Field(default=None, description="案件类型")
+    case_type: Literal["injury", "death"] | None = Field(default=None, description="案件类型")
     is_minor: bool | None = Field(default=None, description="是否未成年人")
     lawyer_info: list[dict[str, str]] | None = Field(default=None, max_length=2, description="律师信息，格式: [{name, phone}, ...]，最多2个")
     defendant_phone: str | None = Field(default=None, max_length=20, description="被告联系电话（手动输入）")
@@ -222,3 +223,79 @@ class EvidenceCaseListItem(BaseModel):
 class EvidenceCaseListSlimResponse(BaseModel):
     items: list[EvidenceCaseListItem]
     total: int
+
+
+# ─── 赔偿计算相关 Schema ──────────────────────────────────────────────────────
+
+class CompensationParamsUpdate(BaseModel):
+    """赔偿计算参数更新请求"""
+    annual_income: Optional[Decimal] = None       # 上年度城镇居民人均可支配收入
+    annual_consumption: Optional[Decimal] = None   # 上年度城镇居民人均消费支出
+    monthly_salary: Optional[Decimal] = None       # 上年度职工月均工资
+    daily_food_subsidy: Optional[Decimal] = None   # 住院伙食补助日标准
+    daily_nutrition: Optional[Decimal] = None      # 营养费日标准
+    compensation_years: Optional[int] = None       # 赔偿年限
+    disability_coefficient: Optional[Decimal] = None  # 伤残系数 (0.1-1.0)
+    hospital_days: Optional[int] = None            # 住院天数
+    lost_wage_days: Optional[int] = None           # 误工天数
+    nursing_days: Optional[int] = None             # 护理天数
+    nutrition_days: Optional[int] = None           # 营养期天数
+
+
+class FeeSourceResponse(BaseModel):
+    """费用来源素材"""
+    material_id: str
+    filename: str
+    ocr_snippet: Optional[str] = None
+
+
+class CompensationItemResponse(BaseModel):
+    """单项赔偿费用"""
+    fee_type: str
+    fee_name: str
+    amount: Decimal
+    manual_amount: Optional[Decimal] = None
+    calculation_basis: Optional[str] = None
+    is_manual: bool = False
+    sources: List[FeeSourceResponse] = []
+
+
+class CompensationParamsResponse(BaseModel):
+    """赔偿计算参数响应"""
+    annual_income: Decimal
+    annual_consumption: Decimal
+    monthly_salary: Decimal
+    daily_food_subsidy: Decimal
+    daily_nutrition: Decimal
+    compensation_years: int
+    disability_coefficient: Decimal
+    hospital_days: int = 0
+    lost_wage_days: int = 0
+    nursing_days: int = 0
+    nutrition_days: int = 0
+
+
+class CompensationResponse(BaseModel):
+    """赔偿计算结果"""
+    case_id: str
+    items: List[CompensationItemResponse]
+    total_amount: Decimal
+    params: CompensationParamsResponse
+    calculated_at: Optional[str] = None
+
+
+class CompensationCalculateRequest(BaseModel):
+    """赔偿计算请求"""
+    params: Optional[CompensationParamsUpdate] = None
+
+
+class CompensationItemUpdate(BaseModel):
+    """单项赔偿金额手动调整"""
+    fee_type: str
+    manual_amount: Optional[Decimal] = None
+
+
+class CompensationUpdateRequest(BaseModel):
+    """赔偿数据批量更新请求"""
+    items: List[CompensationItemUpdate]
+    params: Optional[CompensationParamsUpdate] = None

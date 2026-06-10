@@ -158,7 +158,11 @@ def get_ocr_engine():
 
     settings.ocr_engine_type:
       - "paddle"  → 本地 PaddleOCR (默认)
+      - "rapid"   → 本地 RapidOCR (ONNX Runtime，轻量，推荐)
       - "bailian" → 阿里云百炼 Qwen-OCR (云端)
+      - "baidu"   → 百度智能云 OCR (高精度通用文字识别)
+      - "glm"     → 智谱 GLM-4V-Flash (免费多模态)
+      - "multi"   → 多引擎组合，按 ocr_multi_engines 优先级降级调度
 
     Usage:
         from services.ocr.engine import get_ocr_engine
@@ -168,10 +172,51 @@ def get_ocr_engine():
     """
     engine_type = settings.ocr_engine_type.lower()
 
-    if engine_type == "bailian":
+    if engine_type == "rapid":
+        from services.ocr.rapid_engine import RapidOCREngine
+        logger.info("使用 RapidOCR 引擎 (本地 ONNX Runtime)")
+        return RapidOCREngine()
+    elif engine_type == "bailian":
         from services.ocr.bailian_engine import BailianOCREngine
         logger.info("使用百炼 Qwen-OCR 引擎 (云端)")
         return BailianOCREngine()
+    elif engine_type == "baidu":
+        from services.ocr.baidu_engine import BaiduOCREngine
+        logger.info("使用百度云 OCR 引擎 (basicAccurate)")
+        return BaiduOCREngine()
+    elif engine_type == "glm":
+        from services.ocr.glm_engine import GlmOCREngine
+        logger.info("使用 GLM-4V-Flash OCR 引擎 (免费)")
+        return GlmOCREngine()
+    elif engine_type == "multi":
+        from services.ocr.baidu_engine import BaiduOCREngine
+        from services.ocr.glm_engine import GlmOCREngine
+        from services.ocr.bailian_engine import BailianOCREngine
+        from services.ocr.rapid_engine import RapidOCREngine
+        from services.ocr.multi_engine import MultiOCREngine
+
+        engine_map = {
+            "rapid": RapidOCREngine,
+            "bailian": BailianOCREngine,
+            "baidu": BaiduOCREngine,
+            "glm": GlmOCREngine,
+        }
+        engines = []
+        for name in settings.ocr_multi_engines:
+            name = name.lower().strip()
+            cls = engine_map.get(name)
+            if cls:
+                engines.append(cls())
+            else:
+                logger.warning(f"MultiOCR: 未知引擎 '{name}'，跳过")
+        if not engines:
+            logger.warning("MultiOCR: 无有效引擎，回退到 PaddleOCR")
+            return OCREngine()
+        logger.info(
+            f"使用多引擎模式: {' → '.join(str(e) for e in engines)} "
+            f"(共 {len(engines)} 个)"
+        )
+        return MultiOCREngine(engines)
     else:
         logger.info("使用 PaddleOCR 引擎 (本地)")
         return OCREngine()

@@ -431,7 +431,7 @@ def process_single_material_ocr(self, material_id: str):
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
         from db.models_evidence import EvidenceMaterial, EvidenceCase
-        from services.ocr.bailian_engine import BailianOCREngine
+        from services.ocr.engine import get_ocr_engine
         from services.storage.minio_client import minio_client
         from services.evidence.classifier import classify_with_filename_fallback, extract_structured_info
 
@@ -460,8 +460,8 @@ def process_single_material_ocr(self, material_id: str):
                     minio_client.download_bytes, bucket, material.minio_key
                 )
 
-                # 执行 OCR
-                ocr_engine = BailianOCREngine()
+                # 执行 OCR（使用工厂函数获取当前配置的引擎）
+                ocr_engine = get_ocr_engine()
                 ocr_result = await asyncio.to_thread(
                     ocr_engine.recognize_bytes,
                     file_bytes,

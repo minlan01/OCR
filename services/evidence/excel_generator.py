@@ -601,3 +601,105 @@ def _extract_receipt_tail(filename: str) -> str:
     if len(digits) >= 4:
         return "".join(digits[-4:])
     return ""
+
+
+def generate_compensation_calculation_excel(compensation_data: dict) -> bytes:
+    """生成赔偿费用清单 Excel（基于赔偿计算引擎数据）
+
+    Args:
+        compensation_data: calculate_all() 返回的赔偿计算结果字典
+
+    Returns:
+        Excel 文件 bytes
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "赔偿费用清单"
+
+    # 样式
+    title_font = Font(name='宋体', size=14, bold=True)
+    header_font = Font(name='宋体', size=11, bold=True)
+    cell_font = Font(name='宋体', size=11)
+    money_fmt = '#,##0.00'
+
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin'),
+    )
+    header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+    header_font_white = Font(name='宋体', size=11, bold=True, color='FFFFFF')
+
+    # 标题
+    ws.merge_cells('A1:F1')
+    ws['A1'] = '赔偿费用清单'
+    ws['A1'].font = title_font
+    ws['A1'].alignment = Alignment(horizontal='center')
+
+    # 表头
+    headers = ['序号', '赔偿项目', '金额(元)', '计算依据', '来源素材', '是否手动调整']
+    col_widths = [8, 20, 15, 35, 25, 15]
+
+    for col, (header, width) in enumerate(zip(headers, col_widths), 1):
+        cell = ws.cell(row=3, column=col, value=header)
+        cell.font = header_font_white
+        cell.fill = header_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center')
+        ws.column_dimensions[get_column_letter(col)].width = width
+
+    # 数据行
+    items = compensation_data.get('items', [])
+    for i, item in enumerate(items):
+        row = i + 4
+        amount = item.get('manual_amount') or item.get('amount', 0)
+        is_manual = '是' if item.get('manual_amount') is not None else '否'
+        sources = '、'.join(s.get('filename', '') for s in item.get('sources', []))
+
+        ws.cell(row=row, column=1, value=i+1).border = thin_border
+        ws.cell(row=row, column=2, value=item.get('fee_name', '')).border = thin_border
+        cell_amount = ws.cell(row=row, column=3, value=float(str(amount)))
+        cell_amount.number_format = money_fmt
+        cell_amount.border = thin_border
+        ws.cell(row=row, column=4, value=item.get('calculation_basis', '')).border = thin_border
+        ws.cell(row=row, column=5, value=sources).border = thin_border
+        ws.cell(row=row, column=6, value=is_manual).border = thin_border
+
+    # 合计行
+    total_row = len(items) + 4
+    ws.merge_cells(f'A{total_row}:B{total_row}')
+    ws.cell(row=total_row, column=1, value='合计').font = Font(name='宋体', size=11, bold=True)
+    ws.cell(row=total_row, column=1).border = thin_border
+    ws.cell(row=total_row, column=2).border = thin_border
+    total_amount = float(str(compensation_data.get('total_amount', 0)))
+    cell_total = ws.cell(row=total_row, column=3, value=total_amount)
+    cell_total.number_format = money_fmt
+    cell_total.font = Font(name='宋体', size=11, bold=True)
+    cell_total.border = thin_border
+    for col in range(4, 7):
+        ws.cell(row=total_row, column=col).border = thin_border
+
+    # 参数区域
+    param_row = total_row + 2
+    ws.cell(row=param_row, column=1, value='计算参数').font = Font(name='宋体', size=11, bold=True)
+    params = compensation_data.get('params', {})
+    param_labels = {
+        'annual_income': '上年度人均可支配收入(元/年)',
+        'annual_consumption': '上年度人均消费支出(元/年)',
+        'monthly_salary': '上年度职工月均工资(元/月)',
+        'daily_food_subsidy': '住院伙食补助日标准(元/天)',
+        'daily_nutrition': '营养费日标准(元/天)',
+        'compensation_years': '赔偿年限(年)',
+        'disability_coefficient': '伤残系数',
+        'hospital_days': '住院天数',
+    }
+    for j, (key, label) in enumerate(param_labels.items()):
+        r = param_row + 1 + j
+        ws.cell(row=r, column=1, value=label).font = cell_font
+        val = params.get(key, '-')
+        ws.cell(row=r, column=3, value=str(val)).font = cell_font
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()

@@ -9,6 +9,7 @@ import asyncio
 import io
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import quote
@@ -23,6 +24,8 @@ from api.schemas.evidence import (
     AnalysisResponse,
     CatalogResponse,
     CatalogGroupResponse,
+    CompensationCalculateRequest,
+    CompensationUpdateRequest,
     CreateEvidenceCaseRequest,
     EvidenceCaseListResponse,
     EvidenceCaseListSlimResponse,
@@ -1370,7 +1373,7 @@ async def export_complaint(
     analysis_result = case.analysis_result or {}
     lawyer_info = case.lawyer_info or []
 
-    # 校验：检查是否有LLM生成失败的段落
+    # 校验：检查是否有LLM生成失败的段落（硬性阻断）
     from services.evidence.word_generator import validate_analysis_result, validate_required_fields
     failed_sections = validate_analysis_result(analysis_result)
     if failed_sections:
@@ -1379,12 +1382,12 @@ async def export_complaint(
             detail=f"以下段落生成失败，请重新分析案件后再导出: {', '.join(failed_sections)}"
         )
 
-    # 校验：检查必要字段是否完整
+    # 校验：检查必要字段（仅警告，不阻断导出 — 缺失字段在文档中用占位符代替）
     missing_fields = validate_required_fields(analysis_result)
     if missing_fields:
-        raise HTTPException(
-            status_code=422,
-            detail=f"以下必要信息缺失，请确保分析完成后再导出: {', '.join(missing_fields)}"
+        logger.warning(
+            f"Case {case_id}: exporting complaint with missing fields: {missing_fields}. "
+            "Placeholders will be used in the document."
         )
 
     try:
@@ -1607,7 +1610,7 @@ async def download_bundle(
             status_code=422,
             detail="证据目录尚未生成，请先完成素材处理（OCR + 分类）后再导出"
         )
-    if not analysis_result or not analysis_result.get("plaintiffs") and not analysis_result.get("plaintiff_name") and not analysis_result.get("原告姓名1"):
+    if not analysis_result:
         raise HTTPException(
             status_code=422,
             detail="智能分析尚未完成，请先完成分析后再导出"
@@ -1801,4 +1804,162 @@ async def download_bundle(
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}",
         },
+    )
+
+
+# ─── 赔偿计算 API ────────────────────────────────────────────────────────────
+
+@router.post("/cases/{case_id}/compensation/calculate")
+@limiter.limit("5/minute")
+async def calculate_compensation(
+    request: Request,
+    case_id: uuid.UUID,
+    req: Optional[CompensationCalculateRequest] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """自动提取 + 计算赔偿费用"""
+    from services.evidence.compensation_calculator import calculate_all, merge_params
+    from services.evidence.compensation_extractor import extract_from_materials
+
+    case = await _get_case_or_404(case_id, db)
+
+    # 获取素材
+    stmt = select(EvidenceMaterial).where(
+        EvidenceMaterial.evidence_case_id == case_id
+    )
+    result = await db.execute(stmt)
+    materials = result.scalars().all()
+
+    # 从 OCR 提取费用
+    fee_items, stay_info = extract_from_materials(materials)
+
+    # 合并参数
+    user_params: dict = {}
+    if req and req.params:
+        user_params = {k: v for k, v in req.params.model_dump().items() if v is not None}
+
+    if stay_info.days > 0 and "hospital_days" not in user_params:
+        user_params["hospital_days"] = stay_info.days
+
+    params = merge_params(user_params, hospital_days=stay_info.days)
+
+    # 计算
+    # 兼容旧的 neonatal 类型
+    case_type = case.case_type
+    if case_type == "neonatal":
+        case_type = "injury"
+
+    result_data = calculate_all(case_type, params, fee_items)
+
+    # 保存
+    case.compensation_data = result_data
+    await db.commit()
+
+    return {"case_id": str(case_id), **result_data}
+
+
+@router.get("/cases/{case_id}/compensation")
+@limiter.limit("30/minute")
+async def get_compensation(
+    request: Request,
+    case_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """获取赔偿计算结果"""
+    case = await _get_case_or_404(case_id, db)
+
+    # 获取 fee_receipt 类素材列表
+    stmt = select(EvidenceMaterial).where(
+        EvidenceMaterial.evidence_case_id == case_id,
+        EvidenceMaterial.effective_category.in_(['fee_receipt', 'invoice', 'receipt']),
+    )
+    result = await db.execute(stmt)
+    materials = result.scalars().all()
+
+    fee_materials = [
+        {
+            "id": str(m.id),
+            "filename": m.original_filename,
+            "category": m.effective_category,
+            "ocr_status": m.ocr_status,
+        }
+        for m in materials
+    ]
+
+    return {
+        "case_id": str(case_id),
+        "compensation_data": case.compensation_data or {},
+        "fee_materials": fee_materials,
+    }
+
+
+@router.put("/cases/{case_id}/compensation")
+@limiter.limit("10/minute")
+async def update_compensation(
+    request: Request,
+    case_id: uuid.UUID,
+    req: CompensationUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """保存手动调整的赔偿数据"""
+    case = await _get_case_or_404(case_id, db)
+
+    data = case.compensation_data or {}
+    items = data.get("items", [])
+
+    # 更新手动金额
+    update_map = {u.fee_type: u.manual_amount for u in req.items}
+    for item in items:
+        if item["fee_type"] in update_map:
+            new_amount = update_map[item["fee_type"]]
+            item["manual_amount"] = str(new_amount) if new_amount is not None else None
+
+    # 更新参数
+    if req.params:
+        params = data.get("params", {})
+        for k, v in req.params.model_dump().items():
+            if v is not None:
+                params[k] = str(v) if isinstance(v, Decimal) else v
+        data["params"] = params
+
+    # 重算合计
+    total = Decimal("0")
+    for item in items:
+        amt = item.get("manual_amount") or item.get("amount", "0")
+        total += Decimal(str(amt))
+    data["total_amount"] = str(total)
+
+    case.compensation_data = data
+    await db.commit()
+
+    return {"case_id": str(case_id), **data}
+
+
+@router.get("/cases/{case_id}/compensation/export")
+@limiter.limit("10/minute")
+async def export_compensation_calculation(
+    request: Request,
+    case_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """导出赔偿计算 Excel"""
+    case = await _get_case_or_404(case_id, db)
+
+    if not case.compensation_data or not case.compensation_data.get("items"):
+        raise HTTPException(status_code=400, detail="暂无赔偿计算数据，请先计算")
+
+    try:
+        from services.evidence.excel_generator import generate_compensation_calculation_excel
+        excel_bytes = await asyncio.to_thread(
+            generate_compensation_calculation_excel, case.compensation_data
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate compensation calculation Excel for case {case_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate document")
+
+    filename = quote(f"赔偿费用清单_{case.case_name}.xlsx")
+    return Response(
+        content=excel_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )

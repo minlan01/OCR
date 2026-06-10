@@ -1,0 +1,107 @@
+classDiagram
+    direction LR
+
+    class EvidenceCase {
+        +UUID id
+        +String case_name
+        +String case_type  "injury|death"
+        +Boolean is_minor
+        +String status
+        +JSONB plaintiff_info
+        +JSONB defendant_info
+        +JSONB catalog_data
+        +JSONB analysis_result
+        +JSONB compensation_data  "新增"
+        +JSONB lawyer_info
+        +DateTime created_at
+        +DateTime updated_at
+        +List~EvidenceMaterial~ materials
+        +List~EvidenceStep~ steps
+    }
+
+    class EvidenceMaterial {
+        +UUID id
+        +UUID evidence_case_id
+        +String original_filename
+        +String file_type
+        +String effective_category
+        +String ocr_status
+        +String ocr_text
+        +JSONB extracted_data
+        +JSONB fee_detail
+        +List~int~ selected_pages
+    }
+
+    class EvidenceStep {
+        +int id
+        +UUID case_id
+        +String step_name
+        +String status
+        +int progress
+        +JSONB step_metadata
+    }
+
+    class CompensationCalculator {
+        +Dict calculate_all(case_type, is_minor, params, fee_items)
+        +Decimal calc_medical_fee(fee_items)
+        +Decimal calc_disability_compensation(income, years, coefficient)
+        +Decimal calc_death_compensation(income, years)
+        +Decimal calc_funeral_fee(salary)
+        +Decimal calc_dependent_living(expense, dependents)
+        +Decimal calc_spiritual_damage(case_type, is_minor)
+        +Decimal calc_lost_wages(daily_income, days)
+        +Decimal calc_nursing_fee(daily_rate, days)
+        +Decimal calc_food_subsidy(daily_std, days)
+        +Decimal calc_nutrition_fee(daily_std, days)
+    }
+
+    class CompensationExtractor {
+        +List~FeeItem~ extract_from_materials(materials)
+        +FeeItem parse_fee_receipt(ocr_text, category)
+        +Dict extract_hospital_days(ocr_text)
+        +Dict extract_invoice_amounts(ocr_text)
+    }
+
+    class CompensationParams {
+        +Decimal annual_income
+        +Decimal annual_consumption
+        +Decimal monthly_salary
+        +Decimal daily_food_subsidy
+        +Decimal daily_nutrition
+        +int compensation_years
+        +Decimal disability_coefficient
+        +int hospital_days
+    }
+
+    class CompensationResult {
+        +List~CompensationItem~ items
+        +Decimal total_amount
+        +CompensationParams params
+        +List~FeeSource~ sources
+        +DateTime calculated_at
+    }
+
+    class CompensationItem {
+        +String fee_type
+        +String fee_name
+        +Decimal amount
+        +String calculation_basis
+        +List~FeeSource~ sources
+        +Boolean is_manual
+        +Decimal manual_amount
+    }
+
+    class FeeSource {
+        +String material_id
+        +String filename
+        +String ocr_snippet
+    }
+
+    EvidenceCase "1" --> "*" EvidenceMaterial : has
+    EvidenceCase "1" --> "*" EvidenceStep : has
+    CompensationExtractor ..> EvidenceMaterial : reads OCR data
+    CompensationCalculator ..> CompensationParams : uses params
+    CompensationCalculator ..> CompensationItem : produces
+    CompensationResult "1" --> "*" CompensationItem : contains
+    CompensationItem "1" --> "*" FeeSource : references
+    EvidenceCase "1" --> "0..1" CompensationResult : stores in compensation_data

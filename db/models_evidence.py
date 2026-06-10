@@ -24,10 +24,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.session import Base
 
-VALID_EVIDENCE_CASE_TYPES = "'injury','death','neonatal'"
+VALID_EVIDENCE_CASE_TYPES = "'injury','death'"
 VALID_EVIDENCE_STATUSES = (
     "'draft','uploading','processing','catalog_ready',"
-    "'analyzing','analysis_done','exporting','completed','failed'"
+    "'analyzing','analysis_done','exporting','completed','failed','compensation_ready'"
 )
 VALID_FILE_TYPES = "'pdf','image','docx','xlsx','audio','other'"
 VALID_OCR_STATUSES = "'pending','processing','completed','failed','skipped','not_applicable'"
@@ -53,6 +53,7 @@ class EvidenceCase(Base):
     defendant_info: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     catalog_data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     catalog_pdf_path: Mapped[str | None] = mapped_column(String(1000), default=None)
+    compensation_data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, comment="赔偿计算数据")
     analysis_result: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     validation_result: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     missing_items: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -220,18 +221,12 @@ DEFAULT_REQUIREMENTS: list[dict] = [
     {"case_type": "death", "is_minor": False, "category": "identity_id_card", "category_name": "原告身份证信息",
      "description": "原告身份证正反面", "is_required": True, "sort_order": 1,
      "check_rules": {"min_count": 1}},
-    {"case_type": "neonatal", "is_minor": True, "category": "identity_id_card", "category_name": "原告（法定代理人）身份证信息",
-     "description": "法定代理人身份证正反面", "is_required": True, "sort_order": 1,
-     "check_rules": {"min_count": 1}},
     # identity_hukou — 户口本信息
     {"case_type": "injury", "is_minor": False, "category": "identity_hukou", "category_name": "户口本信息",
      "description": "户口本主页及本人页", "is_required": False, "sort_order": 2,
      "check_rules": {}},
     {"case_type": "death", "is_minor": False, "category": "identity_hukou", "category_name": "户口本信息",
      "description": "户口本主页及本人页", "is_required": False, "sort_order": 2,
-     "check_rules": {}},
-    {"case_type": "neonatal", "is_minor": True, "category": "identity_hukou", "category_name": "户口本信息",
-     "description": "户口本主页及本人页（含新生儿页）", "is_required": False, "sort_order": 2,
      "check_rules": {}},
     # identity_other — 其他身份信息
     {"case_type": "injury", "is_minor": False, "category": "identity_other", "category_name": "其他身份信息",
@@ -240,17 +235,11 @@ DEFAULT_REQUIREMENTS: list[dict] = [
     {"case_type": "death", "is_minor": False, "category": "identity_other", "category_name": "其他身份信息",
      "description": "出生医学证明、监护证明等", "is_required": False, "sort_order": 3,
      "check_rules": {}},
-    {"case_type": "neonatal", "is_minor": True, "category": "identity_other", "category_name": "其他身份信息",
-     "description": "出生医学证明、监护证明等", "is_required": True, "sort_order": 3,
-     "check_rules": {"min_count": 1}},
     # identity_defendant — 被告身份信息
     {"case_type": "injury", "is_minor": False, "category": "identity_defendant", "category_name": "被告身份信息",
      "description": "医疗机构营业执照/执业许可证、统一社会信用代码等", "is_required": True, "sort_order": 4,
      "check_rules": {"min_count": 1}},
     {"case_type": "death", "is_minor": False, "category": "identity_defendant", "category_name": "被告身份信息",
-     "description": "医疗机构营业执照/执业许可证、统一社会信用代码等", "is_required": True, "sort_order": 4,
-     "check_rules": {"min_count": 1}},
-    {"case_type": "neonatal", "is_minor": True, "category": "identity_defendant", "category_name": "被告身份信息",
      "description": "医疗机构营业执照/执业许可证、统一社会信用代码等", "is_required": True, "sort_order": 4,
      "check_rules": {"min_count": 1}},
     # death_certificate — 死亡证明（仅死亡案件）
@@ -264,18 +253,12 @@ DEFAULT_REQUIREMENTS: list[dict] = [
     {"case_type": "death", "is_minor": False, "category": "medical_record", "category_name": "病历资料",
      "description": "门诊病历、住院病历、手术记录、检查报告等", "is_required": True, "sort_order": 6,
      "check_rules": {"min_count": 1}},
-    {"case_type": "neonatal", "is_minor": True, "category": "medical_record", "category_name": "病历资料",
-     "description": "门诊病历、住院病历、分娩记录、新生儿病历、检查报告等", "is_required": True, "sort_order": 6,
-     "check_rules": {"min_count": 1}},
     # appraisal — 司法鉴定意见书
     {"case_type": "injury", "is_minor": False, "category": "appraisal", "category_name": "司法鉴定意见书",
      "description": "伤残等级鉴定、因果关系鉴定、参与度鉴定等", "is_required": False, "sort_order": 7,
      "check_rules": {}},
     {"case_type": "death", "is_minor": False, "category": "appraisal", "category_name": "司法鉴定意见书",
      "description": "死因鉴定、因果关系鉴定、参与度鉴定等", "is_required": False, "sort_order": 7,
-     "check_rules": {}},
-    {"case_type": "neonatal", "is_minor": True, "category": "appraisal", "category_name": "司法鉴定意见书",
-     "description": "伤残等级鉴定、因果关系鉴定、参与度鉴定等", "is_required": False, "sort_order": 7,
      "check_rules": {}},
     # fee_receipt — 医疗费用及相关票据
     {"case_type": "injury", "is_minor": False, "category": "fee_receipt", "category_name": "医疗费用及相关票据",
@@ -284,17 +267,11 @@ DEFAULT_REQUIREMENTS: list[dict] = [
     {"case_type": "death", "is_minor": False, "category": "fee_receipt", "category_name": "医疗费用及相关票据",
      "description": "医疗费发票、收费收据、费用结算单等", "is_required": True, "sort_order": 8,
      "check_rules": {"min_count": 1}},
-    {"case_type": "neonatal", "is_minor": True, "category": "fee_receipt", "category_name": "医疗费用及相关票据",
-     "description": "医疗费发票、收费收据、费用结算单等", "is_required": True, "sort_order": 8,
-     "check_rules": {"min_count": 1}},
     # other_evidence — 其他证据
     {"case_type": "injury", "is_minor": False, "category": "other_evidence", "category_name": "其他证据",
      "description": "其他与案件有关的证据材料", "is_required": False, "sort_order": 9,
      "check_rules": {}},
     {"case_type": "death", "is_minor": False, "category": "other_evidence", "category_name": "其他证据",
-     "description": "其他与案件有关的证据材料", "is_required": False, "sort_order": 9,
-     "check_rules": {}},
-    {"case_type": "neonatal", "is_minor": True, "category": "other_evidence", "category_name": "其他证据",
      "description": "其他与案件有关的证据材料", "is_required": False, "sort_order": 9,
      "check_rules": {}},
 ]

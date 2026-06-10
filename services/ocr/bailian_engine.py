@@ -10,7 +10,6 @@
 """
 from __future__ import annotations
 
-import base64
 import json
 import re
 import threading
@@ -24,14 +23,7 @@ from openai import OpenAI, APIStatusError
 
 from config.settings import settings
 from services.ocr.base import BaseOCREngine
-
-OCR_SYSTEM_PROMPT = (
-    "你是一个精确的OCR文字识别引擎。请逐行识别图片中的所有文字，"
-    "以JSON数组格式返回每个文本块。每个元素的格式为：\n"
-    '{"text": "文字内容", "bbox": [x1, y1, x2, y2, x3, y3, x4, y4]}\n'
-    "bbox为顺时针四个顶点的像素坐标。只返回JSON数组，不要任何额外说明。"
-    "对于表格，将每个单元格作为独立的文本块。"
-)
+from services.ocr.common import OCR_SYSTEM_PROMPT, _image_to_base64_url
 
 BACKUP_MODELS = [
     "qwen-vl-ocr-latest",
@@ -58,88 +50,6 @@ class _RPSLimiter:
             if elapsed < self._min_interval:
                 time.sleep(self._min_interval - elapsed)
             self._last_time = time.monotonic()
-
-
-def _image_to_base64_url(image_path: Path) -> str:
-    suffix = image_path.suffix.lower()
-
-    img_bytes: bytes
-    if suffix == ".png":
-        img_bytes = _compress_png_to_jpeg(image_path)
-        mime = "image/jpeg"
-    elif suffix in (".jpg", ".jpeg"):
-        img_bytes = _compress_jpeg(image_path)
-        mime = "image/jpeg"
-    else:
-        with open(image_path, "rb") as f:
-            img_bytes = f.read()
-        mime_map = {
-            ".webp": "image/webp",
-        }
-        mime = mime_map.get(suffix, "image/jpeg")
-
-    b64 = base64.b64encode(img_bytes).decode("utf-8")
-    return f"data:{mime};base64,{b64}"
-
-
-def _compress_jpeg(
-    image_path: Path,
-    quality: int = 75,
-    max_long_side: int = 1800,
-) -> bytes:
-    try:
-        import io
-        from PIL import Image
-
-        with Image.open(str(image_path)) as img:
-            w, h = img.size
-            if max(w, h) > max_long_side:
-                ratio = max_long_side / max(w, h)
-                new_w = int(w * ratio)
-                new_h = int(h * ratio)
-                img = img.resize((new_w, new_h), Image.LANCZOS)
-
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=quality, optimize=True)
-            return buf.getvalue()
-
-    except Exception:
-        with open(image_path, "rb") as f:
-            return f.read()
-
-
-def _compress_png_to_jpeg(
-    image_path: Path,
-    quality: int = 75,
-    max_long_side: int = 1800,
-) -> bytes:
-    try:
-        import io
-        from PIL import Image
-
-        with Image.open(str(image_path)) as img:
-            if img.mode == "RGBA":
-                img = img.convert("RGB")
-            elif img.mode != "RGB":
-                img = img.convert("RGB")
-
-            w, h = img.size
-            if max(w, h) > max_long_side:
-                ratio = max_long_side / max(w, h)
-                new_w = int(w * ratio)
-                new_h = int(h * ratio)
-                img = img.resize((new_w, new_h), Image.LANCZOS)
-
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=quality, optimize=True)
-        return buf.getvalue()
-
-    except ImportError:
-        with open(image_path, "rb") as f:
-            return f.read()
-    except Exception:
-        with open(image_path, "rb") as f:
-            return f.read()
 
 
 class BailianOCREngine(BaseOCREngine):

@@ -6,7 +6,7 @@ import * as api from './client'
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 
-export type CaseType = 'injury' | 'death' | 'neonatal'
+export type CaseType = 'injury' | 'death'
 
 export interface MaterialResponse {
   id: string
@@ -348,4 +348,101 @@ export function getExtractPageUrl(
 ): string {
   const base = import.meta.env.VITE_API_BASE || '/api/v1'
   return `${base}/evidence/cases/${caseId}/materials/${materialId}/pages/${pageNum}/extract?dpi=${dpi}`
+}
+
+// ─── 赔偿计算 ─────────────────────────────────────────────────────────────────
+
+/** 赔偿计算 — 费用来源素材 */
+export interface FeeSourceResponse {
+  material_id: string
+  filename: string
+  ocr_snippet?: string
+}
+
+/** 赔偿计算 — 单项费用 */
+export interface CompensationItemResponse {
+  fee_type: string
+  fee_name: string
+  amount: number
+  manual_amount: number | null
+  calculation_basis?: string
+  is_manual: boolean
+  sources: FeeSourceResponse[]
+}
+
+/** 赔偿计算 — 参数 */
+export interface CompensationParamsResponse {
+  annual_income: number
+  annual_consumption: number
+  monthly_salary: number
+  daily_food_subsidy: number
+  daily_nutrition: number
+  compensation_years: number
+  disability_coefficient: number
+  hospital_days: number
+  lost_wage_days: number
+  nursing_days: number
+  nutrition_days: number
+}
+
+/** 赔偿计算 — 响应 */
+export interface CompensationResponse {
+  case_id: string
+  items: CompensationItemResponse[]
+  total_amount: number
+  params: CompensationParamsResponse
+  calculated_at?: string
+}
+
+/** 赔偿参数更新 */
+export interface CompensationParamsUpdate {
+  annual_income?: number
+  annual_consumption?: number
+  monthly_salary?: number
+  daily_food_subsidy?: number
+  daily_nutrition?: number
+  compensation_years?: number
+  disability_coefficient?: number
+  hospital_days?: number
+  lost_wage_days?: number
+  nursing_days?: number
+  nutrition_days?: number
+}
+
+/** 赔偿单项更新 */
+export interface CompensationItemUpdate {
+  fee_type: string
+  manual_amount: number | null
+}
+
+/** 赔偿更新请求体 */
+export interface CompensationUpdateRequest {
+  items: CompensationItemUpdate[]
+  params?: CompensationParamsUpdate
+}
+
+/** 自动计算赔偿 */
+export async function calculateCompensation(caseId: string, params?: CompensationParamsUpdate): Promise<any> {
+  return api.post(`/evidence/cases/${caseId}/compensation/calculate`, { params })
+}
+
+/** 获取赔偿计算结果 */
+export async function getCompensation(caseId: string): Promise<any> {
+  return api.get(`/evidence/cases/${caseId}/compensation`)
+}
+
+/** 保存赔偿调整 */
+export async function updateCompensation(caseId: string, data: CompensationUpdateRequest): Promise<any> {
+  return api.put(`/evidence/cases/${caseId}/compensation`, data)
+}
+
+/** 导出赔偿费用清单 */
+export async function exportCompensationCalc(caseId: string): Promise<void> {
+  const resp = await api.get(`/evidence/cases/${caseId}/compensation/export`, { responseType: 'blob' })
+  const url = window.URL.createObjectURL(new Blob([resp]))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = '赔偿费用清单.xlsx'
+  link.click()
+  window.URL.revokeObjectURL(url)
 }

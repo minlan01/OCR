@@ -1,0 +1,91 @@
+sequenceDiagram
+    actor User
+    participant FE as EvidencePage.vue
+    participant API as evidence.py (API)
+    participant Calc as compensation_calculator.py
+    participant Ext as compensation_extractor.py
+    participant DB as PostgreSQL
+    participant MinIO
+
+    Note over User, MinIO: Step 2: 赔偿金额计算 — 完整流程
+
+    User->>FE: 进入 Step 2（赔偿计算）
+    FE->>API: GET /cases/{id}/compensation
+    API->>DB: 查询 compensation_data
+    DB-->>API: 返回已有数据或 {}
+
+    alt 已有计算结果
+        API-->>FE: 返回 CompensationResponse
+    else 首次进入
+        API-->>FE: 返回空结果 + fee_receipt 类素材列表
+    end
+
+    User->>FE: 点击"自动计算赔偿"
+    FE->>API: POST /cases/{id}/compensation/calculate
+
+    API->>DB: 获取案件 materials（fee_receipt 类）
+    API->>Ext: extract_from_materials(materials)
+
+    loop 每个 fee_receipt 素材
+        Ext->>DB: 读取 material.ocr_text
+        Ext->>Ext: parse_fee_receipt(ocr_text)
+    end
+
+    Ext-->>API: 返回 List[FeeItem]
+
+    API->>Calc: calculate_all(case_type, is_minor, params, fee_items)
+
+    Calc->>Calc: calc_medical_fee()
+    Calc->>Calc: calc_disability_compensation() / calc_death_compensation()
+    Calc->>Calc: calc_funeral_fee() [死亡案件]
+    Calc->>Calc: calc_spiritual_damage()
+    Calc->>Calc: ... 其他费用项
+
+    Calc-->>API: 返回 CompensationResult
+
+    API->>DB: 保存到 case.compensation_data
+    API-->>FE: 返回 CompensationResponse
+
+    FE->>FE: 渲染赔偿费用表格
+
+    User->>FE: 手动调整某项金额
+    FE->>API: PUT /cases/{id}/compensation
+    API->>DB: 更新 compensation_data
+    API-->>FE: 返回更新后的结果
+
+    User->>FE: 点击"导出 Excel"
+    FE->>API: GET /cases/{id}/compensation/export
+    API->>Calc: 读取 compensation_data
+    API->>MinIO: 生成 Excel 并上传
+    API-->>FE: 返回 Excel 文件流
+
+    Note over User, MinIO: 智能分析按钮状态改造
+
+    FE->>API: GET /cases/{id}/analysis
+    API-->>FE: 返回当前分析状态
+
+    alt 未分析 (status=catalog_ready)
+        FE->>FE: 显示"开始智能分析"（可点击）
+    else 分析中 (status=analyzing)
+        FE->>FE: 按钮显示 loading + "分析中..."
+    else 分析完成 (status=analysis_done/completed)
+        FE->>FE: "开始智能分析" disabled
+        FE->>FE: 显示"再次智能分析"按钮
+    else 分析失败 (status=failed)
+        FE->>FE: 显示"重新分析"（可点击）
+    end
+
+    User->>FE: 点击"再次智能分析"
+    FE->>FE: 弹出确认对话框："重新分析将覆盖已有分析结果，是否继续？"
+    User->>FE: 确认
+    FE->>API: POST /cases/{id}/analyze
+    API->>API: _cleanup_all_exports(case)
+    API-->>FE: task_id
+    FE->>FE: 按钮显示 loading
+
+    loop 轮询分析状态
+        FE->>API: GET /cases/{id}/analysis
+        API-->>FE: status
+    until status == analysis_done
+
+    FE->>FE: "开始智能分析" disabled + 显示"再次智能分析"

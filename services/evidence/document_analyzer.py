@@ -27,29 +27,81 @@ _flash_client: Optional[OpenAI] = None
 _analyzer_lock = threading.Lock()
 
 
+def _clean_nulls(d: dict) -> None:
+    """递归清理 dict 中值为 None 的键（LLM JSON 可能返回 null）"""
+    to_delete = [k for k, v in d.items() if v is None]
+    for k in to_delete:
+        del d[k]
+    for v in d.values():
+        if isinstance(v, dict):
+            _clean_nulls(v)
+        elif isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict):
+                    _clean_nulls(item)
+
+
 def _get_analyzer_client() -> OpenAI:
-    """获取文本分析客户端（qwen3.5-plus）"""
+    """获取文本分析客户端
+
+    优先级：DeepSeek → 百炼 → GLM
+    DeepSeek V3 质量与 qwen3.5-plus 相当，价格更低。
+    """
     global _analyzer_client
     if _analyzer_client is None:
         with _analyzer_lock:
             if _analyzer_client is None:
-                _analyzer_client = OpenAI(
-                    api_key=settings.bailian_api_key_plain,
-                    base_url=settings.bailian_text_base_url,
-                )
+                # 1. 优先使用 DeepSeek API
+                deepseek_key = settings.deepseek_api_key_plain
+                if deepseek_key:
+                    _analyzer_client = OpenAI(
+                        api_key=deepseek_key,
+                        base_url=settings.deepseek_base_url,
+                    )
+                    logger.info("Analyzer client using DeepSeek API")
+                else:
+                    # 2. 回退到百炼
+                    _analyzer_client = OpenAI(
+                        api_key=settings.bailian_api_key_plain,
+                        base_url=settings.bailian_text_base_url,
+                    )
+                    logger.info("Analyzer client using Bailian fallback")
     return _analyzer_client
 
 
 def _get_flash_client() -> OpenAI:
-    """获取 flash 客户端（deepseek-v4-flash，用于段落生成）"""
+    """获取 flash 客户端（用于段落生成）
+
+    优先级：DeepSeek → GLM（免费） → 百炼
+    """
     global _flash_client
     if _flash_client is None:
         with _analyzer_lock:
             if _flash_client is None:
-                _flash_client = OpenAI(
-                    api_key=settings.bailian_api_key_plain,
-                    base_url=settings.bailian_text_base_url,
-                )
+                # 1. 优先使用 DeepSeek API
+                deepseek_key = settings.deepseek_api_key_plain
+                if deepseek_key:
+                    _flash_client = OpenAI(
+                        api_key=deepseek_key,
+                        base_url=settings.deepseek_base_url,
+                    )
+                    logger.info("Flash client using DeepSeek API")
+                else:
+                    # 2. 回退到 GLM（免费）
+                    glm_key = settings.glm_api_key_plain
+                    if glm_key:
+                        _flash_client = OpenAI(
+                            api_key=glm_key,
+                            base_url=settings.glm_base_url,
+                        )
+                        logger.info("Flash client using GLM (glm-4v-flash)")
+                    else:
+                        # 3. 最后回退到百炼
+                        _flash_client = OpenAI(
+                            api_key=settings.bailian_api_key_plain,
+                            base_url=settings.bailian_text_base_url,
+                        )
+                        logger.info("Flash client using Bailian fallback")
     return _flash_client
 
 
@@ -100,6 +152,88 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
             else:
                 analysis_result = {}
 
+            # ── Step 1.2: 校验原告数量 + 关系推断 + is_patient 标记 ──
+            plaintiffs = analysis_result.get("plaintiffs", []) or []
+            if plaintiffs:
+                # 从所有素材 OCR 文本中收集真实身份证号
+                import re as _re
+                all_ocr_ids: set[str] = set()
+                for mat in materials:
+                    ocr_text = mat.ocr_text or ""
+                    for m_id in _re.findall(r'\d{17}[\dXx]', ocr_text):
+                        all_ocr_ids.add(m_id)
+
+                # ── 从文件名提取关系标注 ──
+                filename_rels = _extract_filename_relationships(materials)
+                
+                # ── 从病历/鉴定材料提取患者姓名 ──
+                patient_names = _extract_patient_names_from_materials(materials)
+
+                # 过滤 + 关系校验 + is_patient 标记
+                valid_plaintiffs = []
+                for p in plaintiffs:
+                    if not p or not isinstance(p, dict):
+                        continue
+                    p_id = (p.get("id_number") or "").strip()
+                    p_name = (p.get("name") or "").strip()
+                    
+                    # 身份证号校验
+                    if p_id and p_id not in all_ocr_ids:
+                        logger.warning(
+                            f"过滤原告：{p_name} (id={p_id}) "
+                            f"不在素材身份证号集合中，疑似LLM推测"
+                        )
+                        continue
+                    
+                    # ── 关系推断优先级 ──
+                    
+                    # 1. 文件名标注（最高优先级）
+                    if filename_rels and p_name in filename_rels:
+                        file_rel = filename_rels[p_name]
+                        if p.get("relationship") != file_rel:
+                            logger.info(
+                                f"关系修正（文件名覆盖）: {p_name} "
+                                f"LLM={p.get('relationship', '?')} → 文件名={file_rel}"
+                            )
+                            p["relationship"] = file_rel
+                    
+                    # 2. 患者姓名交叉比对
+                    if patient_names and p_name in patient_names:
+                        if p.get("relationship") != "本人":
+                            logger.info(
+                                f"关系修正（病历交叉）: {p_name} "
+                                f"LLM={p.get('relationship', '?')} → 本人（姓名出现在病历患者位置）"
+                            )
+                            p["relationship"] = "本人"
+                        p["is_patient"] = True
+                    
+                    # 3. 确保 is_patient 与 relationship 一致
+                    if p.get("relationship") == "本人":
+                        p["is_patient"] = True
+                    elif p.get("is_patient") is None:
+                        p["is_patient"] = False
+                    
+                    valid_plaintiffs.append(p)
+
+                if len(valid_plaintiffs) < len(plaintiffs):
+                    logger.info(
+                        f"原告校验：{len(plaintiffs)} → {len(valid_plaintiffs)} "
+                        f"（过滤了 {len(plaintiffs) - len(valid_plaintiffs)} 个无身份证素材的原告）"
+                    )
+                
+                # 日志输出关系推断结果
+                for p in valid_plaintiffs:
+                    logger.info(
+                        f"原告关系确认：{p.get('name', '?')} → "
+                        f"relationship={p.get('relationship', 'null')}, "
+                        f"is_patient={p.get('is_patient', False)}"
+                    )
+                
+                analysis_result["plaintiffs"] = valid_plaintiffs
+                # 更新 plaintiff_name 为第一个有效原告
+                if valid_plaintiffs:
+                    analysis_result["plaintiff_name"] = valid_plaintiffs[0].get("name", "")
+
             # ── Step 1.5: 定向提取死亡诊断（直接从OCR原文定位，不依赖LLM） ──
             if case.case_type == "death":
                 direct_dd = _direct_extract_death_diagnosis(materials)
@@ -127,7 +261,7 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
             # ── Step 1.7b: 鉴定结论定向提取（补充LLM遗漏的鉴定人/结论原文） ──
             direct_appraisal = _direct_extract_appraisal_conclusion(materials)
             if direct_appraisal:
-                appraisal = analysis_result.get("appraisal_details", {})
+                appraisal = analysis_result.get("appraisal_details") or {}
                 for k, v in direct_appraisal.items():
                     if v and not appraisal.get(k):
                         appraisal[k] = v
@@ -137,7 +271,7 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
             # ── Step 1.7c: 医务人员资质定向提取（补充LLM遗漏的资质问题） ──
             direct_staff = _direct_extract_staff_qualification(materials)
             if direct_staff:
-                staff = analysis_result.get("staff_details", {})
+                staff = analysis_result.get("staff_details") or {}
                 for k, v in direct_staff.items():
                     if v and not staff.get(k):
                         staff[k] = v
@@ -205,7 +339,6 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
             analysis_result["case_type"] = case.case_type
             analysis_result["case_type_name"] = (
                 "人身损害赔偿" if case.case_type == "injury"
-                else "新生儿损害赔偿" if case.case_type == "neonatal"
                 else "死亡赔偿"
             )
             analysis_result["is_minor"] = case.is_minor
@@ -285,6 +418,140 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
             }
 
     return run_in_worker(_do_analyze())
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 文件名关系提取
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 文件名中常见的关系标注格式：
+#   "张三（父亲）正面.jpg"   → name=张三, relationship=父亲
+#   "李四-配偶-反面.jpg"     → name=李四, relationship=配偶
+#   "王五_本人_正面.png"     → name=王五, relationship=本人
+#   "赵六（患者母亲）.jpg"   → name=赵六, relationship=母亲
+#   "钱七-死者配偶-正面.pdf" → name=钱七, relationship=配偶
+_FILENAME_REL_PATTERN = re.compile(
+    r"([^\s（）\(\)\-_.]+)"        # name: 非空白非分隔符
+    r"\s*[（(]\s*"                  # 左括号
+    r"(?:患者|死者|伤者|患儿)?"     # 可选前缀
+    r"([^\s）)]+?)"                 # relationship content
+    r"\s*[）)]"                     # 右括号
+    r"|"
+    r"([^\s（）\(\)\-_.]+)"         # name (alt)
+    r"\s*[-_]\s*"                   # 分隔符 - 或 _
+    r"(?:患者|死者|伤者|患儿)?"     # 可选前缀
+    r"([^\-_.]+?)"                  # relationship (alt)
+    r"\s*[-_]\s*"                   # 后续分隔符
+)
+
+# 更简洁的关系标注正则：括号标注
+_PAREN_REL_PATTERN = re.compile(
+    r"([^\s（）\(\)\-_.]+)"         # 姓名
+    r"\s*[（(]\s*"                   # 左括号
+    r"(?:患者|死者|伤者|患儿)?"      # 可选前缀
+    r"([\u4e00-\u9fff]+?)"           # 纯中文关系词
+    r"\s*[）)]"                      # 右括号
+)
+
+# 连字符标注
+_DASH_REL_PATTERN = re.compile(
+    r"([^\s（）\(\)\-_.]+)"         # 姓名
+    r"\s*[-_]\s*"                    # 分隔符
+    r"(?:患者|死者|伤者|患儿)?"      # 可选前缀
+    r"([\u4e00-\u9fff]+?)"           # 纯中文关系词
+    r"\s*[-_]\s*"                    # 后续分隔
+)
+
+# 有效的关系词（用于验证提取结果）
+_VALID_RELATIONSHIPS = {
+    "本人", "配偶", "父亲", "母亲", "儿子", "女儿",
+    "祖父", "祖母", "外祖父", "外祖母",
+    "兄弟", "姐妹", "哥哥", "姐姐", "弟弟", "妹妹",
+    "伯父", "叔父", "舅舅", "阿姨", "姑姑",
+    "养父", "养母", "继父", "继母",
+    "岳父", "岳母", "公公", "婆婆",
+}
+
+
+def _extract_filename_relationships(materials: list) -> dict[str, str]:
+    """从素材文件名中提取 {姓名: 关系} 映射
+    
+    支持的文件名格式:
+      - "张三（父亲）正面.jpg"
+      - "李四-配偶-反面.jpg"  
+      - "王五_本人_正面.png"
+      - "赵六（患者母亲）.jpg"
+    
+    Returns:
+        dict: {人名: 关系}，如 {"张三": "父亲", "李四": "配偶"}
+    """
+    name_to_rel: dict[str, str] = {}
+    
+    for mat in materials:
+        filename = mat.original_filename or ""
+        if not filename:
+            continue
+        
+        # 去掉扩展名
+        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+        
+        # 尝试括号标注: "张三（父亲）正面" → 张三, 父亲
+        m = _PAREN_REL_PATTERN.search(stem)
+        if m:
+            name, rel = m.group(1), m.group(2)
+            if rel in _VALID_RELATIONSHIPS or len(rel) <= 4:
+                name_to_rel[name] = rel
+                logger.debug(f"文件名关系提取（括号）: {name} → {rel} (from {filename})")
+                continue
+        
+        # 尝试连字符标注: "李四-配偶-反面" → 李四, 配偶
+        m = _DASH_REL_PATTERN.search(stem)
+        if m:
+            name, rel = m.group(1), m.group(2)
+            if rel in _VALID_RELATIONSHIPS or len(rel) <= 4:
+                name_to_rel[name] = rel
+                logger.debug(f"文件名关系提取（连字符）: {name} → {rel} (from {filename})")
+                continue
+    
+    if name_to_rel:
+        logger.info(f"文件名关系提取结果: {name_to_rel}")
+    return name_to_rel
+
+
+def _extract_patient_names_from_materials(materials: list) -> set[str]:
+    """从病历/鉴定材料中提取患者姓名集合
+    
+    用于交叉比对：如果某个身份证的人名出现在病历患者位置，则该人为患者本人。
+    
+    Returns:
+        set of patient names found in medical/appraisal materials
+    """
+    patient_names: set[str] = set()
+    
+    _PATIENT_PATTERNS = [
+        re.compile(r"患\s*者[：:\s]*([^\s，。、,于因经的\d]{2,4})"),
+        re.compile(r"被鉴定人[：:\s]*([^\s，。、,于因经的\d]{2,4})"),
+        re.compile(r"病人[：:\s]*([^\s，。、,于因经的\d]{2,4})"),
+        re.compile(r"死\s*者[：:\s]*([^\s，。、,于因经的\d]{2,4})"),
+        re.compile(r"伤\s*者[：:\s]*([^\s，。、,于因经的\d]{2,4})"),
+        re.compile(r"患儿[：:\s]*([^\s，。、,于因经的\d]{2,4})"),
+    ]
+    
+    for mat in materials:
+        cat = mat.effective_category or ""
+        # 只从病历/鉴定类材料中提取患者名
+        if cat not in ("medical_record", "appraisal", "death_certificate", "identity"):
+            continue
+        
+        ocr_text = mat.ocr_text or ""
+        for pattern in _PATIENT_PATTERNS:
+            for m in pattern.finditer(ocr_text):
+                name = m.group(1).strip()
+                # 过滤太长/太短的，以及非姓名字符
+                if 2 <= len(name) <= 4 and re.match(r"^[\u4e00-\u9fff]+$", name):
+                    patient_names.add(name)
+    
+    return patient_names
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -373,6 +640,12 @@ def _build_structured_context(materials: list) -> str:
     if not materials:
         return ""
 
+    # ── 从文件名中提取关系标注 ──
+    filename_rels = _extract_filename_relationships(materials)
+    
+    # ── 从病历/鉴定材料中提取患者姓名 ──
+    patient_names = _extract_patient_names_from_materials(materials)
+
     # ── 重要性关键词库 ──
     _CRITICAL_KEYWORDS = re.compile(
         r'死亡诊断|死因分析|死亡原因|鉴定意见|鉴定结论|尸检诊断|解剖诊断|病理诊断|'
@@ -431,7 +704,17 @@ def _build_structured_context(materials: list) -> str:
         if layers_brief:
             layer_section = "\n**结构化提取**:\n" + "\n".join(layers_brief)
 
-        header = f"### 材料{idx} [{cat_name}] 文件:{filename}"
+        # ── 构建文件名附加信息（关系标注）──
+        filename_extras = []
+        if filename_rels:
+            # 尝试从文件名中匹配人名
+            for name, rel in filename_rels.items():
+                if name in filename:
+                    filename_extras.append(f"【文件名标注关系：{name}→{rel}】")
+        if filename_extras:
+            header = f"### 材料{idx} [{cat_name}] 文件:{filename} {' '.join(filename_extras)}"
+        else:
+            header = f"### 材料{idx} [{cat_name}] 文件:{filename}"
 
         if not ocr_text:
             # 无 OCR 文本但有结构化数据的，按重要程度处理
@@ -520,26 +803,12 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
 
     case_type_desc = (
         "人身损害（伤残）" if case_type == "injury"
-        else "新生儿损害" if case_type == "neonatal"
         else "死亡"
     )
     minor_desc = "（未成年人）" if is_minor else ""
 
     # ── 根据案件类型定制提取说明 ──
-    if case_type == "neonatal":
-        case_specific_note = (
-            "【新生儿案件特别注意】\n"
-            "1. 患者为新生儿，需要从出生医学证明中提取新生儿姓名、出生体重、孕周等\n"
-            "2. 需要提取母亲信息（姓名、孕周、产次、分娩方式）\n"
-            "3. 从分娩记录中提取Apgar评分（1分钟、5分钟、10分钟各项得分）\n"
-            "4. 关注新生儿窒息、缺氧缺血性脑病(HIE)、颅内出血等新生儿特有诊断\n"
-            "5. 关注胎心监护(CTG)结果、羊水情况、脐带情况等产程信息\n"
-            "6. 入院信息中的admission_reason应为'母亲待产/新生儿出生'相关\n"
-            "7. adverse_outcome应侧重新生儿期的损害（如新生儿窒息、HIE等）\n"
-        )
-        appraisal_note = "disability_level(伤残等级)"
-        death_section = ""
-    elif case_type == "death":
+    if case_type == "death":
         case_specific_note = (
             "【死亡案件特别注意】\n"
             "1. 患者已死亡，需要从死亡证明/尸检报告/病历中提取完整死亡诊断\n"
@@ -566,6 +835,29 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
         appraisal_note = "disability_level(伤残等级)"
         death_section = ""
 
+    # ── 构建文件名关系提示（如有）──
+    filename_rels = _extract_filename_relationships(materials)
+    filename_rel_hint = ""
+    if filename_rels:
+        rel_items = "、".join(f"{name}是{rel}" for name, rel in filename_rels.items())
+        filename_rel_hint = (
+            f"\n**【文件名标注的关系信息（最高优先级，必须遵守）】**：\n"
+            f"根据上传素材的文件名标注，已知：{rel_items}。\n"
+            f"请严格按照文件名标注的关系填写每个原告的relationship字段，不得修改。\n"
+        )
+    
+    # ── 构建患者姓名提示 ──
+    patient_names = _extract_patient_names_from_materials(materials)
+    patient_name_hint = ""
+    if patient_names:
+        names_str = "、".join(patient_names)
+        patient_name_hint = (
+            f"\n**【患者姓名识别线索】**：\n"
+            f"从病历/鉴定材料中识别到以下患者姓名：{names_str}\n"
+            f"如果某位身份证持有人的姓名与患者姓名一致，则其relationship应为\"本人\"，"
+            f"is_patient应为true。\n"
+        )
+
     prompt = f"""你是一个医疗损害案件法律文书信息提取助手。请从以下证据材料的OCR原文中提取结构化数据。
 
 ## 案件信息
@@ -577,7 +869,7 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
 **关键说明**：
 1. 身份证正反面OCR文本可能分散在不同材料中，需要将同一人的正反面信息合并
 2. 文件名通常包含姓名和正反面标识（如"赵光远正面.jpg"、"马嘉尉反面.jpg"）
-3. 原告通常包括：患者本人、患者的配偶、父母、子女等近亲属
+3. 原告数量必须严格等于素材中不同身份证正反面的套数。只有提供了完整身份证正反面素材的人才能作为原告，绝不能从病历中的姓名推测为原告
 4. 从身份证OCR原文中提取：姓名、性别、民族、出生日期、住址、身份证号
 5. 从户口本OCR原文中提取：户主关系、亲属关系
 6. 从被告信息材料中提取：医院全称（不要省略！）、法定代表人、统一社会信用代码
@@ -587,6 +879,12 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
 10. **同一人正反面OCR姓名必须一致**，如果发现不一致则标记 name_conflict: true
 11. **被告医院名称必须提取完整全称**，不得省略"市/州/县/区"等行政区划词
 12. **如有多家医院出现**，需区分哪一家是被诉医院（被告），哪些是转院/首诊/会诊医院
+{filename_rel_hint}{patient_name_hint}
+**【relationship推断规则】（按优先级从高到低）**：
+1. **文件名标注**：如果材料文件名中包含关系标注（如"张三（父亲）正面.jpg"），则直接使用标注的关系
+2. **病历/鉴定交叉比对**：如果某人的姓名出现在病历的"患者"/"被鉴定人"位置，则该人relationship="本人"，is_patient=true
+3. **户口本关系**：如果有户口本素材，使用"与户主关系"字段推断
+4. **无法确定时填null**：如果没有足够的证据确定关系，relationship填null，不要猜测
 
 {case_specific_note}
 
@@ -594,7 +892,8 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
 从身份证OCR原文中提取所有原告（每个人正反面信息合并为一条）:
 - plaintiffs: 数组，每个元素包含:
   - name: 姓名（从OCR中提取的完整姓名）
-  - relationship: 与患者关系（本人/父亲/母亲/配偶/儿子/女儿等）
+  - relationship: 与患者关系（本人/父亲/母亲/配偶/儿子/女儿等，推断规则见上方）
+  - is_patient: 是否为患者本人（true/false，必须与relationship一致：relationship="本人"时is_patient=true）
   - gender: 性别（男/女）
   - ethnicity: 民族（如：汉族）
   - birth_date: 出生日期（如：1957年3月10日）
@@ -667,8 +966,12 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
 请返回JSON格式，只返回JSON，不要额外说明。"""
 
     try:
+        # 根据当前客户端选择合适的模型名
+        deepseek_key = settings.deepseek_api_key_plain
+        text_model = settings.deepseek_text_model if deepseek_key else settings.bailian_text_model
+
         response = client.chat.completions.create(
-            model=settings.bailian_text_model,
+            model=text_model,
             messages=[
                 {
                     "role": "system",
@@ -678,15 +981,15 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
                         "特别注意：\n"
                         "1. 身份证OCR原文中包含姓名、性别、民族、出生、住址、身份证号，必须完整提取\n"
                         "2. 文件名中包含人名和正反面标识，用来关联同一人的正反面信息\n"
+                        "2b. **文件名中如果包含关系标注（如\"张三（父亲）\"、\"李四-配偶-\"），必须直接使用该关系作为relationship**\n"
                         "3. 被告医院的完整名称必须完整提取，不能简写为'医院'\n"
                         "4. 病历材料中的入院日期、主诉、诊断必须准确提取\n"
-                        "5. 提取所有出现的原告（通常4人左右），不要遗漏\n"
+                        "5. 原告数量必须严格等于素材中不同身份证正反面的人数，不要推测或编造没有身份证素材的原告\n"
+                        "5b. **如果某人的姓名出现在病历的患者/被鉴定人位置，则其relationship='本人'、is_patient=true**\n"
                         + (
                             "6. 死亡诊断必须从住院病历或尸检报告/司法鉴定意见书中提取完整的编号列举式死亡诊断，"
                             "不要从死亡证明书上提取简略死因\n"
                             if case_type == "death" else
-                            "6. 如有Apgar评分，必须逐项完整提取（1分钟/5分钟/10分钟各项得分）\n"
-                            if case_type == "neonatal" else
                             ""
                         )
                         + "严格按照要求的JSON结构返回，只输出JSON，不添加任何解释。"
@@ -701,7 +1004,13 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
 
         json_match = re.search(r"\{[\s\S]*\}", raw)
         if json_match:
-            return json.loads(json_match.group())
+            parsed = json.loads(json_match.group())
+            # LLM 可能返回 null 值（如 "appraisal_details": null），
+            # 但 dict.get(key, default) 在键存在值=null 时返回 None 而非 default，
+            # 导致后续 .get() 调用崩溃。这里清理掉 null 值以防御。
+            if isinstance(parsed, dict):
+                _clean_nulls(parsed)
+            return parsed
         else:
             logger.warning(f"LLM did not return valid JSON for analysis: {raw[:200]}")
             return {"raw_response": raw}
@@ -745,8 +1054,10 @@ def _generate_facts_paragraph(
         for i, p in enumerate(plaintiffs, 1):
             if not p or not isinstance(p, dict):
                 continue  # 跳过 LLM 返回的 null 元素
+            is_patient_tag = "（患者本人）" if p.get("is_patient") else ""
             context_parts.append(
-                f"  原告{i}：{p.get('name', '')}，{p.get('relationship', '')}，"
+                f"  原告{i}：{p.get('name', '')}{is_patient_tag}，"
+                f"与患者关系：{p.get('relationship', '未知')}，"
                 f"{p.get('gender', '')}，{p.get('ethnicity', '')}，"
                 f"{p.get('birth_date', '')}出生，住{p.get('address', '')}，"
                 f"身份证号{p.get('id_number', '')}"
@@ -794,12 +1105,12 @@ def _generate_facts_paragraph(
         if death_date:
             context_parts.append(f"【死亡信息】死亡日期：{death_date}，死亡诊断：{death_diag}")
         # 鉴定结论原文注入（帮助段落2正确描述鉴定结果，尤其是尸检/死因鉴定）
-        appraisal = extracted_data.get("appraisal_details", {})
+        appraisal = extracted_data.get("appraisal_details") or {}
         conclusion_original = appraisal.get("appraisal_conclusion_original", "")
         if conclusion_original:
             context_parts.append(f"【鉴定结论原文（请逐字引用，不要改写）】{conclusion_original}")
         # 其他医院信息
-        other_hospitals = extracted_data.get("other_hospitals", [])
+        other_hospitals = extracted_data.get("other_hospitals") or []
         if other_hospitals:
             hospitals_text = "；".join(
                 f"{h.get('name', '')}（{h.get('role', '其他')}）" for h in other_hospitals
@@ -807,28 +1118,36 @@ def _generate_facts_paragraph(
             context_parts.append(f"【其他就诊医院】{hospitals_text}")
 
     elif section_id == "paragraph_3":
-        transfer = extracted_data.get("transfer_details", {})
+        transfer = extracted_data.get("transfer_details") or {}
         if transfer:
             context_parts.append(f"【转院信息】{json.dumps(transfer, ensure_ascii=False)}")
 
     elif section_id == "paragraph_4":
-        appraisal = extracted_data.get("appraisal_details", {})
+        appraisal = extracted_data.get("appraisal_details") or {}
         if appraisal:
             context_parts.append(f"【鉴定信息】{json.dumps(appraisal, ensure_ascii=False)}")
 
     elif section_id == "paragraph_5":
-        staff = extracted_data.get("staff_details", {})
+        staff = extracted_data.get("staff_details") or {}
         if staff:
             context_parts.append(f"【医务人员资质】{json.dumps(staff, ensure_ascii=False)}")
 
     context = "\n".join(context_parts)
 
-    case_type_desc = "死亡" if case_type == "death" else "新生儿损害" if case_type == "neonatal" else "伤残"
+    case_type_desc = "死亡" if case_type == "death" else "伤残"
     minor_note = "（注意：患者为未成年人）" if is_minor else ""
 
     try:
+        # 选择模型：DeepSeek → GLM → 百炼
+        deepseek_key = settings.deepseek_api_key_plain
+        if deepseek_key:
+            model_name = settings.deepseek_flash_model
+        elif glm_key:
+            model_name = settings.glm_model
+        else:
+            model_name = settings.bailian_flash_model
         response = client.chat.completions.create(
-            model=settings.bailian_flash_model,
+            model=model_name,
             messages=[
                 {
                     "role": "system",
@@ -878,10 +1197,11 @@ def _generate_conclusion(extracted_data: dict, case_type: str) -> str:
             f"《中华人民共和国民事诉讼法》等有关规定将本案诉至人民法院，望贵院依法裁判。"
         )
     elif case_type == "neonatal":
+        # 旧 neonatal 兼容：统一走 injury 路径
         return (
-            f"综上所述，被告{defendant_name}在为患儿{patient_name}提供诊疗服务过程中，"
+            f"综上所述，被告{defendant_name}在为患者{patient_name}提供诊疗服务过程中，"
             f"未尽到注意及相应的诊疗义务，违反诊疗常规、疏忽大意，"
-            f"并由此造成了新生儿遭受严重损害的后果，"
+            f"并由此造成了患者伤残的严重损害后果，"
             f"给原告及其家庭造成了巨大的物质损害及带来了极大的精神痛苦。"
             f"因此，为维护原告的合法权益，特根据《中华人民共和国民法典》"
             f"《中华人民共和国民事诉讼法》等有关规定将本案诉至人民法院，望贵院依法裁判。"
@@ -918,6 +1238,7 @@ def _populate_legacy_fields(analysis_result: dict) -> None:
             analysis_result.setdefault("亲属关系1", p1.get("relationship", ""))
             analysis_result.setdefault("律师电话1", p1.get("phone", ""))
             analysis_result.setdefault("plaintiff_name", p1.get("name", ""))
+            analysis_result.setdefault("is_patient1", p1.get("is_patient", False))
 
             # 多原告: 额外存储 原告姓名2, 原告姓名3...
             for i, p in enumerate(valid_plaintiffs[1:], 2):
@@ -929,6 +1250,7 @@ def _populate_legacy_fields(analysis_result: dict) -> None:
                 analysis_result[f"身份证号{i}"] = p.get("id_number", "")
                 analysis_result[f"亲属关系{i}"] = p.get("relationship", "")
                 analysis_result[f"律师电话{i}"] = p.get("phone", "")
+                analysis_result[f"is_patient{i}"] = p.get("is_patient", False)
 
     # 被告
     defendant_name = analysis_result.get("defendant_name", "")
@@ -1280,11 +1602,15 @@ def _direct_extract_defendant_info(materials: list) -> dict | None:
 
     # ── 2. 从 identity_defendant 类别优先提取法定代表人/信用代码/地址 ──
     # 先只搜 identity_defendant 类别，确保不被鉴定机构等信息污染
+    _CONTRACT_KEYWORDS = ("委托", "合同", "甲方", "乙方", "委托方", "受托方", "律所", "律师事务所")
     for mat in sorted(materials, key=_cat_sort_key):
         ocr_text = (mat.ocr_text or "").strip()
         if not ocr_text:
             continue
         cat = mat.effective_category or ""
+        # 跳过委托合同类材料（避免把委托方地址误认为医院地址）
+        fname = (mat.original_filename or "").lower()
+        is_contract = any(kw in fname or kw in ocr_text[:500] for kw in _CONTRACT_KEYWORDS)
 
         # 法定代表人：只在 identity_defendant 类别中搜索
         if cat == "identity_defendant" and not result.get("legal_representative"):
@@ -1308,20 +1634,20 @@ def _direct_extract_defendant_info(materials: list) -> dict | None:
             if m:
                 result["credit_code"] = m.group(1)
 
-        # 地址：只在 identity_defendant 类别中搜索
-        if cat == "identity_defendant" and not result.get("defendant_address"):
+        # 地址：只在 identity_defendant 类别中搜索（排除委托合同）
+        if cat == "identity_defendant" and not is_contract and not result.get("defendant_address"):
             # 格式1: "地址：/住所：XXX省XXX市XXX路XX号"
             m = _re.search(
-                r'(?:地址|住所)[：:]\s*([\u4e00-\u9fff]+省[\u4e00-\u9fff]+[\u4e00-\u9fff]*[路段街道][\u4e00-\u9fff]*\d+号)',
+                r'(?:地址|住所)[：:]\s*([\u4e00-\u9fff]+省[\u4e00-\u9fff]+[\u4e00-\u9fff]*[路段街道][\u4e00-\u9fff]*\d*号?)',
                 ocr_text,
             )
             if not m:
-                # 格式2: "注册地址\n中山市小榄镇菊城大道中65号"（值在下一行，可能不含省）
+                # 格式2: "注册地址\n云南省保山市龙陵县龙山镇热泉路"（值在下一行，可能没有门牌号）
                 m = _re.search(
-                    r'(?:注册地址|地址|住所)[^\n]*\n\s*([\u4e00-\u9fff]+[\u4e00-\u9fff]*[路段街道][\u4e00-\u9fff]*\d+号)',
+                    r'(?:注册地址|地址|住所)[^\n]*\n\s*([\u4e00-\u9fff]+[\u4e00-\u9fff]*[路段街道][\u4e00-\u9fff]*\d*号?)',
                     ocr_text,
                 )
-            if m:
+            if m and len(m.group(1)) >= 4:
                 result["defendant_address"] = m.group(1)
 
     if result:
@@ -1544,9 +1870,9 @@ def _validate_extracted_data(data: dict, case_type: str) -> dict:
         if not data.get("death_diagnosis"):
             issues.append("死亡案件缺少死亡诊断")
 
-    # ── 6. 新生儿案件必填校验 ──
+    # ── 6. neonatal 兼容处理 ──
     if case_type == "neonatal":
-        # 新生儿固定 is_minor
+        # 旧 neonatal 统一按 injury + is_minor 处理
         data["is_minor"] = True
 
     # ── 7. 关键日期字段标准化（嵌套对象中的日期） ──
@@ -1588,7 +1914,7 @@ def _resolve_defendant_hospital(data: dict, materials: list) -> dict:
     4. 如果仍然无法确定 → 标记为"待确认"
     """
     defendant_name = data.get("defendant_name", "")
-    other_hospitals = data.get("other_hospitals", [])
+    other_hospitals = data.get("other_hospitals") or []
 
     # 如果已经有被告名称且看起来完整，直接返回
     if defendant_name and len(defendant_name) >= 4 and "医院" in defendant_name:
