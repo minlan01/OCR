@@ -1887,14 +1887,30 @@ function formatMoney(val: number | string): string {
   return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+/** 构建干净的参数对象，去除 undefined/null 值 */
+function buildCleanParams(): Record<string, any> {
+  const clean: Record<string, any> = {}
+  for (const [k, v] of Object.entries(compParams)) {
+    if (v !== undefined && v !== null) {
+      clean[k] = v
+    }
+  }
+  return clean
+}
+
 async function handleCalculateCompensation() {
   if (!currentCase.value) return
   calculatingCompensation.value = true
   try {
-    const res = await evidenceApi.calculateCompensation(currentCase.value.id, compParams)
+    const cleanParams = buildCleanParams()
+    const res = await evidenceApi.calculateCompensation(currentCase.value.id, cleanParams)
     compensationData.value = res
-    // 同步参数（后端 Decimal 字段返回字符串，需转为数字）
-    if (res.params) Object.assign(compParams, parseNumericParams(res.params))
+    // 同步参数（后端返回合并后的完整参数，更新本地 compParams）
+    if (res.params) {
+      const parsed = parseNumericParams(res.params)
+      Object.keys(compParams).forEach(k => delete compParams[k])
+      Object.assign(compParams, parsed)
+    }
   } catch (e: any) {
     message.error('计算失败: ' + (e.message || '未知错误'))
   } finally {
@@ -1948,9 +1964,14 @@ async function handleRecalculate() {
   if (!currentCase.value) return
   calculatingCompensation.value = true
   try {
-    const res = await evidenceApi.calculateCompensation(currentCase.value.id, compParams)
+    const cleanParams = buildCleanParams()
+    const res = await evidenceApi.calculateCompensation(currentCase.value.id, cleanParams)
     compensationData.value = res
-    if (res.params) Object.assign(compParams, parseNumericParams(res.params))
+    if (res.params) {
+      const parsed = parseNumericParams(res.params)
+      Object.keys(compParams).forEach(k => delete compParams[k])
+      Object.assign(compParams, parsed)
+    }
   } catch (e: any) {
     message.error('重新计算失败')
   } finally {
@@ -1973,7 +1994,11 @@ async function loadCompensation() {
     const res = await evidenceApi.getCompensation(currentCase.value.id)
     if (res.compensation_data && res.compensation_data.items) {
       compensationData.value = res.compensation_data
-      if (res.compensation_data.params) Object.assign(compParams, parseNumericParams(res.compensation_data.params))
+      if (res.compensation_data.params) {
+        const parsed = parseNumericParams(res.compensation_data.params)
+        Object.keys(compParams).forEach(k => delete compParams[k])
+        Object.assign(compParams, parsed)
+      }
     }
   } catch { /* 静默 */ }
 }
