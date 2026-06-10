@@ -108,6 +108,18 @@ def calculate_all(
         item = calculate_item(fee_type, p, fee_items or [])
         result_items.append(item)
 
+    # 序列化 Decimal → float/str（JSONB 兼容）
+    def _serialize_item(item: Dict) -> Dict:
+        out = dict(item)
+        for k, v in out.items():
+            if isinstance(v, Decimal):
+                out[k] = float(v)
+            elif isinstance(v, list):
+                out[k] = [{kk: float(vv) if isinstance(vv, Decimal) else vv for kk, vv in d.items()} for d in v] if v and isinstance(v[0], dict) else v
+        return out
+
+    serialized_items = [_serialize_item(item) for item in result_items]
+
     # 计算合计
     total = sum(
         Decimal(str(item.get("manual_amount") or item.get("amount", 0)))
@@ -115,8 +127,8 @@ def calculate_all(
     )
 
     return {
-        "items": result_items,
-        "total_amount": total,
+        "items": serialized_items,
+        "total_amount": float(total),
         "params": {k: str(v) if isinstance(v, Decimal) else v for k, v in p.items()},
         "calculated_at": datetime.now().isoformat(),
     }
