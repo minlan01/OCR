@@ -1200,7 +1200,7 @@ const progressStatus = computed(() => {
 /** 是否可以跳到某步骤（Step 0 不允许通过步骤条跳回，Step 1-4 案件内自由切换） */
 function canGoStep(step: number): boolean {
   if (step === STEP.CREATE) return false
-  if (!currentCase.value || !isContinuedCase.value) return false
+  if (!currentCase.value) return false
   return true
 }
 
