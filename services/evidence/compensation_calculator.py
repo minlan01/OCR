@@ -129,7 +129,7 @@ def calculate_all(
     return {
         "items": serialized_items,
         "total_amount": float(total),
-        "params": {k: str(v) if isinstance(v, Decimal) else v for k, v in p.items()},
+        "params": {k: float(v) if isinstance(v, Decimal) else v for k, v in p.items()},
         "calculated_at": datetime.now().isoformat(),
     }
 

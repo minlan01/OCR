@@ -1893,8 +1893,8 @@ async function handleCalculateCompensation() {
   try {
     const res = await evidenceApi.calculateCompensation(currentCase.value.id, compParams)
     compensationData.value = res
-    // 同步参数
-    if (res.params) Object.assign(compParams, res.params)
+    // 同步参数（后端 Decimal 字段返回字符串，需转为数字）
+    if (res.params) Object.assign(compParams, parseNumericParams(res.params))
   } catch (e: any) {
     message.error('计算失败: ' + (e.message || '未知错误'))
   } finally {
@@ -1950,12 +1950,21 @@ async function handleRecalculate() {
   try {
     const res = await evidenceApi.calculateCompensation(currentCase.value.id, compParams)
     compensationData.value = res
-    if (res.params) Object.assign(compParams, res.params)
+    if (res.params) Object.assign(compParams, parseNumericParams(res.params))
   } catch (e: any) {
     message.error('重新计算失败')
   } finally {
     calculatingCompensation.value = false
   }
+}
+
+/** 将后端返回的 params 中的字符串值转为数字（n-input-number 需要 number 类型） */
+function parseNumericParams(params: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {}
+  for (const [k, v] of Object.entries(params)) {
+    out[k] = typeof v === 'string' ? Number(v) : v
+  }
+  return out
 }
 
 async function loadCompensation() {
@@ -1964,7 +1973,7 @@ async function loadCompensation() {
     const res = await evidenceApi.getCompensation(currentCase.value.id)
     if (res.compensation_data && res.compensation_data.items) {
       compensationData.value = res.compensation_data
-      if (res.compensation_data.params) Object.assign(compParams, res.compensation_data.params)
+      if (res.compensation_data.params) Object.assign(compParams, parseNumericParams(res.compensation_data.params))
     }
   } catch { /* 静默 */ }
 }
