@@ -451,7 +451,10 @@
           </n-gi>
         </n-grid>
         <template #action>
-          <n-button type="primary" size="small" @click="handleRecalculate">重新计算</n-button>
+          <n-space>
+            <n-button size="small" @click="handleSaveParams" :loading="savingParams">保存参数</n-button>
+            <n-button type="primary" size="small" @click="handleRecalculate">重新计算</n-button>
+          </n-space>
         </template>
       </n-card>
 
@@ -1058,6 +1061,7 @@ let ocrPollId: ReturnType<typeof setInterval> | null = null
 // ── 赔偿计算相关状态 ──
 const compensationData = ref<any>(null)
 const calculatingCompensation = ref(false)
+const savingParams = ref(false)
 const feeReceiptMaterials = computed(() =>
   materials.value.filter((m: any) =>
     ['fee_receipt', 'invoice', 'receipt'].includes(m.effective_category) && m.ocr_status === 'completed'
@@ -1898,19 +1902,30 @@ function buildCleanParams(): Record<string, any> {
   return clean
 }
 
+/** 保存参数到后端（不重新计算） */
+async function handleSaveParams() {
+  if (!currentCase.value) return
+  savingParams.value = true
+  try {
+    await evidenceApi.updateCompensation(currentCase.value.id, {
+      items: [],
+      params: buildCleanParams(),
+    })
+    message.success('参数已保存')
+  } catch (e: any) {
+    message.error('保存参数失败: ' + (e.message || '未知错误'))
+  } finally {
+    savingParams.value = false
+  }
+}
+
 async function handleCalculateCompensation() {
   if (!currentCase.value) return
   calculatingCompensation.value = true
   try {
-    const cleanParams = buildCleanParams()
-    const res = await evidenceApi.calculateCompensation(currentCase.value.id, cleanParams)
+    const res = await evidenceApi.calculateCompensation(currentCase.value.id, buildCleanParams())
     compensationData.value = res
-    // 同步参数（后端返回合并后的完整参数，更新本地 compParams）
-    if (res.params) {
-      const parsed = parseNumericParams(res.params)
-      Object.keys(compParams).forEach(k => delete compParams[k])
-      Object.assign(compParams, parsed)
-    }
+    // 只更新计算结果，不覆盖用户正在编辑的参数
   } catch (e: any) {
     message.error('计算失败: ' + (e.message || '未知错误'))
   } finally {
@@ -1964,14 +1979,9 @@ async function handleRecalculate() {
   if (!currentCase.value) return
   calculatingCompensation.value = true
   try {
-    const cleanParams = buildCleanParams()
-    const res = await evidenceApi.calculateCompensation(currentCase.value.id, cleanParams)
+    const res = await evidenceApi.calculateCompensation(currentCase.value.id, buildCleanParams())
     compensationData.value = res
-    if (res.params) {
-      const parsed = parseNumericParams(res.params)
-      Object.keys(compParams).forEach(k => delete compParams[k])
-      Object.assign(compParams, parsed)
-    }
+    // 只更新计算结果，不覆盖用户正在编辑的参数
   } catch (e: any) {
     message.error('重新计算失败')
   } finally {
