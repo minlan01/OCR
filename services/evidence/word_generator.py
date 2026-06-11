@@ -692,9 +692,12 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
     run.font.bold = True
 
     # === 原告信息（支持多个）===
+    # 未成年人案件：患者本人用"原告："，父母用"法定代理人："
+    # 成年人案件：全部用"原告："
+    is_minor = context.get("is_minor", False)
+
     plaintiffs = _get_plaintiffs(context, catalog_data)
     for i, p_info in enumerate(plaintiffs):
-        label = f"原告："
         name = p_info.get("name") or ""
         rel = p_info.get("relationship") or ""
         gender = p_info.get("gender") or ""
@@ -704,10 +707,22 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
         id_number = p_info.get("id_number") or ""
         phone = p_info.get("phone") or ""
 
-        # 格式：原告：赵光远（系患者父亲），男，汉族，...
-        # 如果有关系则加括号（加"系患者"前缀），如果是"本人"或is_patient则不加
         is_patient = p_info.get("is_patient", False) or rel == "本人"
-        rel_str = f"（系患者{rel}）" if rel and rel != "本人" and not is_patient else ""
+
+        # ── 标签选择：成年人全用"原告"，未成年人区分 ──
+        if is_minor and not is_patient and rel and rel != "本人":
+            # 未成年人的父母/法定监护人 → "法定代理人"
+            label = "法定代理人："
+        else:
+            label = "原告："
+
+        # ── 关系括号 ──
+        # 参考文件格式："王文雄（系原告父亲）" — 用"系原告XX"而非"系患者XX"
+        if rel and rel != "本人" and not is_patient:
+            rel_str = f"（系原告{rel}）"
+        else:
+            rel_str = ""
+
         parts = [f"{label}{name}{rel_str}"]
         if gender:
             parts.append(gender)
@@ -725,9 +740,7 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
         if phone:
             text += f"，联系电话：{phone}"
 
-        # 律师信息（加在每位原告最后）
-        # 格式：联系电话：18487301173（凡律师）、15877881929（刘律师）
-        # 注意：只有第一个律师前加「联系电话：」，后续用「、」连接
+        # 律师信息（加在每位原告/法定代理人最后）
         if lawyer_info:
             lawyer_parts = []
             for lw in lawyer_info:
@@ -813,27 +826,35 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
     else:
         amount_display = "______元"
 
-    if case_type == "injury":
+    if case_type == "injury" and is_minor:
+        # 未成年人/新生儿案件：无误工费，含鉴定费、交通住宿费、残疾赔偿金
+        claim_items = f"医疗费、护理费、住院伙食补助费、营养费、残疾赔偿金、交通住宿费、鉴定费、精神损害抚慰金等暂计人民币{amount_display}"
+        retention_clause = "因本案尚未鉴定，上述费用待鉴定后再行补充变更"
+    elif case_type == "injury":
+        # 成年人伤残案件
         claim_items = f"医疗费、误工费、护理费、住院伙食补助费、营养费、伤残赔偿金（包含被扶养人生活费）、后续治疗费、交通费、精神损害抚慰金等暂计人民币{amount_display}"
         retention_clause = "因本案尚未鉴定，上述赔偿费用待鉴定后再行补充变更"
     elif case_type == "neonatal":
-        claim_items = f"医疗费、护理费、住院伙食补助费、营养费、伤残赔偿金（包含被扶养人生活费）、后续护理费、交通费、精神损害抚慰金等暂计人民币{amount_display}"
-        retention_clause = "因本案尚未鉴定，上述赔偿费用待鉴定后再行补充变更"
+        # 旧 neonatal 兼容（已合并为 injury + is_minor，此处兜底）
+        claim_items = f"医疗费、护理费、住院伙食补助费、营养费、残疾赔偿金、交通住宿费、鉴定费、精神损害抚慰金等暂计人民币{amount_display}"
+        retention_clause = "因本案尚未鉴定，上述费用待鉴定后再行补充变更"
     else:  # death
         claim_items = f"医疗费、误工费、护理费、住院伙食补助费、营养费、死亡赔偿金（包含被扶养人生活费）、丧葬费、交通费、精神损害抚慰金等暂计人民币{amount_display}"
         retention_clause = ""
+
+    # 诉讼请求第一条：无序号前缀，参考律师模板格式
     p = doc.add_paragraph()
     _set_body_para(p)
-    claim_text = f"一、请求人民法院依法判令被告赔偿原告{claim_items}；"
+    claim_text = f"请求人民法院依法判令被告赔偿原告{claim_items}；"
     if retention_clause:
         claim_text += retention_clause + "；"
     run = p.add_run(claim_text)
     _set_run_font(run, BODY_FONT, BODY_SIZE)
 
-    # 第二条：诉讼费由被告承担
+    # 第二条：诉讼费由被告承担（无序号前缀）
     p = doc.add_paragraph()
     _set_body_para(p)
-    run = p.add_run("二、请求人民法院依法判令本案诉讼费、鉴定费由被告承担。")
+    run = p.add_run("请求人民法院依法判令本案诉讼费由被告承担。")
     _set_run_font(run, BODY_FONT, BODY_SIZE)
 
     # === 事实及理由（5段结构化）===
@@ -876,6 +897,10 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
 
     # === 具状人 + 日期（同一段落，确保紧邻） ===
     year = context.get("complaint_year", context.get("起诉年份", "")) or ""
+    if not year:
+        # 如果没有指定年份，使用当前年份
+        from datetime import date
+        year = str(date.today().year)
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     _set_body_para(p, indent=False)
@@ -884,12 +909,9 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
     _set_run_font(run, BODY_FONT, BODY_SIZE)
     # 换行（不换段）
     run.add_break()
-    # 日期
-    if year:
-        year_cn = _year_to_chinese(year)
-        run = p.add_run(f"{year_cn}年   月    日")
-    else:
-        run = p.add_run("    年   月    日")
+    # 日期：始终使用年份（优先从 context 取，否则用当前年）
+    year_cn = _year_to_chinese(year)
+    run = p.add_run(f"{year_cn}年   月   日")
     _set_run_font(run, BODY_FONT, BODY_SIZE)
 
     output = io.BytesIO()

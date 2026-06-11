@@ -143,7 +143,7 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
 
             if structured_context.strip():
                 analysis_result = _extract_document_slots(
-                    structured_context, case.case_type, case.is_minor
+                    structured_context, case.case_type, case.is_minor, materials
                 )
                 # 防御性检查：确保返回有效 dict
                 if not isinstance(analysis_result, dict):
@@ -789,7 +789,7 @@ def _build_structured_context(materials: list) -> str:
 # Step 1: 结构化数据提取（多原告 + 5大类）
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[str, Any]:
+def _extract_document_slots(text: str, case_type: str, is_minor: bool, materials: list = None) -> dict[str, Any]:
     """从结构化上下文中提取文档生成所需的所有结构化数据
 
     支持多原告、入院/诊疗/转院/鉴定/人员5大类
@@ -836,7 +836,7 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
         death_section = ""
 
     # ── 构建文件名关系提示（如有）──
-    filename_rels = _extract_filename_relationships(materials)
+    filename_rels = _extract_filename_relationships(materials) if materials else {}
     filename_rel_hint = ""
     if filename_rels:
         rel_items = "、".join(f"{name}是{rel}" for name, rel in filename_rels.items())
@@ -847,7 +847,7 @@ def _extract_document_slots(text: str, case_type: str, is_minor: bool) -> dict[s
         )
     
     # ── 构建患者姓名提示 ──
-    patient_names = _extract_patient_names_from_materials(materials)
+    patient_names = _extract_patient_names_from_materials(materials) if materials else set()
     patient_name_hint = ""
     if patient_names:
         names_str = "、".join(patient_names)
