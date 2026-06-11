@@ -611,7 +611,10 @@
           </n-collapse>
 
           <n-descriptions bordered :column="2" label-placement="left" style="margin-top: 16px" size="small">
-            <n-descriptions-item label="费用总计">¥{{ catalogTotalAmount.toFixed(2) }}</n-descriptions-item>
+            <n-descriptions-item label="费用总计">
+              <template v-if="catalogTotalAmount > 0">¥{{ catalogTotalAmount.toFixed(2) }}</template>
+              <template v-else>——（暂无）</template>
+            </n-descriptions-item>
             <n-descriptions-item label="材料总数">{{ totalMaterialCount }} 份</n-descriptions-item>
           </n-descriptions>
         </template>
@@ -2037,7 +2040,8 @@ async function loadCatalog() {
   try {
     const res = await evidenceApi.getCatalog(currentCase.value.id)
     catalogGroups.value = res.groups
-    catalogTotalAmount.value = res.total_amount
+    // 优先使用第二步赔偿计算结果，否则用 OCR 提取的费用
+    catalogTotalAmount.value = res.compensation_total ?? res.total_amount
     catalogEmptyReason.value = (res as any).empty_reason || null
   } catch (e: unknown) { message.error((e as Error).message) }
   finally { catalogLoading.value = false }

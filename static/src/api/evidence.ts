@@ -108,6 +108,7 @@ export interface CatalogResponse {
   groups: CatalogGroup[]
   fee_summary: Record<string, unknown>
   total_amount: number
+  compensation_total?: number | null
 }
 
 export interface AnalysisResponse {

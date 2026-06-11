@@ -691,6 +691,15 @@ async def get_catalog(
             items=group_materials,
         ))
 
+    # 赔偿计算总额（第二步结果，优先于 OCR 提取的费用）
+    compensation_total = None
+    comp_data = case.compensation_data or {}
+    if comp_data and comp_data.get("items"):
+        try:
+            compensation_total = float(str(comp_data.get("total_amount", 0)))
+        except (ValueError, TypeError):
+            compensation_total = None
+
     return CatalogResponse(
         case_id=str(case_id),
         case_name=case.case_name,
@@ -698,6 +707,7 @@ async def get_catalog(
         groups=groups,
         fee_summary=catalog_data.get("fee_summary", {}),
         total_amount=catalog_data.get("total_amount", 0.0),
+        compensation_total=compensation_total,
     )
 
 

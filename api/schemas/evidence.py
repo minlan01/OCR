@@ -181,6 +181,7 @@ class CatalogResponse(BaseModel):
     groups: list[CatalogGroupResponse]
     fee_summary: dict[str, Any] = Field(default_factory=dict)
     total_amount: float = 0.0
+    compensation_total: float | None = Field(default=None, description="赔偿计算总额（第二步计算结果，优先于 fee_summary）")
 
 
 # ─── 分析响应 ────────────────────────────────────────────────────────────────
