@@ -603,7 +603,7 @@ def _extract_receipt_tail(filename: str) -> str:
     return ""
 
 
-def generate_compensation_calculation_excel(compensation_data: dict, case_name: str = "",
+def generate_compensation_calculation_excel(compensation_data: dict | None, case_name: str = "",
                                               plaintiff_name: str = "", case_type: str = "injury") -> bytes:
     """生成赔偿费用清单 Excel（标准法律文书格式，参照手工模板）
 
@@ -614,12 +614,20 @@ def generate_compensation_calculation_excel(compensation_data: dict, case_name: 
     - 合计/小计
     - 备注行
 
+    当 compensation_data 为空或没有 items 时，按案件类型生成模板：
+    项目名称和计算依据照出，金额列留白（显示横线）。
+
     Args:
-        compensation_data: calculate_all() 返回的赔偿计算结果字典
+        compensation_data: calculate_all() 返回的赔偿计算结果字典，可为 None/空
         case_name: 案件名称
         plaintiff_name: 原告姓名
         case_type: 案件类型 injury/death
     """
+    compensation_data = compensation_data or {}
+    items = compensation_data.get('items', [])
+    params = compensation_data.get('params', {})
+    has_data = bool(items)
+
     wb = Workbook()
     ws = wb.active
     ws.title = "赔偿费用清单"
@@ -657,63 +665,83 @@ def generate_compensation_calculation_excel(compensation_data: dict, case_name: 
         cell.border = thin_border
         cell.alignment = Alignment(horizontal='center')
 
-    items = compensation_data.get('items', [])
-    params = compensation_data.get('params', {})
     row_idx = 3
     seq = 1
 
-    for item in items:
-        fee_type = item.get('fee_type', '')
-        fee_name = item.get('fee_name', '')
-        amount = item.get('manual_amount') or item.get('amount', 0)
-        basis = item.get('calculation_basis', '')
-        try:
-            amount = float(str(amount))
-        except (ValueError, TypeError):
-            amount = 0.0
+    if has_data:
+        # ── 有计算数据：正常输出各项 ──
+        for item in items:
+            fee_type = item.get('fee_type', '')
+            fee_name = item.get('fee_name', '')
+            amount = item.get('manual_amount') or item.get('amount', 0)
+            basis = item.get('calculation_basis', '')
+            try:
+                amount = float(str(amount))
+            except (ValueError, TypeError):
+                amount = 0.0
 
-        # 序号
-        ws.cell(row=row_idx, column=1, value=seq).font = cell_font
-        ws.cell(row=row_idx, column=1).border = thin_border
-        ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal='center')
-
-        # 项目名称
-        ws.cell(row=row_idx, column=2, value=fee_name).font = cell_font
-        ws.cell(row=row_idx, column=2).border = thin_border
-
-        # 计算依据
-        ws.cell(row=row_idx, column=3, value=basis).font = cell_font
-        ws.cell(row=row_idx, column=3).border = thin_border
-
-        # 金额
-        cell_amount = ws.cell(row=row_idx, column=4, value=amount)
-        cell_amount.number_format = money_fmt
-        cell_amount.font = cell_font
-        cell_amount.border = thin_border
-        cell_amount.alignment = Alignment(horizontal='center')
-
-        row_idx += 1
-        seq += 1
-
-        # 部分项目需要增加子行说明计算依据（参照手工模板中护理费的写法）
-        sub_row = _get_calculation_detail(fee_type, params, plaintiff_name)
-        if sub_row:
-            ws.cell(row=row_idx, column=3, value=sub_row).font = cell_font
-            ws.cell(row=row_idx, column=3).border = thin_border
+            ws.cell(row=row_idx, column=1, value=seq).font = cell_font
             ws.cell(row=row_idx, column=1).border = thin_border
+            ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal='center')
+
+            ws.cell(row=row_idx, column=2, value=fee_name).font = cell_font
             ws.cell(row=row_idx, column=2).border = thin_border
-            ws.cell(row=row_idx, column=4).border = thin_border
+
+            ws.cell(row=row_idx, column=3, value=basis).font = cell_font
+            ws.cell(row=row_idx, column=3).border = thin_border
+
+            cell_amount = ws.cell(row=row_idx, column=4, value=amount)
+            cell_amount.number_format = money_fmt
+            cell_amount.font = cell_font
+            cell_amount.border = thin_border
+            cell_amount.alignment = Alignment(horizontal='center')
+
             row_idx += 1
+            seq += 1
+
+            # 子行详细计算依据
+            sub_row = _get_calculation_detail(fee_type, params, plaintiff_name)
+            if sub_row:
+                ws.cell(row=row_idx, column=3, value=sub_row).font = cell_font
+                for c in range(1, 5):
+                    ws.cell(row=row_idx, column=c).border = thin_border
+                row_idx += 1
+
+        total_amount = float(str(compensation_data.get('total_amount', 0)))
+    else:
+        # ── 无计算数据：按案件类型生成模板，金额留白 ──
+        template_items = _get_template_items(case_type)
+        for fee_name, basis in template_items:
+            ws.cell(row=row_idx, column=1, value=seq).font = cell_font
+            ws.cell(row=row_idx, column=1).border = thin_border
+            ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal='center')
+
+            ws.cell(row=row_idx, column=2, value=fee_name).font = cell_font
+            ws.cell(row=row_idx, column=2).border = thin_border
+
+            ws.cell(row=row_idx, column=3, value=basis).font = cell_font
+            ws.cell(row=row_idx, column=3).border = thin_border
+
+            # 金额留白（横线占位）
+            cell_amount = ws.cell(row=row_idx, column=4, value="——")
+            cell_amount.font = cell_font
+            cell_amount.border = thin_border
+            cell_amount.alignment = Alignment(horizontal='center')
+
+            row_idx += 1
+            seq += 1
+
+        total_amount = "——"
 
     # ── 合计行 ──
-    total_amount = float(str(compensation_data.get('total_amount', 0)))
     ws.cell(row=row_idx, column=2, value='合计').font = bold_font
     ws.cell(row=row_idx, column=2).border = thin_border
     ws.cell(row=row_idx, column=2).alignment = Alignment(horizontal='center')
     ws.cell(row=row_idx, column=1).border = thin_border
     ws.cell(row=row_idx, column=3).border = thin_border
     cell_total = ws.cell(row=row_idx, column=4, value=total_amount)
-    cell_total.number_format = money_fmt
+    if isinstance(total_amount, (int, float)):
+        cell_total.number_format = money_fmt
     cell_total.font = bold_font
     cell_total.border = thin_border
     cell_total.alignment = Alignment(horizontal='center')
@@ -734,6 +762,35 @@ def generate_compensation_calculation_excel(compensation_data: dict, case_name: 
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
+
+
+def _get_template_items(case_type: str) -> list[tuple[str, str]]:
+    """按案件类型返回模板赔偿项目（名称 + 计算依据），用于无数据时的空模板生成"""
+    if case_type == "death":
+        return [
+            ("医疗费", "凭票据实报实销"),
+            ("误工费", "误工收入 × 误工天数（参照鉴定意见）"),
+            ("护理费", "住院期间护理费 = 护理标准 × 住院天数"),
+            ("住院伙食补助费", "住院伙食补助标准 × 住院天数"),
+            ("营养费", "营养费标准 × 营养期天数（参照鉴定意见）"),
+            ("死亡赔偿金", "受诉法院所在地上年度城镇居民人均可支配收入 × 20年（含被扶养人生活费）"),
+            ("丧葬费", "受诉法院所在地上年度职工月平均工资 × 6个月"),
+            ("交通费", "凭票据实报实销"),
+            ("精神损害抚慰金", "根据死亡后果酌定"),
+        ]
+    else:
+        # injury（含新生儿）
+        return [
+            ("医疗费", "凭票据实报实销"),
+            ("误工费", "误工收入 × 误工天数（参照鉴定意见）"),
+            ("护理费", "住院期间护理费 = 护理标准 × 住院天数"),
+            ("住院伙食补助费", "住院伙食补助标准 × 住院天数"),
+            ("营养费", "营养费标准 × 营养期天数（参照鉴定意见）"),
+            ("残疾赔偿金", "受诉法院所在地上年度城镇居民人均可支配收入 × 20年 × 伤残系数（含被扶养人生活费）"),
+            ("后续治疗费", "参照鉴定意见或后续实际发生费用"),
+            ("交通费", "凭票据实报实销"),
+            ("精神损害抚慰金", "根据伤残等级酌定"),
+        ]
 
 
 def _get_calculation_detail(fee_type: str, params: dict, plaintiff_name: str = "") -> str:

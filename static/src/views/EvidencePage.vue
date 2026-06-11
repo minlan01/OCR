@@ -347,7 +347,7 @@
         <n-button type="primary" :loading="calculatingCompensation" @click="handleCalculateCompensation">
           自动计算赔偿
         </n-button>
-        <n-button @click="handleExportCompensation" :disabled="!compensationData">
+        <n-button @click="handleExportCompensation">
           导出 Excel
         </n-button>
       </n-space>

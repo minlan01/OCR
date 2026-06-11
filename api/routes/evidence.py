@@ -1672,19 +1672,15 @@ async def download_bundle(
         except Exception as e:
             logger.error(f"Failed to generate appraisal: {e}")
             failures.append(f"司法鉴定申请书: {e}")
-        # 4. 赔偿费用清单（优先使用赔偿计算引擎数据）
+        # 4. 赔偿费用清单（始终生成，无数据时出空模板）
         try:
             from services.evidence.excel_generator import generate_compensation_calculation_excel
-            comp_data = compensation_data  # 已在上方从 case.compensation_data 提取
-            if comp_data and comp_data.get("items"):
-                b = generate_compensation_calculation_excel(
-                    comp_data,
-                    case_name or "",
-                    analysis_result.get("plaintiff_name", ""),
-                    case.case_type or "injury",
-                )
-            else:
-                b = generate_compensation_inline_data(catalog_data, analysis_result)
+            b = generate_compensation_calculation_excel(
+                compensation_data,  # 可为空，函数内部会生成模板
+                case_name or "",
+                analysis_result.get("plaintiff_name", ""),
+                case.case_type or "injury",
+            )
             if b:
                 files["04_赔偿费用清单.xlsx"] = b
         except Exception as e:
@@ -1962,18 +1958,16 @@ async def export_compensation_calculation(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """导出赔偿计算 Excel"""
+    """导出赔偿计算 Excel（无数据时生成空模板）"""
     case = await _get_case_or_404(case_id, db)
 
-    if not case.compensation_data or not case.compensation_data.get("items"):
-        raise HTTPException(status_code=400, detail="暂无赔偿计算数据，请先计算")
-
+    # 不再强制要求有计算数据，无数据时生成模板（金额留白）
     try:
         from services.evidence.excel_generator import generate_compensation_calculation_excel
         analysis_result = case.analysis_result or {}
         excel_bytes = await asyncio.to_thread(
             generate_compensation_calculation_excel,
-            case.compensation_data,
+            case.compensation_data,  # 可为 None/空
             case.case_name or "",
             analysis_result.get("plaintiff_name", ""),
             case.case_type or "injury",
