@@ -393,7 +393,7 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
 
             # ── Step 3: 固定结尾段 ──
             analysis_result["conclusion_text"] = _generate_conclusion(
-                analysis_result, case.case_type
+                analysis_result, case.case_type, case.is_minor
             )
 
             # 兼容旧字段
@@ -1175,7 +1175,7 @@ def _generate_facts_paragraph(
 # Step 3: 固定结尾段
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _generate_conclusion(extracted_data: dict, case_type: str) -> str:
+def _generate_conclusion(extracted_data: dict, case_type: str, is_minor: bool = False) -> str:
     """生成固定的结尾段：综上所述..."""
     # 尝试从新的结构化数据获取
     defendant_name = extracted_data.get("defendant_name", "")
@@ -1187,6 +1187,16 @@ def _generate_conclusion(extracted_data: dict, case_type: str) -> str:
     if not patient_name:
         patient_name = extracted_data.get("原告姓名1", "")
 
+    # 新生儿案件：找母亲名字，结论段提到"为产妇XX及原告XX"
+    mother_name = ""
+    if is_minor and case_type in ("injury", "neonatal"):
+        plaintiffs = extracted_data.get("plaintiffs", []) or []
+        for p in plaintiffs:
+            rel = p.get("relationship", "")
+            if rel in ("母亲", "母") or "母" in rel:
+                mother_name = p.get("name", "")
+                break
+
     if case_type == "death":
         return (
             f"综上所述，被告{defendant_name}在为患者{patient_name}提供诊疗服务过程中，"
@@ -1196,17 +1206,16 @@ def _generate_conclusion(extracted_data: dict, case_type: str) -> str:
             f"因此，为维护原告的合法权益，特根据《中华人民共和国民法典》"
             f"《中华人民共和国民事诉讼法》等有关规定将本案诉至人民法院，望贵院依法裁判。"
         )
-    elif case_type == "neonatal":
-        # 旧 neonatal 兼容：统一走 injury 路径
+    elif is_minor and mother_name:
+        # 新生儿案件：提到产妇和婴儿
         return (
-            f"综上所述，被告{defendant_name}在为患者{patient_name}提供诊疗服务过程中，"
-            f"未尽到注意及相应的诊疗义务，违反诊疗常规、疏忽大意，"
-            f"并由此造成了患者伤残的严重损害后果，"
+            f"综上所述，被告{defendant_name}在为产妇{mother_name}及原告{patient_name}提供诊疗服务的过程中，"
+            f"违反诊疗常规，疏忽大意，未尽到相应的诊疗义务，"
             f"给原告及其家庭造成了巨大的物质损害及带来了极大的精神痛苦。"
             f"因此，为维护原告的合法权益，特根据《中华人民共和国民法典》"
             f"《中华人民共和国民事诉讼法》等有关规定将本案诉至人民法院，望贵院依法裁判。"
         )
-    else:  # injury
+    else:
         return (
             f"综上所述，被告{defendant_name}在为患者{patient_name}提供诊疗服务过程中，"
             f"未尽到注意及相应的诊疗义务，违反诊疗常规、疏忽大意，"

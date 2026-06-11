@@ -709,8 +709,13 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
 
         is_patient = p_info.get("is_patient", False) or rel == "本人"
 
+        # ── 判断是否为法定代理人（基于关系关键词） ──
+        # 即使 is_patient 被误标，只要关系是父母/监护人，就应该是法定代理人
+        _guardian_keywords = {"父亲", "母亲", "父", "母", "监护人", "爷爷", "奶奶", "外公", "外婆"}
+        is_guardian = is_minor and rel and (rel in _guardian_keywords or any(kw in rel for kw in _guardian_keywords))
+
         # ── 标签选择：成年人全用"原告"，未成年人区分 ──
-        if is_minor and not is_patient and rel and rel != "本人":
+        if is_guardian or (is_minor and not is_patient and rel and rel != "本人"):
             # 未成年人的父母/法定监护人 → "法定代理人"
             label = "法定代理人："
         else:
@@ -718,7 +723,8 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
 
         # ── 关系括号 ──
         # 参考文件格式："王文雄（系原告父亲）" — 用"系原告XX"而非"系患者XX"
-        if rel and rel != "本人" and not is_patient:
+        # 法定代理人一定有关系描述，即使 is_patient 被误标
+        if rel and rel != "本人" and (not is_patient or is_guardian):
             rel_str = f"（系原告{rel}）"
         else:
             rel_str = ""
@@ -737,12 +743,11 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
             text += f"，住址：{address}"
         if id_number:
             text += f"，公民身份号码：{id_number}"
-        if phone:
-            text += f"，联系电话：{phone}"
 
-        # 律师信息（加在每位原告/法定代理人最后）
+        # 联系电话：优先使用律师电话，无律师时才用个人电话
+        # 参考文件格式："联系电话：18487301173（凡律师）、15877881929（刘律师）"
+        lawyer_parts = []
         if lawyer_info:
-            lawyer_parts = []
             for lw in lawyer_info:
                 lw_name = lw.get("name", "").strip()
                 lw_phone = lw.get("phone", "").strip()
@@ -750,8 +755,10 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
                     lawyer_parts.append(f"{lw_phone}（{lw_name}律师）")
                 elif lw_phone:
                     lawyer_parts.append(lw_phone)
-            if lawyer_parts:
-                text += "，联系电话：" + "、".join(lawyer_parts)
+        if lawyer_parts:
+            text += "，联系电话：" + "、".join(lawyer_parts)
+        elif phone:
+            text += f"，联系电话：{phone}"
 
         para = doc.add_paragraph()
         _set_body_para(para)
@@ -889,6 +896,17 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
     _set_run_font(run, BODY_FONT, BODY_SIZE)
 
     court = context.get("court_name", context.get("受理法院", "")) or ""
+    if not court:
+        # 从被告名称推断法院：提取"XX县/XX区/XX市"
+        defendant_full = context.get("defendant_name", context.get("被告医院全称", "")) or ""
+        court_match = re.search(r'([\u4e00-\u9fff]+(?:省|自治区|市|县|区|旗))', defendant_full)
+        if court_match:
+            region = court_match.group(1)
+            # 取最后一个行政区划（最精确的）
+            all_regions = re.findall(r'([\u4e00-\u9fff]+(?:县|区|市|旗))', defendant_full)
+            if all_regions:
+                region = all_regions[-1]
+            court = region
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     _set_body_para(p, indent=False)
