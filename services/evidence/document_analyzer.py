@@ -1248,9 +1248,9 @@ def _generate_conclusion(extracted_data: dict, case_type: str, is_minor: bool = 
     if not patient_name:
         patient_name = extracted_data.get("原告姓名1", "")
 
-    # 新生儿案件：找母亲名字，结论段提到"为产妇XX及原告XX"
+    # 新生儿/未成年人案件：找母亲名字，结论段提到"为产妇XX及原告XX"
     mother_name = ""
-    if is_minor and case_type in ("injury", "neonatal"):
+    if is_minor:
         plaintiffs = extracted_data.get("plaintiffs", []) or []
         # 先按 relationship 查找
         for p in plaintiffs:
@@ -1265,7 +1265,17 @@ def _generate_conclusion(extracted_data: dict, case_type: str, is_minor: bool = 
                     mother_name = p.get("name", "")
                     break
 
-    if case_type == "death":
+    if case_type == "death" and is_minor and mother_name:
+        # 未成年人死亡 + 有母亲信息：双主体（产妇+婴儿）
+        return (
+            f"综上所述，被告{defendant_name}在为产妇{mother_name}及原告{patient_name}提供诊疗服务的过程中，"
+            f"未尽到注意及相应的诊疗义务，违反诊疗常规、疏忽大意，"
+            f"并由此造成了原告死亡的严重损害后果，"
+            f"给原告家庭造成了巨大的物质损害及带来了极大的精神痛苦。"
+            f"因此，为维护原告的合法权益，特根据《中华人民共和国民法典》"
+            f"《中华人民共和国民事诉讼法》等有关规定将本案诉至人民法院，望贵院依法裁判。"
+        )
+    elif case_type == "death":
         return (
             f"综上所述，被告{defendant_name}在为患者{patient_name}提供诊疗服务过程中，"
             f"未尽到注意及相应的诊疗义务，违反诊疗常规、疏忽大意，"
@@ -1275,7 +1285,7 @@ def _generate_conclusion(extracted_data: dict, case_type: str, is_minor: bool = 
             f"《中华人民共和国民事诉讼法》等有关规定将本案诉至人民法院，望贵院依法裁判。"
         )
     elif is_minor and mother_name:
-        # 新生儿案件：提到产妇和婴儿
+        # 未成年人伤残 + 有母亲信息：双主体（产妇+婴儿）
         return (
             f"综上所述，被告{defendant_name}在为产妇{mother_name}及原告{patient_name}提供诊疗服务的过程中，"
             f"违反诊疗常规，疏忽大意，未尽到相应的诊疗义务，"

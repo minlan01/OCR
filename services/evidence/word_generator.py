@@ -863,20 +863,25 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
         amount_display = "______元"
 
     if case_type == "injury" and is_minor:
-        # 未成年人/新生儿案件：无误工费，含鉴定费、交通住宿费、残疾赔偿金
+        # 未成年人/新生儿伤残案件：无误工费，含鉴定费、交通住宿费、残疾赔偿金
         claim_items = f"医疗费、护理费、住院伙食补助费、营养费、残疾赔偿金、交通住宿费、鉴定费、精神损害抚慰金等暂计人民币{amount_display}"
         retention_clause = "因本案尚未鉴定，上述费用待鉴定后再行补充变更"
     elif case_type == "injury":
         # 成年人伤残案件
         claim_items = f"医疗费、误工费、护理费、住院伙食补助费、营养费、伤残赔偿金（包含被扶养人生活费）、后续治疗费、交通费、精神损害抚慰金等暂计人民币{amount_display}"
         retention_clause = "因本案尚未鉴定，上述赔偿费用待鉴定后再行补充变更"
-    elif case_type == "neonatal":
-        # 旧 neonatal 兼容（已合并为 injury + is_minor，此处兜底）
-        claim_items = f"医疗费、护理费、住院伙食补助费、营养费、残疾赔偿金、交通住宿费、鉴定费、精神损害抚慰金等暂计人民币{amount_display}"
-        retention_clause = "因本案尚未鉴定，上述费用待鉴定后再行补充变更"
-    else:  # death
+    elif case_type == "death" and is_minor:
+        # 未成年人死亡案件：无误工费，含鉴定费、交通住宿费、死亡赔偿金、丧葬费
+        claim_items = f"医疗费、护理费、住院伙食补助费、营养费、死亡赔偿金、丧葬费、交通住宿费、鉴定费、精神损害抚慰金等暂计人民币{amount_display}"
+        retention_clause = ""
+    elif case_type == "death":
+        # 成年人死亡案件
         claim_items = f"医疗费、误工费、护理费、住院伙食补助费、营养费、死亡赔偿金（包含被扶养人生活费）、丧葬费、交通费、精神损害抚慰金等暂计人民币{amount_display}"
         retention_clause = ""
+    else:
+        # 兜底（neonatal 等）
+        claim_items = f"医疗费、护理费、住院伙食补助费、营养费、残疾赔偿金、交通住宿费、鉴定费、精神损害抚慰金等暂计人民币{amount_display}"
+        retention_clause = "因本案尚未鉴定，上述费用待鉴定后再行补充变更"
 
     # 诉讼请求第一条：无序号前缀，参考律师模板格式
     p = doc.add_paragraph()
