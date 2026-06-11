@@ -603,14 +603,22 @@ def _extract_receipt_tail(filename: str) -> str:
     return ""
 
 
-def generate_compensation_calculation_excel(compensation_data: dict) -> bytes:
-    """生成赔偿费用清单 Excel（基于赔偿计算引擎数据）
+def generate_compensation_calculation_excel(compensation_data: dict, case_name: str = "",
+                                              plaintiff_name: str = "", case_type: str = "injury") -> bytes:
+    """生成赔偿费用清单 Excel（标准法律文书格式，参照手工模板）
+
+    格式与手工填写的赔偿费用清单一致：
+    - 标题行：赔偿费用清单
+    - 表头：序号 | 项目 | 计算依据 | 金额（元）
+    - 各项赔偿费用（含子行计算依据说明）
+    - 合计/小计
+    - 备注行
 
     Args:
         compensation_data: calculate_all() 返回的赔偿计算结果字典
-
-    Returns:
-        Excel 文件 bytes
+        case_name: 案件名称
+        plaintiff_name: 原告姓名
+        case_type: 案件类型 injury/death
     """
     wb = Workbook()
     ws = wb.active
@@ -621,6 +629,7 @@ def generate_compensation_calculation_excel(compensation_data: dict) -> bytes:
     header_font = Font(name='宋体', size=11, bold=True)
     cell_font = Font(name='宋体', size=11)
     money_fmt = '#,##0.00'
+    bold_font = Font(name='宋体', size=11, bold=True)
 
     thin_border = Border(
         left=Side(style='thin'),
@@ -628,78 +637,145 @@ def generate_compensation_calculation_excel(compensation_data: dict) -> bytes:
         top=Side(style='thin'),
         bottom=Side(style='thin'),
     )
-    header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
-    header_font_white = Font(name='宋体', size=11, bold=True, color='FFFFFF')
 
-    # 标题
-    ws.merge_cells('A1:F1')
+    # 列宽（4列：序号、项目、计算依据、金额）
+    col_widths = [8, 20, 55, 18]
+    for i, w in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # ── 标题行 ──
+    ws.merge_cells('A1:D1')
     ws['A1'] = '赔偿费用清单'
     ws['A1'].font = title_font
     ws['A1'].alignment = Alignment(horizontal='center')
 
-    # 表头
-    headers = ['序号', '赔偿项目', '金额(元)', '计算依据', '来源素材', '是否手动调整']
-    col_widths = [8, 20, 15, 35, 25, 15]
-
-    for col, (header, width) in enumerate(zip(headers, col_widths), 1):
-        cell = ws.cell(row=3, column=col, value=header)
-        cell.font = header_font_white
-        cell.fill = header_fill
+    # ── 表头（行2）──
+    headers = ['序号', '项目', '计算依据', '金额（元）']
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=2, column=col, value=header)
+        cell.font = header_font
         cell.border = thin_border
         cell.alignment = Alignment(horizontal='center')
-        ws.column_dimensions[get_column_letter(col)].width = width
 
-    # 数据行
     items = compensation_data.get('items', [])
-    for i, item in enumerate(items):
-        row = i + 4
-        amount = item.get('manual_amount') or item.get('amount', 0)
-        is_manual = '是' if item.get('manual_amount') is not None else '否'
-        sources = '、'.join(s.get('filename', '') for s in item.get('sources', []))
-
-        ws.cell(row=row, column=1, value=i+1).border = thin_border
-        ws.cell(row=row, column=2, value=item.get('fee_name', '')).border = thin_border
-        cell_amount = ws.cell(row=row, column=3, value=float(str(amount)))
-        cell_amount.number_format = money_fmt
-        cell_amount.border = thin_border
-        ws.cell(row=row, column=4, value=item.get('calculation_basis', '')).border = thin_border
-        ws.cell(row=row, column=5, value=sources).border = thin_border
-        ws.cell(row=row, column=6, value=is_manual).border = thin_border
-
-    # 合计行
-    total_row = len(items) + 4
-    ws.merge_cells(f'A{total_row}:B{total_row}')
-    ws.cell(row=total_row, column=1, value='合计').font = Font(name='宋体', size=11, bold=True)
-    ws.cell(row=total_row, column=1).border = thin_border
-    ws.cell(row=total_row, column=2).border = thin_border
-    total_amount = float(str(compensation_data.get('total_amount', 0)))
-    cell_total = ws.cell(row=total_row, column=3, value=total_amount)
-    cell_total.number_format = money_fmt
-    cell_total.font = Font(name='宋体', size=11, bold=True)
-    cell_total.border = thin_border
-    for col in range(4, 7):
-        ws.cell(row=total_row, column=col).border = thin_border
-
-    # 参数区域
-    param_row = total_row + 2
-    ws.cell(row=param_row, column=1, value='计算参数').font = Font(name='宋体', size=11, bold=True)
     params = compensation_data.get('params', {})
-    param_labels = {
-        'annual_income': '上年度人均可支配收入(元/年)',
-        'annual_consumption': '上年度人均消费支出(元/年)',
-        'monthly_salary': '上年度职工月均工资(元/月)',
-        'daily_food_subsidy': '住院伙食补助日标准(元/天)',
-        'daily_nutrition': '营养费日标准(元/天)',
-        'compensation_years': '赔偿年限(年)',
-        'disability_coefficient': '伤残系数',
-        'hospital_days': '住院天数',
-    }
-    for j, (key, label) in enumerate(param_labels.items()):
-        r = param_row + 1 + j
-        ws.cell(row=r, column=1, value=label).font = cell_font
-        val = params.get(key, '-')
-        ws.cell(row=r, column=3, value=str(val)).font = cell_font
+    row_idx = 3
+    seq = 1
+
+    for item in items:
+        fee_type = item.get('fee_type', '')
+        fee_name = item.get('fee_name', '')
+        amount = item.get('manual_amount') or item.get('amount', 0)
+        basis = item.get('calculation_basis', '')
+        try:
+            amount = float(str(amount))
+        except (ValueError, TypeError):
+            amount = 0.0
+
+        # 序号
+        ws.cell(row=row_idx, column=1, value=seq).font = cell_font
+        ws.cell(row=row_idx, column=1).border = thin_border
+        ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal='center')
+
+        # 项目名称
+        ws.cell(row=row_idx, column=2, value=fee_name).font = cell_font
+        ws.cell(row=row_idx, column=2).border = thin_border
+
+        # 计算依据
+        ws.cell(row=row_idx, column=3, value=basis).font = cell_font
+        ws.cell(row=row_idx, column=3).border = thin_border
+
+        # 金额
+        cell_amount = ws.cell(row=row_idx, column=4, value=amount)
+        cell_amount.number_format = money_fmt
+        cell_amount.font = cell_font
+        cell_amount.border = thin_border
+        cell_amount.alignment = Alignment(horizontal='center')
+
+        row_idx += 1
+        seq += 1
+
+        # 部分项目需要增加子行说明计算依据（参照手工模板中护理费的写法）
+        sub_row = _get_calculation_detail(fee_type, params, plaintiff_name)
+        if sub_row:
+            ws.cell(row=row_idx, column=3, value=sub_row).font = cell_font
+            ws.cell(row=row_idx, column=3).border = thin_border
+            ws.cell(row=row_idx, column=1).border = thin_border
+            ws.cell(row=row_idx, column=2).border = thin_border
+            ws.cell(row=row_idx, column=4).border = thin_border
+            row_idx += 1
+
+    # ── 合计行 ──
+    total_amount = float(str(compensation_data.get('total_amount', 0)))
+    ws.cell(row=row_idx, column=2, value='合计').font = bold_font
+    ws.cell(row=row_idx, column=2).border = thin_border
+    ws.cell(row=row_idx, column=2).alignment = Alignment(horizontal='center')
+    ws.cell(row=row_idx, column=1).border = thin_border
+    ws.cell(row=row_idx, column=3).border = thin_border
+    cell_total = ws.cell(row=row_idx, column=4, value=total_amount)
+    cell_total.number_format = money_fmt
+    cell_total.font = bold_font
+    cell_total.border = thin_border
+    cell_total.alignment = Alignment(horizontal='center')
+    row_idx += 1
+
+    # ── 备注行 ──
+    if case_type == "injury":
+        note = "备注：因本案尚未鉴定，故上述各项赔偿费用及残疾赔偿金等费用待鉴定后再行补充变更。"
+    else:
+        note = "备注：因本案尚未鉴定，故上述各项赔偿费用及鉴定费等，待鉴定后再行补充变更。"
+    ws.merge_cells(f'A{row_idx}:D{row_idx}')
+    ws.cell(row=row_idx, column=1, value=note).font = cell_font
+
+    # ── 打印设置 ──
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
 
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
+
+
+def _get_calculation_detail(fee_type: str, params: dict, plaintiff_name: str = "") -> str:
+    """生成子行的详细计算依据说明（参照手工模板格式）
+
+    仅对部分需要详细说明的项目生成子行，其他返回空字符串。
+    """
+    try:
+        hospital_days = int(float(params.get('hospital_days', 0)))
+        annual_income = float(params.get('annual_income', 49283))
+        monthly_salary = float(params.get('monthly_salary', 8500))
+        daily_food = float(params.get('daily_food_subsidy', 100))
+        daily_nutrition = float(params.get('daily_nutrition', 50))
+        compensation_years = int(float(params.get('compensation_years', 20)))
+        disability_coeff = float(params.get('disability_coefficient', 1.0))
+        lost_wage_days = int(float(params.get('lost_wage_days', 0)))
+    except (ValueError, TypeError):
+        return ""
+
+    name = plaintiff_name or "原告"
+
+    if fee_type == 'lost_wages' and hospital_days > 0:
+        daily = annual_income / 365
+        return f"{name}共住院治疗{hospital_days}天，其误工费按上一年度城镇居民人均可支配收入{annual_income:.0f}元/年计算：{annual_income:.0f}元/年÷365天×{hospital_days}天"
+
+    if fee_type == 'nursing_fee' and hospital_days > 0:
+        daily = monthly_salary / 30
+        return f"{name}共住院治疗{hospital_days}天，其护理费按上一年度职工月平均工资{monthly_salary:.0f}元/月计算：{monthly_salary:.0f}元/月÷30天×{hospital_days}天"
+
+    if fee_type == 'food_subsidy' and hospital_days > 0:
+        return f"{name}共住院治疗{hospital_days}天，按{daily_food:.0f}元/天计算：{daily_food:.0f}元/天×{hospital_days}天"
+
+    if fee_type == 'nutrition_fee' and hospital_days > 0:
+        return f"{name}共住院治疗{hospital_days}天，按{daily_nutrition:.0f}元/天计算：{daily_nutrition:.0f}元/天×{hospital_days}天"
+
+    if fee_type == 'disability_compensation':
+        return f"按上一年度城镇居民人均可支配收入{annual_income:.0f}元/年×{compensation_years}年×伤残系数{disability_coeff}"
+
+    if fee_type == 'death_compensation':
+        return f"按上一年度城镇居民人均可支配收入{annual_income:.0f}元/年×{compensation_years}年"
+
+    if fee_type == 'funeral_fee':
+        return f"按上一年度城镇非私营单位在岗职工月平均工资{monthly_salary:.0f}元/月，以六个月总额计算：{monthly_salary:.0f}元/月×6月"
+
+    return ""
