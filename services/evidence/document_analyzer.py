@@ -187,6 +187,9 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
                     
                     # ── 关系推断优先级 ──
                     
+                    # 保存 LLM 原始 relationship（被后续覆盖时可恢复）
+                    original_rel = p.get("relationship", "")
+                    
                     # 1. 文件名标注（最高优先级）
                     if filename_rels and p_name in filename_rels:
                         file_rel = filename_rels[p_name]
@@ -197,7 +200,7 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
                             )
                             p["relationship"] = file_rel
                     
-                    # 2. 患者姓名交叉比对
+                    # 2. 患者姓名交叉比对（暂时覆盖 relationship，后续去重步骤可能回退）
                     if patient_names and p_name in patient_names:
                         if p.get("relationship") != "本人":
                             logger.info(
@@ -213,6 +216,9 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
                     elif p.get("is_patient") is None:
                         p["is_patient"] = False
                     
+                    # 保存原始关系（用于后续去重恢复）
+                    p["_original_relationship"] = original_rel
+                    
                     valid_plaintiffs.append(p)
 
                 if len(valid_plaintiffs) < len(plaintiffs):
@@ -221,6 +227,61 @@ def analyze_catalog(case_id: str) -> dict[str, Any]:
                         f"（过滤了 {len(plaintiffs) - len(valid_plaintiffs)} 个无身份证素材的原告）"
                     )
                 
+                # ── 未成年人案件：修正多人 is_patient=true 误标 ──
+                # 新生儿/未成年人案件中，产妇名字也出现在病历"患者"位置，
+                # 导致多个原告被误标为 is_patient=true。
+                # 修正规则：is_minor 时只有最年轻的原告才是患者
+                if case.is_minor and sum(1 for p in valid_plaintiffs if p.get("is_patient")) > 1:
+                    # 解析出生日期，找到最年轻的（真正的患者）
+                    def _parse_birth_year(p: dict) -> int:
+                        bd = p.get("birth_date", "")
+                        m = re.search(r'(\d{4})', bd)
+                        return int(m.group(1)) if m else 0
+
+                    # 按出生年份排序，最年轻的排第一
+                    sorted_p = sorted(valid_plaintiffs, key=_parse_birth_year, reverse=True)
+                    youngest = sorted_p[0]
+                    patient_surname = (youngest.get("name") or "")[0] if youngest.get("name") else ""
+
+                    for p in valid_plaintiffs:
+                        orig_rel = p.pop("_original_relationship", "")
+                        if p is youngest:
+                            # 最年轻的是患者
+                            if not p.get("is_patient") or p.get("relationship") != "本人":
+                                logger.info(
+                                    f"未成年人患者修正：{p.get('name', '?')} → "
+                                    f"确认为患者（最年轻原告）"
+                                )
+                            p["is_patient"] = True
+                            p["relationship"] = "本人"
+                        else:
+                            # 其他人不是患者
+                            # 恢复原始关系（如果不是"本人"）
+                            final_rel = orig_rel if orig_rel and orig_rel != "本人" else ""
+                            
+                            # 如果关系仍为空，尝试根据性别+同姓推断
+                            if not final_rel:
+                                p_gender = p.get("gender", "")
+                                p_surname = (p.get("name") or "")[0]
+                                if p_surname == patient_surname:
+                                    # 同姓 → 父系（可能是父亲）
+                                    final_rel = "父亲" if "男" in p_gender else "母亲"
+                                else:
+                                    # 不同姓 → 母系（可能是母亲）
+                                    final_rel = "母亲" if "女" in p_gender else "父亲"
+                            
+                            logger.info(
+                                f"未成年人患者修正：{p.get('name', '?')} → "
+                                f"is_patient=True → False（非最年轻原告），"
+                                f"关系推断={final_rel}"
+                            )
+                            p["is_patient"] = False
+                            p["relationship"] = final_rel
+                else:
+                    # 清理临时字段
+                    for p in valid_plaintiffs:
+                        p.pop("_original_relationship", None)
+
                 # 日志输出关系推断结果
                 for p in valid_plaintiffs:
                     logger.info(
@@ -1191,11 +1252,18 @@ def _generate_conclusion(extracted_data: dict, case_type: str, is_minor: bool = 
     mother_name = ""
     if is_minor and case_type in ("injury", "neonatal"):
         plaintiffs = extracted_data.get("plaintiffs", []) or []
+        # 先按 relationship 查找
         for p in plaintiffs:
             rel = p.get("relationship", "")
             if rel in ("母亲", "母") or "母" in rel:
                 mother_name = p.get("name", "")
                 break
+        # 如果找不到，通过性别推断（非患者的女性原告）
+        if not mother_name and plaintiffs:
+            for p in plaintiffs:
+                if not p.get("is_patient", False) and "女" in p.get("gender", ""):
+                    mother_name = p.get("name", "")
+                    break
 
     if case_type == "death":
         return (

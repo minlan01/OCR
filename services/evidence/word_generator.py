@@ -697,6 +697,35 @@ def _build_complaint_docx(catalog_data: dict, analysis_result: dict, lawyer_info
     is_minor = context.get("is_minor", False)
 
     plaintiffs = _get_plaintiffs(context, catalog_data)
+
+    # ── 未成年人案件：修复多人 is_patient=true 的误标 ──
+    # 如果多个原告都被标为 is_patient=true/is_patient 缺失且 relationship="本人"，
+    # 只有最年轻的才是真正的患者，其他人需要推断关系
+    if is_minor:
+        patient_count = sum(1 for p in plaintiffs if p.get("is_patient", False) or p.get("relationship") == "本人")
+        if patient_count > 1:
+            import re as _re_local
+            def _birth_year(p):
+                m = _re_local.search(r'(\d{4})', p.get("birth_date", ""))
+                return int(m.group(1)) if m else 0
+            sorted_ps = sorted(plaintiffs, key=_birth_year, reverse=True)
+            youngest = sorted_ps[0]
+            patient_surname = (youngest.get("name") or "")[0] if youngest.get("name") else ""
+            for p in plaintiffs:
+                if p is youngest:
+                    p["is_patient"] = True
+                    p["relationship"] = "本人"
+                else:
+                    p["is_patient"] = False
+                    rel = p.get("relationship", "")
+                    if not rel or rel == "本人":
+                        gender = p.get("gender", "")
+                        p_surname = (p.get("name") or "")[0]
+                        if p_surname == patient_surname:
+                            p["relationship"] = "母亲" if "女" in gender else "父亲"
+                        else:
+                            p["relationship"] = "父亲" if "男" in gender else "母亲"
+
     for i, p_info in enumerate(plaintiffs):
         name = p_info.get("name") or ""
         rel = p_info.get("relationship") or ""
