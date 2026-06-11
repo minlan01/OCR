@@ -177,11 +177,13 @@ export const useComplaintStore = defineStore('complaint', () => {
     await api.put(`/complaint/cases/${caseId}/results`, { slots })
   }
 
-  async function generateDoc(caseId: string) {
+  async function generateDoc(caseId: string, manualTotalFee?: number) {
     generating.value = true
     try {
+      const body = manualTotalFee != null ? { manual_total_fee: manualTotalFee } : undefined
       const res = await api.post<{ case_id: string; message: string; status: string }>(
-        `/complaint/cases/${caseId}/generate`
+        `/complaint/cases/${caseId}/generate`,
+        body
       )
       return res
     } finally {

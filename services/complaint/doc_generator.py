@@ -100,6 +100,7 @@ def generate_complaint(
     case_type: str,
     is_minor: bool,
     slot_data: dict[str, dict],
+    manual_total_fee: float | None = None,
 ) -> bytes:
     template_key = get_template_key(case_type, is_minor)
     template = get_template(template_key)
@@ -121,7 +122,7 @@ def generate_complaint(
                 "text": text,
             })
 
-    doc_bytes = _build_docx(case_type, is_minor, slot_data, sections_text)
+    doc_bytes = _build_docx(case_type, is_minor, slot_data, sections_text, manual_total_fee=manual_total_fee)
     return doc_bytes
 
 
@@ -130,6 +131,7 @@ def _build_docx(
     is_minor: bool,
     slot_data: dict[str, dict],
     sections: list[dict[str, str]],
+    manual_total_fee: float | None = None,
 ) -> bytes:
     from docx import Document
     from docx.shared import Pt, Cm
@@ -243,7 +245,22 @@ def _build_docx(
             _set_run_font(run, BODY_FONT, BODY_SIZE)
 
     fee_data = slot_data.get("fee", {})
-    if fee_data and fee_data.get("items"):
+    if manual_total_fee is not None and manual_total_fee > 0:
+        # 手动输入费用总额，覆盖 fee_data 计算
+        fee_lines = ["赔偿请求："]
+        if fee_data and fee_data.get("items"):
+            for item in fee_data["items"]:
+                name = item.get("name", "")
+                amount = item.get("amount", 0)
+                if name:
+                    fee_lines.append(f"  {name}：{amount:,.2f}元" if isinstance(amount, (int, float)) else f"  {name}：{amount}")
+        fee_lines.append(f"  合计：{manual_total_fee:,.2f}元")
+
+        p = doc.add_paragraph("\n".join(fee_lines))
+        _set_body_para(p)
+        for run in p.runs:
+            _set_run_font(run, BODY_FONT, BODY_SIZE)
+    elif fee_data and fee_data.get("items"):
         fee_lines = ["赔偿请求："]
         for item in fee_data["items"]:
             name = item.get("name", "")

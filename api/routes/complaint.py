@@ -7,10 +7,10 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from loguru import logger
 from sqlalchemy import select
@@ -20,6 +20,7 @@ from api.schemas.complaint import (
     CaseListResponse,
     CaseResponse,
     CreateCaseRequest,
+    GenerateRequest,
     GenerateResponse,
     ResultsResponse,
     SlotResultItem,
@@ -333,6 +334,7 @@ async def update_results(
 async def generate_complaint(
     request: Request,
     case_id: uuid.UUID,
+    body: GenerateRequest = Body(default=GenerateRequest()),
     db: AsyncSession = Depends(get_db),
 ):
     if generate_complaint_doc is None:
@@ -350,7 +352,10 @@ async def generate_complaint(
         raise HTTPException(status_code=400, detail=f"Cannot generate for case with status: {case.status}")
 
     try:
-        generate_complaint_doc.delay(str(case_id))
+        task_kwargs: dict[str, Any] = {"case_id": str(case_id)}
+        if body.manual_total_fee is not None:
+            task_kwargs["manual_total_fee"] = body.manual_total_fee
+        generate_complaint_doc.delay(**task_kwargs)
     except Exception as e:
         logger.error(f"Failed to dispatch generate task for case {case_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to dispatch generate task")

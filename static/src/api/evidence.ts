@@ -420,6 +420,7 @@ export interface CompensationItemUpdate {
 export interface CompensationUpdateRequest {
   items: CompensationItemUpdate[]
   params?: CompensationParamsUpdate
+  manual_total?: number | null
 }
 
 /** 自动计算赔偿 */

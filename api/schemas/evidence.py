@@ -300,3 +300,4 @@ class CompensationUpdateRequest(BaseModel):
     """赔偿数据批量更新请求"""
     items: List[CompensationItemUpdate]
     params: Optional[CompensationParamsUpdate] = None
+    manual_total: Optional[Decimal] = None

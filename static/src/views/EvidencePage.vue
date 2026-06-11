@@ -462,7 +462,7 @@
       <n-divider />
       <n-space justify="space-between">
         <n-button @click="navigateToStep(STEP.UPLOAD)">返回</n-button>
-        <n-button type="primary" @click="navigateToStep(STEP.CATALOG)">下一步：证据目录</n-button>
+        <n-button type="primary" @click="handleNextToCatalog">下一步：证据目录</n-button>
       </n-space>
     </n-card>
 
@@ -612,8 +612,27 @@
 
           <n-descriptions bordered :column="2" label-placement="left" style="margin-top: 16px" size="small">
             <n-descriptions-item label="费用总计">
-              <template v-if="catalogTotalAmount > 0">¥{{ catalogTotalAmount.toFixed(2) }}</template>
-              <template v-else>——（暂无）</template>
+              <n-space align="center" :size="4">
+                <template v-if="editingCatalogTotal">
+                  <n-input-number
+                    v-model:value="editCatalogTotalAmount"
+                    size="small"
+                    :min="0"
+                    :precision="2"
+                    style="width: 160px"
+                    @keyup.enter="saveCatalogTotalEdit"
+                  />
+                  <n-button size="tiny" type="primary" @click="saveCatalogTotalEdit">保存</n-button>
+                  <n-button size="tiny" @click="cancelEditCatalogTotal">取消</n-button>
+                </template>
+                <template v-else>
+                  <span v-if="catalogTotalAmount > 0">¥{{ catalogTotalAmount.toFixed(2) }}</span>
+                  <span v-else>——（暂无）</span>
+                  <n-button size="tiny" quaternary @click="startEditCatalogTotal">
+                    <template #icon><n-icon size="14"><CreateOutline /></n-icon></template>
+                  </n-button>
+                </template>
+              </n-space>
             </n-descriptions-item>
             <n-descriptions-item label="材料总数">{{ totalMaterialCount }} 份</n-descriptions-item>
           </n-descriptions>
@@ -938,6 +957,23 @@
         </template>
       </n-drawer-content>
     </n-drawer>
+
+    <!-- 金额核算提示弹窗 -->
+    <n-modal
+      v-model:show="showAmountCheckDialog"
+      preset="dialog"
+      title="金额核算提示"
+      positive-text="已核算，继续"
+      negative-text="取消"
+      @positive-click="confirmAmountCheck"
+    >
+      <n-space vertical>
+        <n-text>请仔细核算赔偿金额数目，确认各项费用准确无误后再继续。</n-text>
+        <n-text v-if="compensationTotal > 0" depth="3">
+          当前赔偿合计：¥{{ compensationTotal.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+        </n-text>
+      </n-space>
+    </n-modal>
     </template><!-- end 案件内工作区 -->
   </div>
 </template>
@@ -1098,6 +1134,11 @@ const caseListLoading = ref(false)
 // 编辑弹窗
 const showEditModal = ref(false)
 const editForm = ref({ id: '', case_name: '', case_type: 'injury' as 'injury' | 'death', is_minor: false })
+
+// 金额核算提示弹窗
+const showAmountCheckDialog = ref(false)
+const editingCatalogTotal = ref(false)
+const editCatalogTotalAmount = ref<number | null>(null)
 // 多页文档预览
 const showPageDrawer = ref(false)
 const pagePreviewLoading = ref(false)
@@ -1990,6 +2031,49 @@ async function handleRecalculate() {
   } finally {
     calculatingCompensation.value = false
   }
+}
+
+/** 点击"下一步：证据目录" — 先弹窗提示核算金额 */
+function handleNextToCatalog() {
+  showAmountCheckDialog.value = true
+}
+
+/** 确认核算金额后继续 */
+function confirmAmountCheck() {
+  showAmountCheckDialog.value = false
+  navigateToStep(STEP.CATALOG)
+}
+
+/** 开始编辑费用总计 */
+function startEditCatalogTotal() {
+  editCatalogTotalAmount.value = catalogTotalAmount.value
+  editingCatalogTotal.value = true
+}
+
+/** 保存费用总计手动修改 */
+async function saveCatalogTotalEdit() {
+  editingCatalogTotal.value = false
+  if (!currentCase.value || editCatalogTotalAmount.value == null) return
+
+  const newValue = editCatalogTotalAmount.value
+  catalogTotalAmount.value = newValue
+
+  // 保存到后端
+  try {
+    await evidenceApi.updateCompensation(currentCase.value.id, {
+      items: [],
+      manual_total: newValue,
+    })
+    message.success('费用总计已更新')
+  } catch (e: any) {
+    message.error('保存失败: ' + (e.message || '未知错误'))
+  }
+}
+
+/** 取消编辑费用总计 */
+function cancelEditCatalogTotal() {
+  editingCatalogTotal.value = false
+  editCatalogTotalAmount.value = null
 }
 
 /** 将后端返回的 params 中的字符串值转为数字（n-input-number 需要 number 类型） */

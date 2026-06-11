@@ -1948,12 +1948,16 @@ async def update_compensation(
                 params[k] = str(v) if isinstance(v, Decimal) else v
         data["params"] = params
 
-    # 重算合计
-    total = Decimal("0")
-    for item in items:
-        amt = item.get("manual_amount") or item.get("amount", "0")
-        total += Decimal(str(amt))
-    data["total_amount"] = str(total)
+    # 重算合计（如有手动设置的总计则优先使用）
+    if req.manual_total is not None:
+        data["total_amount"] = str(req.manual_total)
+        data["manual_total"] = str(req.manual_total)
+    else:
+        total = Decimal("0")
+        for item in items:
+            amt = item.get("manual_amount") or item.get("amount", "0")
+            total += Decimal(str(amt))
+        data["total_amount"] = str(total)
 
     case.compensation_data = data
     await db.commit()

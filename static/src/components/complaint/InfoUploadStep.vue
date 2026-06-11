@@ -3,6 +3,15 @@
     <n-space vertical :size="16">
       <n-text depth="3">请上传以下材料，所有项目可按任意顺序上传</n-text>
 
+      <!-- 费用材料缺失提示弹窗 -->
+      <n-modal v-model:show="showFeeWarning" preset="dialog" title="费用材料提示" :mask-closable="false">
+        <n-text>费用详情置信度低，请核实相关发票内容。建议上传费用发票材料以获得准确的赔偿金额计算。</n-text>
+        <template #action>
+          <n-button @click="showFeeWarning = false">取消</n-button>
+          <n-button type="primary" @click="confirmStartOcr">继续</n-button>
+        </template>
+      </n-modal>
+
       <n-card size="small" embedded>
         <template #header>
           <n-text strong>原告信息（必选）</n-text>
@@ -128,7 +137,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import {
-  NCard, NSpace, NText, NButton, NUpload, NInput,
+  NCard, NSpace, NText, NButton, NUpload, NInput, NModal,
 } from 'naive-ui'
 import { useComplaintStore } from '@/stores/complaint'
 import type { SlotName } from '@/stores/complaint'
@@ -137,6 +146,7 @@ import UploadStatusTag from './UploadStatusTag.vue'
 
 const store = useComplaintStore()
 const startingOcr = ref(false)
+const showFeeWarning = ref(false)
 const manualInputs = ref<Record<string, string>>({
   guardian: '',
   defendant: '',
@@ -179,6 +189,17 @@ async function submitManual(slot: SlotName) {
 }
 
 async function handleStartOcr() {
+  if (!store.currentCase) return
+  // 始终弹窗提示用户核实费用材料
+  showFeeWarning.value = true
+}
+
+async function confirmStartOcr() {
+  showFeeWarning.value = false
+  await _executeOcr()
+}
+
+async function _executeOcr() {
   if (!store.currentCase) return
   startingOcr.value = true
   try {

@@ -31,8 +31,8 @@ def process_complaint_ocr(self, case_id: str):
 
 
 @celery_app.task(bind=True, name="generate_complaint_doc", max_retries=2)
-def generate_complaint_doc(self, case_id: str):
-    logger.info(f"Complaint doc generation started: case_id={case_id}")
+def generate_complaint_doc(self, case_id: str, manual_total_fee: float | None = None):
+    logger.info(f"Complaint doc generation started: case_id={case_id} manual_total_fee={manual_total_fee}")
 
     try:
         uuid.UUID(case_id)
@@ -40,7 +40,7 @@ def generate_complaint_doc(self, case_id: str):
         return {"case_id": case_id, "status": "failed", "error": "Invalid case_id format"}
 
     try:
-        result = _run_generate_pipeline(case_id)
+        result = _run_generate_pipeline(case_id, manual_total_fee=manual_total_fee)
         return {"case_id": case_id, "status": result.get("status", "completed"), "summary": result}
     except Exception as e:
         logger.error(f"Complaint generate fatal error: case_id={case_id} | {e}")
@@ -192,7 +192,7 @@ async def _process_single_upload(upload_id: str) -> dict:
             return {"success": False, "slot": slot, "error": str(e)}
 
 
-def _run_generate_pipeline(case_id: str) -> dict:
+def _run_generate_pipeline(case_id: str, manual_total_fee: float | None = None) -> dict:
     from db.models import ComplaintCase, ComplaintStep, ComplaintUpload
     from db.session import async_session_factory
     from services.complaint.doc_generator import generate_complaint
@@ -231,11 +231,14 @@ def _run_generate_pipeline(case_id: str) -> dict:
                     slot_data[u.slot] = data
 
             try:
-                doc_bytes = generate_complaint(
-                    case_type=case.case_type,
-                    is_minor=case.is_minor,
-                    slot_data=slot_data,
-                )
+                gen_kwargs: dict = {
+                    "case_type": case.case_type,
+                    "is_minor": case.is_minor,
+                    "slot_data": slot_data,
+                }
+                if manual_total_fee is not None:
+                    gen_kwargs["manual_total_fee"] = manual_total_fee
+                doc_bytes = generate_complaint(**gen_kwargs)
 
                 doc_key = f"complaint/{case_id}/民事起诉状_{case.case_type}.docx"
                 minio_client.upload_bytes(

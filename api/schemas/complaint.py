@@ -90,6 +90,10 @@ class GenerateResponse(BaseModel):
     status: str
 
 
+class GenerateRequest(BaseModel):
+    manual_total_fee: Optional[float] = Field(default=None, description="手动输入费用总计（元）")
+
+
 class CaseListResponse(BaseModel):
     items: list[CaseResponse]
     total: int
