@@ -233,6 +233,7 @@ class CompensationParamsUpdate(BaseModel):
     annual_income: Optional[Decimal] = None       # 上年度城镇居民人均可支配收入
     annual_consumption: Optional[Decimal] = None   # 上年度城镇居民人均消费支出
     monthly_salary: Optional[Decimal] = None       # 上年度职工月均工资
+    nursing_monthly_salary: Optional[Decimal] = None  # 护理费平均工资(元/月)
     daily_food_subsidy: Optional[Decimal] = None   # 住院伙食补助日标准
     daily_nutrition: Optional[Decimal] = None      # 营养费日标准
     compensation_years: Optional[int] = None       # 赔偿年限
@@ -266,6 +267,7 @@ class CompensationParamsResponse(BaseModel):
     annual_income: Decimal
     annual_consumption: Decimal
     monthly_salary: Decimal
+    nursing_monthly_salary: Decimal
     daily_food_subsidy: Decimal
     daily_nutrition: Decimal
     compensation_years: int

@@ -376,6 +376,7 @@ export interface CompensationParamsResponse {
   annual_income: number
   annual_consumption: number
   monthly_salary: number
+  nursing_monthly_salary: number
   daily_food_subsidy: number
   daily_nutrition: number
   compensation_years: number
@@ -400,6 +401,7 @@ export interface CompensationParamsUpdate {
   annual_income?: number
   annual_consumption?: number
   monthly_salary?: number
+  nursing_monthly_salary?: number
   daily_food_subsidy?: number
   daily_nutrition?: number
   compensation_years?: number

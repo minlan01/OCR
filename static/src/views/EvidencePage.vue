@@ -405,18 +405,13 @@
       <n-card v-if="compensationData" title="参数配置" size="small" style="margin-bottom: 16px">
         <n-grid :cols="3" :x-gap="12" :y-gap="8">
           <n-gi>
-            <n-form-item label="上年度人均可支配收入(元/年)" label-placement="top">
-              <n-input-number v-model:value="compParams.annual_income" size="small" :min="0" style="width:100%" />
-            </n-form-item>
-          </n-gi>
-          <n-gi>
-            <n-form-item label="上年度人均消费支出(元/年)" label-placement="top">
-              <n-input-number v-model:value="compParams.annual_consumption" size="small" :min="0" style="width:100%" />
-            </n-form-item>
-          </n-gi>
-          <n-gi>
             <n-form-item label="上年度职工月均工资(元/月)" label-placement="top">
               <n-input-number v-model:value="compParams.monthly_salary" size="small" :min="0" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="护理费平均工资(元/月)" label-placement="top">
+              <n-input-number v-model:value="compParams.nursing_monthly_salary" size="small" :min="0" style="width:100%" />
             </n-form-item>
           </n-gi>
           <n-gi>
@@ -431,12 +426,12 @@
           </n-gi>
           <n-gi>
             <n-form-item label="赔偿年限(年)" label-placement="top">
-              <n-input-number v-model:value="compParams.compensation_years" size="small" :min="1" :max="30" style="width:100%" />
+              <n-input-number v-model:value="compParams.compensation_years" size="small" :min="0" :max="30" style="width:100%" />
             </n-form-item>
           </n-gi>
           <n-gi>
             <n-form-item label="伤残系数" label-placement="top">
-              <n-input-number v-model:value="compParams.disability_coefficient" size="small" :min="0.1" :max="1" :step="0.01" style="width:100%" />
+              <n-input-number v-model:value="compParams.disability_coefficient" size="small" :min="0" :max="1" :step="0.01" style="width:100%" />
             </n-form-item>
           </n-gi>
           <n-gi>
@@ -2093,6 +2088,10 @@ async function loadCompensation() {
       compensationData.value = res.compensation_data
       if (res.compensation_data.params) {
         const parsed = parseNumericParams(res.compensation_data.params)
+        // 向后兼容：旧 case 数据中可能没有 nursing_monthly_salary，回退到 monthly_salary 或默认值
+        if (parsed.nursing_monthly_salary === undefined || parsed.nursing_monthly_salary === null) {
+          parsed.nursing_monthly_salary = parsed.monthly_salary ?? 8500
+        }
         Object.keys(compParams).forEach(k => delete compParams[k])
         Object.assign(compParams, parsed)
       }
