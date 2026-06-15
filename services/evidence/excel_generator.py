@@ -610,8 +610,9 @@ def generate_compensation_calculation_excel(compensation_data: dict | None, case
     格式与手工填写的赔偿费用清单一致：
     - 标题行：赔偿费用清单
     - 表头：序号 | 项目 | 计算依据 | 金额（元）
-    - 各项赔偿费用（含子行计算依据说明）
-    - 合计/小计
+    - 各项赔偿费用（金额为 0 的项目跳过，不输出空行）
+    - 护理费子行：上方金额行含用品发票小计，下方子行写住院天数计算过程
+    - 合计行：用 SUM 公式（对金额列所有数据行求和）
     - 备注行
 
     当 compensation_data 为空或没有 items 时，按案件类型生成模板：
@@ -667,9 +668,11 @@ def generate_compensation_calculation_excel(compensation_data: dict | None, case
 
     row_idx = 3
     seq = 1
+    # 记录金额列的数据行号，用于合计 SUM 公式
+    amount_rows: list[int] = []
 
     if has_data:
-        # ── 有计算数据：正常输出各项 ──
+        # ── 有计算数据：只输出金额 > 0 或 manual_amount 不为 null 的项目 ──
         for item in items:
             fee_type = item.get('fee_type', '')
             fee_name = item.get('fee_name', '')
@@ -680,6 +683,10 @@ def generate_compensation_calculation_excel(compensation_data: dict | None, case
             except (ValueError, TypeError):
                 amount = 0.0
 
+            # dependent_living 不在清单中单独列出（已包含在残疾/死亡赔偿金中）
+            if fee_type == 'dependent_living':
+                continue
+
             ws.cell(row=row_idx, column=1, value=seq).font = cell_font
             ws.cell(row=row_idx, column=1).border = thin_border
             ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal='center')
@@ -687,7 +694,13 @@ def generate_compensation_calculation_excel(compensation_data: dict | None, case
             ws.cell(row=row_idx, column=2, value=fee_name).font = cell_font
             ws.cell(row=row_idx, column=2).border = thin_border
 
-            ws.cell(row=row_idx, column=3, value=basis).font = cell_font
+            # 护理费主行：basis 写护理用品发票部分，金额用完整金额
+            # 非护理费正常写 basis
+            if fee_type == 'nursing_fee':
+                supplies_basis = _get_nursing_supplies_basis(item)
+                ws.cell(row=row_idx, column=3, value=supplies_basis).font = cell_font
+            else:
+                ws.cell(row=row_idx, column=3, value=basis).font = cell_font
             ws.cell(row=row_idx, column=3).border = thin_border
 
             cell_amount = ws.cell(row=row_idx, column=4, value=amount)
@@ -695,19 +708,42 @@ def generate_compensation_calculation_excel(compensation_data: dict | None, case
             cell_amount.font = cell_font
             cell_amount.border = thin_border
             cell_amount.alignment = Alignment(horizontal='center')
+            amount_rows.append(row_idx)
 
             row_idx += 1
+
+            # 护理费子行：写住院天数计算过程，序号/项目/金额列合并
+            if fee_type == 'nursing_fee':
+                sub_detail = _get_nursing_sub_detail(params, plaintiff_name)
+                if sub_detail:
+                    # 合并序号、项目、金额列
+                    ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=1)
+                    ws.merge_cells(start_row=row_idx, start_column=2, end_row=row_idx, end_column=2)
+                    ws.merge_cells(start_row=row_idx, start_column=4, end_row=row_idx, end_column=4)
+                    ws.cell(row=row_idx, column=3, value=sub_detail).font = cell_font
+                    for c in range(1, 5):
+                        ws.cell(row=row_idx, column=c).border = thin_border
+                    row_idx += 1
+            else:
+                # 非护理费子行详细计算依据
+                sub_row = _get_calculation_detail(fee_type, params, plaintiff_name)
+                if sub_row:
+                    ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=1)
+                    ws.merge_cells(start_row=row_idx, start_column=2, end_row=row_idx, end_column=2)
+                    ws.merge_cells(start_row=row_idx, start_column=4, end_row=row_idx, end_column=4)
+                    ws.cell(row=row_idx, column=3, value=sub_row).font = cell_font
+                    for c in range(1, 5):
+                        ws.cell(row=row_idx, column=c).border = thin_border
+                    row_idx += 1
+
             seq += 1
 
-            # 子行详细计算依据
-            sub_row = _get_calculation_detail(fee_type, params, plaintiff_name)
-            if sub_row:
-                ws.cell(row=row_idx, column=3, value=sub_row).font = cell_font
-                for c in range(1, 5):
-                    ws.cell(row=row_idx, column=c).border = thin_border
-                row_idx += 1
-
-        total_amount = float(str(compensation_data.get('total_amount', 0)))
+        # 合计行：用 SUM 公式
+        if amount_rows:
+            sum_parts = "+".join(f"D{r}" for r in amount_rows)
+            sum_formula = f"={sum_parts}"
+        else:
+            sum_formula = 0
     else:
         # ── 无计算数据：按案件类型生成模板，金额留白 ──
         template_items = _get_template_items(case_type)
@@ -731,16 +767,16 @@ def generate_compensation_calculation_excel(compensation_data: dict | None, case
             row_idx += 1
             seq += 1
 
-        total_amount = "——"
+        sum_formula = "——"
 
     # ── 合计行 ──
-    ws.cell(row=row_idx, column=2, value='合计').font = bold_font
+    ws.cell(row=row_idx, column=2, value='总计').font = bold_font
     ws.cell(row=row_idx, column=2).border = thin_border
     ws.cell(row=row_idx, column=2).alignment = Alignment(horizontal='center')
     ws.cell(row=row_idx, column=1).border = thin_border
     ws.cell(row=row_idx, column=3).border = thin_border
-    cell_total = ws.cell(row=row_idx, column=4, value=total_amount)
-    if isinstance(total_amount, (int, float)):
+    cell_total = ws.cell(row=row_idx, column=4, value=sum_formula)
+    if isinstance(sum_formula, str) and sum_formula.startswith('='):
         cell_total.number_format = money_fmt
     cell_total.font = bold_font
     cell_total.border = thin_border
@@ -762,6 +798,45 @@ def generate_compensation_calculation_excel(compensation_data: dict | None, case
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
+
+
+def _get_nursing_supplies_basis(item: dict) -> str:
+    """生成护理费主行的计算依据（护理用品发票部分）"""
+    sources = item.get('sources', [])
+    if sources:
+        filenames = [s.get('filename', '') for s in sources if s.get('filename')]
+        if filenames:
+            return f"原告方因此次事件支付的医护用品费用合计（见{'、'.join(filenames[:3])}）"
+    return "原告方因此次事件支付的医护用品费用"
+
+
+def _get_nursing_sub_detail(params: dict, plaintiff_name: str = "") -> str:
+    """生成护理费子行的详细计算依据（住院天数 × 日护理费）"""
+    try:
+        hospital_days = int(float(params.get('nursing_days', 0) or params.get('hospital_days', 0)))
+        annual_salary = float(params.get('nursing_annual_salary', 0))
+        if annual_salary == 0:
+            legacy = params.get('nursing_monthly_salary') or params.get('monthly_salary') or 8500
+            annual_salary = float(legacy) * 12
+        person_count = int(params.get('nursing_person_count', 1) or 1)
+        dep_level = str(params.get('nursing_dependency_level') or 'full')
+    except (ValueError, TypeError):
+        return ""
+
+    if hospital_days <= 0:
+        return ""
+
+    name = plaintiff_name or "原告"
+    # 使用全精度日费率用于展示（与计算引擎一致）
+    daily = annual_salary / 365
+
+    dep_map = {"full": "完全护理依赖(100%)", "mostly": "大部分护理依赖(80%)", "partial": "部分护理依赖(50%)"}
+    dep_label = dep_map.get(dep_level, "")
+
+    person_part = f"× {person_count}人" if person_count > 1 else ""
+    dep_part = f"× {dep_label}" if dep_level != "full" else ""
+
+    return f"{name}共住院治疗{hospital_days}天，其护理费按上一年度居民服务、修理和其他服务业非私营单位在岗职工年平均工资{annual_salary:.0f}元/年计算：{annual_salary:.0f}元/年÷365天×{hospital_days}天{person_part}{dep_part}"
 
 
 def _get_template_items(case_type: str) -> list[tuple[str, str]]:
@@ -797,6 +872,7 @@ def _get_calculation_detail(fee_type: str, params: dict, plaintiff_name: str = "
     """生成子行的详细计算依据说明（参照手工模板格式）
 
     仅对部分需要详细说明的项目生成子行，其他返回空字符串。
+    护理费由 _get_nursing_sub_detail 独立处理，此函数不再处理。
     """
     try:
         hospital_days = int(float(params.get('hospital_days', 0)))
@@ -807,18 +883,15 @@ def _get_calculation_detail(fee_type: str, params: dict, plaintiff_name: str = "
         compensation_years = int(float(params.get('compensation_years', 20)))
         disability_coeff = float(params.get('disability_coefficient', 1.0))
         lost_wage_days = int(float(params.get('lost_wage_days', 0)))
+        victim_age = int(float(params.get('victim_age', 0)))
     except (ValueError, TypeError):
         return ""
 
     name = plaintiff_name or "原告"
 
-    if fee_type == 'lost_wages' and hospital_days > 0:
-        daily = annual_income / 365
-        return f"{name}共住院治疗{hospital_days}天，其误工费按上一年度城镇居民人均可支配收入{annual_income:.0f}元/年计算：{annual_income:.0f}元/年÷365天×{hospital_days}天"
-
-    if fee_type == 'nursing_fee' and hospital_days > 0:
+    if fee_type == 'lost_wages' and lost_wage_days > 0:
         daily = monthly_salary / 30
-        return f"{name}共住院治疗{hospital_days}天，其护理费按上一年度职工月平均工资{monthly_salary:.0f}元/月计算：{monthly_salary:.0f}元/月÷30天×{hospital_days}天"
+        return f"{name}的误工费按上一年度职工月平均工资{monthly_salary:.0f}元/月计算：{monthly_salary:.0f}元/月÷30天×{lost_wage_days}天"
 
     if fee_type == 'food_subsidy' and hospital_days > 0:
         return f"{name}共住院治疗{hospital_days}天，按{daily_food:.0f}元/天计算：{daily_food:.0f}元/天×{hospital_days}天"
@@ -826,13 +899,35 @@ def _get_calculation_detail(fee_type: str, params: dict, plaintiff_name: str = "
     if fee_type == 'nutrition_fee' and hospital_days > 0:
         return f"{name}共住院治疗{hospital_days}天，按{daily_nutrition:.0f}元/天计算：{daily_nutrition:.0f}元/天×{hospital_days}天"
 
-    if fee_type == 'disability_compensation':
-        return f"按上一年度城镇居民人均可支配收入{annual_income:.0f}元/年×{compensation_years}年×伤残系数{disability_coeff}"
+    if fee_type == 'disability_compensation' and compensation_years > 0:
+        basis = f"按上一年度城镇居民人均可支配收入{annual_income:.0f}元/年×{compensation_years}年×伤残系数{disability_coeff}"
+        # 含被扶养人生活费标注
+        annual_consumption = float(params.get('annual_consumption', 0))
+        if annual_consumption > 0:
+            dep_amt = annual_consumption * compensation_years * disability_coeff
+            basis += f"（含被扶养人生活费 ¥{dep_amt:.2f}）"
+        return basis
 
     if fee_type == 'death_compensation':
-        return f"按上一年度城镇居民人均可支配收入{annual_income:.0f}元/年×{compensation_years}年"
+        # 死亡赔偿金年龄递减
+        if victim_age > 0:
+            if victim_age >= 75:
+                actual_years = 5
+            elif victim_age >= 60:
+                actual_years = max(20 - (victim_age - 60), 5)
+            else:
+                actual_years = compensation_years if compensation_years > 0 else 20
+        else:
+            actual_years = compensation_years
+        if actual_years > 0:
+            basis = f"按上一年度城镇居民人均可支配收入{annual_income:.0f}元/年×{actual_years}年"
+            annual_consumption = float(params.get('annual_consumption', 0))
+            if annual_consumption > 0:
+                dep_amt = annual_consumption * actual_years
+                basis += f"（含被扶养人生活费 ¥{dep_amt:.2f}）"
+            return basis
 
     if fee_type == 'funeral_fee':
-        return f"按上一年度城镇非私营单位在岗职工月平均工资{monthly_salary:.0f}元/月，以六个月总额计算：{monthly_salary:.0f}元/月×6月"
+        return f"按上一年度职工月平均工资{monthly_salary:.0f}元/月，以六个月总额计算：{monthly_salary:.0f}元/月×6月"
 
     return ""

@@ -1930,15 +1930,17 @@ async def update_compensation(
     """保存手动调整的赔偿数据"""
     case = await _get_case_or_404(case_id, db)
 
-    data = case.compensation_data or {}
+    # 深拷贝，确保 SQLAlchemy 检测到 JSONB 变更（原地修改不触发脏标记）
+    import copy
+    data = copy.deepcopy(case.compensation_data or {})
     items = data.get("items", [])
 
-    # 更新手动金额
+    # 更新手动金额（存为数字而非字符串，避免前端类型混乱）
     update_map = {u.fee_type: u.manual_amount for u in req.items}
     for item in items:
         if item["fee_type"] in update_map:
             new_amount = update_map[item["fee_type"]]
-            item["manual_amount"] = str(new_amount) if new_amount is not None else None
+            item["manual_amount"] = float(new_amount) if new_amount is not None else None
 
     # 更新参数
     if req.params:
@@ -1950,14 +1952,17 @@ async def update_compensation(
 
     # 重算合计（如有手动设置的总计则优先使用）
     if req.manual_total is not None:
-        data["total_amount"] = str(req.manual_total)
-        data["manual_total"] = str(req.manual_total)
+        data["total_amount"] = float(req.manual_total)
+        data["manual_total"] = float(req.manual_total)
     else:
         total = Decimal("0")
         for item in items:
-            amt = item.get("manual_amount") or item.get("amount", "0")
+            # dependent_living 不计入合计（已包含在残疾/死亡赔偿金中）
+            if item.get("fee_type") == "dependent_living":
+                continue
+            amt = item.get("manual_amount") or item.get("amount", 0)
             total += Decimal(str(amt))
-        data["total_amount"] = str(total)
+        data["total_amount"] = float(total)
 
     case.compensation_data = data
     await db.commit()

@@ -396,34 +396,75 @@
           <tr style="font-weight:bold;background:#f5f5f5">
             <td colspan="2">合计</td>
             <td>{{ formatMoney(compensationTotal) }}</td>
-            <td colspan="3"></td>
+            <td colspan="2"></td>
+            <td>
+              <n-button
+                size="tiny"
+                type="primary"
+                :loading="savingCompChanges"
+                @click="saveAllCompensationEdits"
+              >
+                保存修改
+              </n-button>
+            </td>
           </tr>
         </tbody>
       </n-table>
 
-      <!-- 参数配置（默认展开） -->
+      <!-- 参数配置（默认展开） — 按赔偿项目顺序排列 -->
       <n-card v-if="compensationData" title="参数配置" size="small" style="margin-bottom: 16px">
         <n-grid :cols="3" :x-gap="12" :y-gap="8">
+          <!-- ① 误工费：月均工资 + 误工天数 -->
           <n-gi>
             <n-form-item label="上年度职工月均工资(元/月)" label-placement="top">
               <n-input-number v-model:value="compParams.monthly_salary" size="small" :min="0" style="width:100%" />
             </n-form-item>
           </n-gi>
           <n-gi>
-            <n-form-item label="护理费平均工资(元/月)" label-placement="top">
-              <n-input-number v-model:value="compParams.nursing_monthly_salary" size="small" :min="0" style="width:100%" />
+            <n-form-item label="误工天数" label-placement="top">
+              <n-input-number v-model:value="compParams.lost_wage_days" size="small" :min="0" style="width:100%" />
             </n-form-item>
           </n-gi>
+          <!-- ② 护理费：护理工资 + 护理依赖 + 护理人数 -->
+          <n-gi>
+            <n-form-item label="护理费平均工资(元/年)" label-placement="top">
+              <n-input-number v-model:value="compParams.nursing_annual_salary" size="small" :min="0" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="护理依赖赔付比例" label-placement="top">
+              <n-select
+                v-model:value="compParams.nursing_dependency_level"
+                size="small"
+                :options="nursingDependencyOptions"
+                style="width:100%"
+              />
+            </n-form-item>
+          </n-gi>
+          <n-gi>
+            <n-form-item label="护理人员人数" label-placement="top">
+              <n-input-number v-model:value="compParams.nursing_person_count" size="small" :min="1" :max="3" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <!-- ③ 住院天数（护理/伙食/营养共用） -->
+          <n-gi>
+            <n-form-item label="住院天数" label-placement="top">
+              <n-input-number v-model:value="compParams.hospital_days" size="small" :min="0" style="width:100%" />
+            </n-form-item>
+          </n-gi>
+          <!-- ④ 住院伙食补助 -->
           <n-gi>
             <n-form-item label="住院伙食补助(元/天)" label-placement="top">
               <n-input-number v-model:value="compParams.daily_food_subsidy" size="small" :min="0" style="width:100%" />
             </n-form-item>
           </n-gi>
+          <!-- ⑤ 营养费 -->
           <n-gi>
             <n-form-item label="营养费(元/天)" label-placement="top">
               <n-input-number v-model:value="compParams.daily_nutrition" size="small" :min="0" style="width:100%" />
             </n-form-item>
           </n-gi>
+          <!-- ⑥ 残疾赔偿金/死亡赔偿金：赔偿年限 + 伤残系数 + 受害人年龄 -->
           <n-gi>
             <n-form-item label="赔偿年限(年)" label-placement="top">
               <n-input-number v-model:value="compParams.compensation_years" size="small" :min="0" :max="30" style="width:100%" />
@@ -435,13 +476,8 @@
             </n-form-item>
           </n-gi>
           <n-gi>
-            <n-form-item label="住院天数" label-placement="top">
-              <n-input-number v-model:value="compParams.hospital_days" size="small" :min="0" style="width:100%" />
-            </n-form-item>
-          </n-gi>
-          <n-gi>
-            <n-form-item label="误工天数" label-placement="top">
-              <n-input-number v-model:value="compParams.lost_wage_days" size="small" :min="0" style="width:100%" />
+            <n-form-item label="受害人年龄" label-placement="top">
+              <n-input-number v-model:value="compParams.victim_age" size="small" :min="0" :max="120" placeholder="未填则用赔偿年限" style="width:100%" />
             </n-form-item>
           </n-gi>
         </n-grid>
@@ -1095,6 +1131,7 @@ let ocrPollId: ReturnType<typeof setInterval> | null = null
 // ── 赔偿计算相关状态 ──
 const compensationData = ref<any>(null)
 const calculatingCompensation = ref(false)
+const savingCompChanges = ref(false)
 const savingParams = ref(false)
 const feeReceiptMaterials = computed(() =>
   materials.value.filter((m: any) =>
@@ -1103,10 +1140,20 @@ const feeReceiptMaterials = computed(() =>
 )
 const compensationTotal = computed(() => {
   if (!compensationData.value?.items) return 0
-  return compensationData.value.items.reduce((sum: number, item: any) =>
-    sum + (item.manual_amount ?? item.amount), 0
-  )
+  // dependent_living 不计入合计（已包含在残疾/死亡赔偿金中）
+  return compensationData.value.items
+    .filter((item: any) => item.fee_type !== 'dependent_living')
+    .reduce((sum: number, item: any) =>
+      sum + (item.manual_amount ?? item.amount), 0
+    )
 })
+
+/** 护理依赖赔付比例下拉选项 */
+const nursingDependencyOptions = [
+  { label: '完全护理依赖（100%）', value: 'full' },
+  { label: '大部分护理依赖（80%）', value: 'mostly' },
+  { label: '部分护理依赖（50%）', value: 'partial' },
+]
 
 // 参数编辑
 const compParams = reactive<any>({})
@@ -1169,6 +1216,7 @@ function _resetAllState() {
   // 赔偿计算状态重置
   compensationData.value = null
   calculatingCompensation.value = false
+  savingCompChanges.value = false
   editingFeeType.value = null
   editAmount.value = 0
   Object.keys(compParams).forEach(k => delete compParams[k])
@@ -1981,17 +2029,17 @@ async function saveFeeEdit(item: any) {
   editingFeeType.value = null
   if (!currentCase.value || !compensationData.value) return
 
-  // 更新本地数据
+  // 更新本地数据（确保存为 number）
   const target = compensationData.value.items.find((i: any) => i.fee_type === item.fee_type)
   if (target) {
-    target.manual_amount = editAmount.value
+    target.manual_amount = editAmount.value != null ? Number(editAmount.value) : null
   }
 
   // 保存到后端
   try {
     const updateItems = compensationData.value.items.map((i: any) => ({
       fee_type: i.fee_type,
-      manual_amount: i.manual_amount,
+      manual_amount: i.manual_amount != null ? Number(i.manual_amount) : null,
     }))
     await evidenceApi.updateCompensation(currentCase.value.id, { items: updateItems })
   } catch (e: any) {
@@ -2007,7 +2055,7 @@ function resetFeeEdit(item: any) {
     if (currentCase.value && compensationData.value) {
       const updateItems = compensationData.value.items.map((i: any) => ({
         fee_type: i.fee_type,
-        manual_amount: i.manual_amount,
+        manual_amount: i.manual_amount != null ? Number(i.manual_amount) : null,
       }))
       evidenceApi.updateCompensation(currentCase.value.id, { items: updateItems })
     }
@@ -2028,15 +2076,52 @@ async function handleRecalculate() {
   }
 }
 
+/** 批量保存所有赔偿金额修改（含合计） */
+async function saveAllCompensationEdits() {
+  if (!currentCase.value || !compensationData.value) return
+  savingCompChanges.value = true
+  try {
+    const updateItems = compensationData.value.items.map((i: any) => ({
+      fee_type: i.fee_type,
+      manual_amount: i.manual_amount != null ? Number(i.manual_amount) : null,
+    }))
+    const total = compensationTotal.value
+    await evidenceApi.updateCompensation(currentCase.value.id, {
+      items: updateItems,
+      manual_total: Number(total),
+    })
+    message.success('金额修改已保存')
+  } catch (e: any) {
+    message.error('保存失败: ' + (e.message || '未知错误'))
+  } finally {
+    savingCompChanges.value = false
+  }
+}
+
 /** 点击"下一步：证据目录" — 先弹窗提示核算金额 */
 function handleNextToCatalog() {
   showAmountCheckDialog.value = true
 }
 
-/** 确认核算金额后继续 */
-function confirmAmountCheck() {
+/** 确认核算金额后继续 — 自动保存所有金额到后端，再跳转第三步 */
+async function confirmAmountCheck() {
   showAmountCheckDialog.value = false
-  navigateToStep(STEP.CATALOG)
+  if (!currentCase.value || !compensationData.value) {
+    navigateToStep(STEP.CATALOG)
+    return
+  }
+  // 将当前所有金额（含手动修改）保存到后端，并同步 total_amount
+  try {
+    const total = compensationTotal.value
+    await evidenceApi.updateCompensation(currentCase.value.id, {
+      items: compensationData.value.items.map((i: any) => ({
+        fee_type: i.fee_type,
+        manual_amount: i.manual_amount != null ? Number(i.manual_amount) : null,
+      })),
+      manual_total: Number(total),
+    })
+  } catch { /* 静默失败，不阻塞跳转 */ }
+  await navigateToStep(STEP.CATALOG)
 }
 
 /** 开始编辑费用总计 */
@@ -2085,12 +2170,35 @@ async function loadCompensation() {
   try {
     const res = await evidenceApi.getCompensation(currentCase.value.id)
     if (res.compensation_data && res.compensation_data.items) {
-      compensationData.value = res.compensation_data
-      if (res.compensation_data.params) {
+      // 后端 JSONB 中 amount/manual_amount 可能是字符串，统一转为数字
+      const data = res.compensation_data
+      for (const item of data.items) {
+        if (item.amount != null) item.amount = Number(item.amount)
+        if (item.manual_amount != null) item.manual_amount = Number(item.manual_amount)
+      }
+      if (data.total_amount != null) data.total_amount = Number(data.total_amount)
+      if (data.manual_total != null) data.manual_total = Number(data.manual_total)
+      compensationData.value = data
+      if (data.params) {
         const parsed = parseNumericParams(res.compensation_data.params)
-        // 向后兼容：旧 case 数据中可能没有 nursing_monthly_salary，回退到 monthly_salary 或默认值
-        if (parsed.nursing_monthly_salary === undefined || parsed.nursing_monthly_salary === null) {
-          parsed.nursing_monthly_salary = parsed.monthly_salary ?? 8500
+        // 向后兼容：旧 case 数据可能用 nursing_monthly_salary，折算为年薪
+        if (parsed.nursing_annual_salary === undefined || parsed.nursing_annual_salary === null) {
+          if (parsed.nursing_monthly_salary != null) {
+            parsed.nursing_annual_salary = Number(parsed.nursing_monthly_salary) * 12
+          } else {
+            parsed.nursing_annual_salary = (parsed.monthly_salary ?? 8500) * 12
+          }
+        }
+        delete parsed.nursing_monthly_salary
+        // 向后兼容：新参数默认值
+        if (!parsed.nursing_dependency_level) {
+          parsed.nursing_dependency_level = 'full'
+        }
+        if (parsed.nursing_person_count === undefined || parsed.nursing_person_count === null) {
+          parsed.nursing_person_count = 1
+        }
+        if (parsed.victim_age === undefined || parsed.victim_age === null) {
+          parsed.victim_age = 0
         }
         Object.keys(compParams).forEach(k => delete compParams[k])
         Object.assign(compParams, parsed)

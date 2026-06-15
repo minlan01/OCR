@@ -376,7 +376,7 @@ export interface CompensationParamsResponse {
   annual_income: number
   annual_consumption: number
   monthly_salary: number
-  nursing_monthly_salary: number
+  nursing_annual_salary: number
   daily_food_subsidy: number
   daily_nutrition: number
   compensation_years: number
@@ -385,6 +385,9 @@ export interface CompensationParamsResponse {
   lost_wage_days: number
   nursing_days: number
   nutrition_days: number
+  nursing_dependency_level: string
+  nursing_person_count: number
+  victim_age: number
 }
 
 /** 赔偿计算 — 响应 */
@@ -401,7 +404,7 @@ export interface CompensationParamsUpdate {
   annual_income?: number
   annual_consumption?: number
   monthly_salary?: number
-  nursing_monthly_salary?: number
+  nursing_annual_salary?: number
   daily_food_subsidy?: number
   daily_nutrition?: number
   compensation_years?: number
@@ -410,6 +413,9 @@ export interface CompensationParamsUpdate {
   lost_wage_days?: number
   nursing_days?: number
   nutrition_days?: number
+  nursing_dependency_level?: string
+  nursing_person_count?: number
+  victim_age?: number
 }
 
 /** 赔偿单项更新 */

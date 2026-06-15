@@ -233,7 +233,7 @@ class CompensationParamsUpdate(BaseModel):
     annual_income: Optional[Decimal] = None       # 上年度城镇居民人均可支配收入
     annual_consumption: Optional[Decimal] = None   # 上年度城镇居民人均消费支出
     monthly_salary: Optional[Decimal] = None       # 上年度职工月均工资
-    nursing_monthly_salary: Optional[Decimal] = None  # 护理费平均工资(元/月)
+    nursing_annual_salary: Optional[Decimal] = None  # 护理费平均工资(元/年)
     daily_food_subsidy: Optional[Decimal] = None   # 住院伙食补助日标准
     daily_nutrition: Optional[Decimal] = None      # 营养费日标准
     compensation_years: Optional[int] = None       # 赔偿年限
@@ -242,6 +242,9 @@ class CompensationParamsUpdate(BaseModel):
     lost_wage_days: Optional[int] = None           # 误工天数
     nursing_days: Optional[int] = None             # 护理天数
     nutrition_days: Optional[int] = None           # 营养期天数
+    nursing_dependency_level: Optional[str] = None  # 护理依赖等级: full/mostly/partial
+    nursing_person_count: Optional[int] = None     # 护理人员人数(1-3)
+    victim_age: Optional[int] = None               # 受害人年龄
 
 
 class FeeSourceResponse(BaseModel):
@@ -267,7 +270,7 @@ class CompensationParamsResponse(BaseModel):
     annual_income: Decimal
     annual_consumption: Decimal
     monthly_salary: Decimal
-    nursing_monthly_salary: Decimal
+    nursing_annual_salary: Decimal
     daily_food_subsidy: Decimal
     daily_nutrition: Decimal
     compensation_years: int
@@ -276,6 +279,9 @@ class CompensationParamsResponse(BaseModel):
     lost_wage_days: int = 0
     nursing_days: int = 0
     nutrition_days: int = 0
+    nursing_dependency_level: str = "full"
+    nursing_person_count: int = 1
+    victim_age: int = 0
 
 
 class CompensationResponse(BaseModel):
