@@ -128,23 +128,23 @@ class Settings(BaseSettings):
     glm_api_key: SecretStr = SecretStr("")
     glm_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
     glm_model: str = "glm-4v-flash"
-    glm_timeout: int = 120
-    glm_max_concurrent: int = 5  # 免费模型保守并发
+    glm_timeout: int = 60  # SaaS: 60s超时（从120s降低）
+    glm_max_concurrent: int = 3  # SaaS: 免费模型并发3（从5降低）
 
     # ==================== DeepSeek LLM (文本分析 + 段落生成) ====================
     deepseek_api_key: SecretStr = SecretStr("")
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_text_model: str = "deepseek-chat"  # DeepSeek-V3
     deepseek_flash_model: str = "deepseek-chat"  # 同上，flash 暂无独立模型
-    deepseek_timeout: int = 120
-    deepseek_max_concurrent: int = 10
+    deepseek_timeout: int = 30  # SaaS: 30s超时（从120s降低，防10人并发时堆积）
+    deepseek_max_concurrent: int = 3  # SaaS: 全局3并发（从10降低）
 
     # ==================== 百度云 OCR ====================
     baidu_ocr_app_id: str = ""
     baidu_ocr_api_key: str = ""
     baidu_ocr_secret_key: str = ""
     baidu_ocr_timeout: int = 30
-    baidu_ocr_max_concurrent: int = 10
+    baidu_ocr_max_concurrent: int = 5  # SaaS: 从10降低到5
 
     # ==================== 多引擎 OCR 调度 ====================
     # 引擎优先级列表（从左到右依次尝试，成功则停止）
@@ -159,8 +159,8 @@ class Settings(BaseSettings):
 
     # ==================== LLM 限流 ====================
     llm_rate_limiter_text: int = 2   # 文本分析全局最大并发（保守值，防10人并发时API限流）
-    llm_rate_limiter_ocr: int = 5    # OCR 全局最大并发
-    llm_rate_limiter_flash: int = 8  # 快速模型（分类）全局最大并发
+    llm_rate_limiter_ocr: int = 3    # OCR 全局最大并发（SaaS: 从5降到3）
+    llm_rate_limiter_flash: int = 5  # 快速模型（分类）全局最大并发（SaaS: 从8降到5）
     llm_retry_max: int = 3            # 429 重试最大次数
     llm_retry_base_delay: float = 2.0  # 429 重试基础延迟（秒）
 

@@ -651,6 +651,25 @@ async def get_progress(
     }
     progress_percent = status_progress_map.get(case.status, 0.0)
 
+    # ── 排队位置计算 ──
+    queue_position = None
+    if case.status == "processing":
+        # 正在处理中，排队位置=0
+        queue_position = 0
+    elif case.status in ("pending", "uploading"):
+        # 等待处理时，查询 Celery 队列中的排位
+        try:
+            from services.utils.task_concurrency import get_concurrent_count
+            current_running = get_concurrent_count()
+            if current_running < 0:
+                queue_position = None  # Redis 不可用，无法判断
+            elif current_running >= 3:  # _MAX_CONCURRENT_CASES
+                queue_position = current_running  # 粗略估计：前面有N个在跑
+            else:
+                queue_position = 0  # 空闲，马上就能处理
+        except Exception:
+            queue_position = None
+
     return ProgressResponse(
         case_id=str(case_id),
         status=case.status,
@@ -658,6 +677,7 @@ async def get_progress(
         total_steps=total_steps,
         completed_steps=completed_steps,
         progress_percent=progress_percent,
+        queue_position=queue_position,
         steps=[_build_step_out(s) for s in steps],
     )
 

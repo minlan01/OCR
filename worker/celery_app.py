@@ -1,5 +1,10 @@
 """
 Celery 应用配置
+================
+SaaS 优化要点：
+- worker_concurrency=2: 4核8G 服务器限制同时执行2个任务，防止CPU/内存过载
+- worker_prefetch_multiplier=1: 每次只取1个任务，避免积压
+- task_acks_late=True: 任务执行完才确认，防止 worker 崩溃丢失任务
 """
 from __future__ import annotations
 
@@ -17,7 +22,7 @@ celery_app = Celery(
     include=["worker.tasks", "worker.evidence_tasks"],
 )
 
-# Celery 配置
+# Celery 配置（SaaS 优化版）
 celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
@@ -29,7 +34,12 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     task_default_retry_delay=60,
     task_max_retries=3,
-    worker_prefetch_multiplier=1,
+    # ── SaaS 并发控制 ──
+    worker_concurrency=2,              # 4核8G: 同时只执行2个任务
+    worker_prefetch_multiplier=1,      # 每次只拉取1个任务，避免积压
+    worker_max_tasks_per_child=50,     # 每50个任务重启worker进程，防止内存泄漏
+    worker_max_memory_per_child=300000, # 300MB per child，超限重启
+    # ── 超时 ──
     result_expires=3600 * 24 * 7,
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,

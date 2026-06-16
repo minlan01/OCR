@@ -6,10 +6,15 @@ RapidOCR 引擎 — 基于 ONNX Runtime 的轻量本地 OCR
   - 模型仅约 15MB，首次运行自动下载
   - 支持 GPU (CUDA) 和 CPU 推理
   - 基于 PaddleOCR 同源 PP-OCRv4 模型，中文识别效果一致
+
+SaaS 优化:
+  - 进程级单例 + Semaphore(1): 4核8G 禁止并行ONNX推理，防止OOM
+  - 批量处理改为顺序执行（Semaphore 保护），避免多人同时OCR时内存爆炸
 """
 from __future__ import annotations
 
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -19,16 +24,22 @@ from config.settings import settings
 from services.ocr.base import BaseOCREngine
 
 
+# ── 进程级信号量：同一时刻只允许1个 ONNX 推理 ──
+# 4核8G 服务器一个 ONNX 推理就吃 ~600MB，并行2个直接爆内存
+_ocr_semaphore = threading.Semaphore(1)
+
+
 class RapidOCREngine(BaseOCREngine):
     """
-    RapidOCR 本地引擎
+    RapidOCR 本地引擎（SaaS 优化版）
 
     使用 rapidocr 库 + ONNX Runtime 推理。
     模型常驻内存，不重复初始化。
+    Semaphore(1) 保证同时只有1个推理任务，防止OOM。
     """
 
-    # 批量处理线程数：自适应 CPU 核心数（上限8）
-    _max_concurrent = min(int(os.environ.get("RAPIDOCR_MAX_WORKERS", str(os.cpu_count() or 4))), 8)
+    # 批量处理线程数：SaaS模式下改为2（保守值）
+    _max_concurrent = min(int(os.environ.get("RAPIDOCR_MAX_WORKERS", "2")), 4)
 
     def __init__(self):
         self._engine = None
@@ -91,7 +102,7 @@ class RapidOCREngine(BaseOCREngine):
 
     def recognize(self, image_path: Path) -> list[dict]:
         """
-        识别单张图片
+        识别单张图片（Semaphore 保护，防止并行推理导致 OOM）
 
         返回:
             [{"text": str, "confidence": float, "bbox": [[x1,y1],...,[x4,y4]]}, ...]
@@ -103,6 +114,15 @@ class RapidOCREngine(BaseOCREngine):
             logger.error("RapidOCR not loaded, cannot recognize")
             return []
 
+        # ── Semaphore 保护：同一时刻只允许1个推理 ──
+        _ocr_semaphore.acquire()
+        try:
+            return self._do_recognize(image_path)
+        finally:
+            _ocr_semaphore.release()
+
+    def _do_recognize(self, image_path: Path) -> list[dict]:
+        """实际执行 OCR 推理（内部方法，由 recognize 调用，已获取 Semaphore）"""
         try:
             result = self._engine(str(image_path))
 
@@ -146,11 +166,10 @@ class RapidOCREngine(BaseOCREngine):
             return []
 
     def recognize_batch(self, image_paths: list[Path]) -> list[list[dict]]:
-        """批量识别（多线程并行）
+        """批量识别（SaaS: 顺序执行，Semaphore 保护已内置于 recognize）
 
-        使用 ThreadPoolExecutor 并行处理多张图片。
-        ONNX Runtime 在 CPU 模式下是线程安全的，可以并行推理。
-        线程数由 RAPIDOCR_MAX_WORKERS 环境变量控制（默认 4）。
+        注意：SaaS 模式下不并行推理（Semaphore(1) 保证同时只有1个ONNX推理）。
+        ThreadPoolExecutor 仅用于非阻塞调度，实际并发=1。
         """
         if not self._model_loaded:
             self.load_model()
@@ -160,7 +179,7 @@ class RapidOCREngine(BaseOCREngine):
 
         def _recognize_one(idx_and_path):
             idx, path = idx_and_path
-            return idx, self.recognize(path)
+            return idx, self.recognize(path)  # recognize 内部有 Semaphore 保护
 
         with ThreadPoolExecutor(max_workers=self._max_concurrent) as pool:
             futures = []

@@ -33,8 +33,8 @@ x-common-env: &common-env
   DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
   DEEPSEEK_TEXT_MODEL: ${DEEPSEEK_TEXT_MODEL:-deepseek-chat}
   DEEPSEEK_FLASH_MODEL: ${DEEPSEEK_FLASH_MODEL:-deepseek-chat}
-  DEEPSEEK_TIMEOUT: ${DEEPSEEK_TIMEOUT:-120}
-  DEEPSEEK_MAX_CONCURRENT: ${DEEPSEEK_MAX_CONCURRENT:-10}
+  DEEPSEEK_TIMEOUT: ${DEEPSEEK_TIMEOUT:-30}
+  DEEPSEEK_MAX_CONCURRENT: ${DEEPSEEK_MAX_CONCURRENT:-3}
   BAILIAN_API_KEY: ${BAILIAN_API_KEY:-}
   BAILIAN_OCR_BASE_URL: ${BAILIAN_OCR_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
   BAILIAN_OCR_MODEL: ${BAILIAN_OCR_MODEL:-qwen-vl-ocr-latest}
@@ -43,13 +43,13 @@ x-common-env: &common-env
   GLM_API_KEY: ${GLM_API_KEY:-}
   GLM_BASE_URL: ${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4/}
   GLM_MODEL: ${GLM_MODEL:-glm-4v-flash}
-  GLM_TIMEOUT: ${GLM_TIMEOUT:-120}
-  GLM_MAX_CONCURRENT: ${GLM_MAX_CONCURRENT:-5}
+  GLM_TIMEOUT: ${GLM_TIMEOUT:-60}
+  GLM_MAX_CONCURRENT: ${GLM_MAX_CONCURRENT:-3}
   BAIDU_OCR_APP_ID: ${BAIDU_OCR_APP_ID:-}
   BAIDU_OCR_API_KEY: ${BAIDU_OCR_API_KEY:-}
   BAIDU_OCR_SECRET_KEY: ${BAIDU_OCR_SECRET_KEY:-}
   BAIDU_OCR_TIMEOUT: ${BAIDU_OCR_TIMEOUT:-30}
-  BAIDU_OCR_MAX_CONCURRENT: ${BAIDU_OCR_MAX_CONCURRENT:-10}
+  BAIDU_OCR_MAX_CONCURRENT: ${BAIDU_OCR_MAX_CONCURRENT:-5}
   MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-524288000}
   MAX_BATCH_UPLOAD_SIZE: ${MAX_BATCH_UPLOAD_SIZE:-5368709120}
   CELERY_QUEUE_NAME: ${CELERY_QUEUE_NAME:-scanstruct}
@@ -188,8 +188,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          cpus: '1.5'
+          memory: 1500M
         reservations:
+          cpus: '0.5'
           memory: 512M
     restart: unless-stopped
     networks:
@@ -210,11 +212,11 @@ services:
     environment:
       <<: *common-env
       STORAGE_BACKEND: minio
-      BAILIAN_OCR_MAX_CONCURRENT: ${BAILIAN_OCR_MAX_CONCURRENT:-5}
+      BAILIAN_OCR_MAX_CONCURRENT: ${BAILIAN_OCR_MAX_CONCURRENT:-3}
       BAILIAN_TEXT_MAX_CONCURRENT: ${BAILIAN_TEXT_MAX_CONCURRENT:-2}
       LLM_RATE_LIMITER_TEXT: ${LLM_RATE_LIMITER_TEXT:-2}
-      LLM_RATE_LIMITER_OCR: ${LLM_RATE_LIMITER_OCR:-5}
-      LLM_RATE_LIMITER_FLASH: ${LLM_RATE_LIMITER_FLASH:-8}
+      LLM_RATE_LIMITER_OCR: ${LLM_RATE_LIMITER_OCR:-3}
+      LLM_RATE_LIMITER_FLASH: ${LLM_RATE_LIMITER_FLASH:-5}
       LLM_CONTEXT_MATERIAL_DETAIL_LIMIT: ${LLM_CONTEXT_MATERIAL_DETAIL_LIMIT:-12000}
       LLM_CONTEXT_MATERIAL_NORMAL_LIMIT: ${LLM_CONTEXT_MATERIAL_NORMAL_LIMIT:-5000}
       LLM_CONTEXT_MERGED_LIMIT: ${LLM_CONTEXT_MERGED_LIMIT:-60000}
@@ -231,11 +233,14 @@ services:
       - ./logs/worker:/app/logs
     tmpfs:
       - /tmp:size=1G
+    # SaaS: 4核8G 优化 — 限制 CPU 和内存
     deploy:
       resources:
         limits:
-          memory: 3G
+          cpus: '2.0'
+          memory: 4G
         reservations:
+          cpus: '1.0'
           memory: 1G
     restart: unless-stopped
     networks:

@@ -163,6 +163,7 @@ class ProgressResponse(BaseModel):
     total_steps: int = 0
     completed_steps: int = 0
     progress_percent: float = 0.0
+    queue_position: int | None = Field(default=None, description="排队位置（null=不在排队, 0=正在处理, >0=前面有N人）")
     steps: list[StepResponse] = Field(default_factory=list)
 
 
