@@ -194,6 +194,16 @@ class Settings(BaseSettings):
     max_retry_count: int = 3
     retention_days: int = 30
 
+    # ==================== JWT / 认证 ====================
+    jwt_secret_key: str = ""           # JWT 签名密钥（生产环境必须设置，>=32字符）
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 30    # access token 有效期
+    jwt_refresh_token_expire_days: int = 7       # refresh token 有效期
+    # 注册时自动创建的默认租户配额
+    default_tenant_max_cases: int = 20           # 默认最大案件数
+    default_tenant_max_concurrent: int = 2       # 默认最大并发处理数
+    default_tenant_storage_quota_mb: int = 2048  # 默认存储配额 (MB)
+
     # ================================================================
     # 验证器
     # ================================================================

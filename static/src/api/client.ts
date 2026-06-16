@@ -1,12 +1,88 @@
 /**
  * ScanStruct API Client
- * 基于 fetch 封装，自动注入 X-API-Key，统一错误处理
+ * 基于 fetch 封装，自动注入 JWT Bearer token（或 X-API-Key），统一错误处理
  */
 
 const BASE = '/api/v1'
 
-function headers(): Record<string, string> {
+// ─── Token 管理 ───
+
+const ACCESS_TOKEN_KEY = 'ss_access_token'
+const REFRESH_TOKEN_KEY = 'ss_refresh_token'
+
+export function getAccessToken(): string | null {
+  return localStorage.getItem(ACCESS_TOKEN_KEY)
+}
+
+export function getRefreshToken(): string | null {
+  return localStorage.getItem(REFRESH_TOKEN_KEY)
+}
+
+export function setTokens(access: string, refresh: string): void {
+  localStorage.setItem(ACCESS_TOKEN_KEY, access)
+  localStorage.setItem(REFRESH_TOKEN_KEY, refresh)
+}
+
+export function clearTokens(): void {
+  localStorage.removeItem(ACCESS_TOKEN_KEY)
+  localStorage.removeItem(REFRESH_TOKEN_KEY)
+}
+
+export function isLoggedIn(): boolean {
+  return !!getAccessToken()
+}
+
+// ─── Auth API ───
+
+export interface UserInfo {
+  id: string
+  email: string
+  display_name: string
+  role: string
+  tenant_id: string
+  tenant_name: string
+  plan: string
+}
+
+export interface TokenResponse {
+  access_token: string
+  refresh_token: string
+  token_type: string
+  user: UserInfo
+}
+
+async function refreshToken(): Promise<boolean> {
+  const refresh = getRefreshToken()
+  if (!refresh) return false
+
+  try {
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refresh }),
+    })
+    if (!res.ok) return false
+    const data: TokenResponse = await res.json()
+    setTokens(data.access_token, data.refresh_token)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// ─── 请求头 ───
+
+function authHeaders(): Record<string, string> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' }
+
+  // 优先 JWT
+  const token = getAccessToken()
+  if (token) {
+    h['Authorization'] = `Bearer ${token}`
+    return h
+  }
+
+  // 兜底 API Key（兼容旧模式）
   const key = import.meta.env.VITE_API_KEY
   if (key) {
     h['X-API-Key'] = key
@@ -14,11 +90,45 @@ function headers(): Record<string, string> {
   return h
 }
 
+function apiKeyOnlyHeaders(): Record<string, string> {
+  // FormData/文件上传等场景：不设 Content-Type，只传 API Key
+  const h: Record<string, string> = {}
+  const token = getAccessToken()
+  if (token) {
+    h['Authorization'] = `Bearer ${token}`
+  } else {
+    const key = import.meta.env.VITE_API_KEY
+    if (key) h['X-API-Key'] = key
+  }
+  return h
+}
+
 async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(url, {
     ...options,
-    headers: { ...headers(), ...(options.headers as Record<string, string> || {}) },
+    headers: { ...authHeaders(), ...(options.headers as Record<string, string> || {}) },
   })
+
+  // 401 → 尝试刷新 token 后重试一次
+  if (res.status === 401) {
+    const refreshed = await refreshToken()
+    if (refreshed) {
+      const retryRes = await fetch(url, {
+        ...options,
+        headers: { ...authHeaders(), ...(options.headers as Record<string, string> || {}) },
+      })
+      if (retryRes.ok) {
+        const text = await retryRes.text()
+        return text ? JSON.parse(text) as T : undefined as unknown as T
+      }
+    }
+    // 刷新失败 → 清理 token，跳转登录
+    clearTokens()
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login'
+    }
+    throw new Error('登录已过期，请重新登录')
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
@@ -67,11 +177,7 @@ export async function put<T>(path: string, body?: unknown): Promise<T> {
  * 用于下载 Word 文档等二进制文件
  */
 export async function downloadBlob(path: string, filename: string): Promise<void> {
-  const h: Record<string, string> = {}
-  const key = import.meta.env.VITE_API_KEY
-  if (key) h['X-API-Key'] = key
-
-  const res = await fetch(`${BASE}${path}`, { headers: h })
+  const res = await fetch(`${BASE}${path}`, { headers: apiKeyOnlyHeaders() })
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
@@ -99,13 +205,9 @@ export async function uploadPDF(
   if (metadata?.callback_url) form.append('callback_url', metadata.callback_url)
   if (metadata?.metadata) form.append('metadata', JSON.stringify(metadata.metadata))
 
-  const key = import.meta.env.VITE_API_KEY
-  const h: Record<string, string> = {}
-  if (key) h['X-API-Key'] = key
-
   const res = await fetch(`${BASE}/scans/upload`, {
     method: 'POST',
-    headers: h,
+    headers: apiKeyOnlyHeaders(),
     body: form,
   })
 
@@ -128,13 +230,9 @@ export async function batchUploadPDF(
   if (metadata?.scanner_id) form.append('scanner_id', metadata.scanner_id)
   if (metadata?.callback_url) form.append('callback_url', metadata.callback_url)
 
-  const key = import.meta.env.VITE_API_KEY
-  const h: Record<string, string> = {}
-  if (key) h['X-API-Key'] = key
-
   const res = await fetch(`${BASE}/scans/batch-upload`, {
     method: 'POST',
-    headers: h,
+    headers: apiKeyOnlyHeaders(),
     body: form,
   })
 
@@ -293,13 +391,9 @@ export async function getTemplate(id: string): Promise<TemplateResponse> {
 }
 
 export async function createTemplate(form: FormData): Promise<TemplateResponse> {
-  const key = import.meta.env.VITE_API_KEY
-  const h: Record<string, string> = {}
-  if (key) h['X-API-Key'] = key
-
   const res = await fetch(`${BASE}/templates/`, {
     method: 'POST',
-    headers: h,
+    headers: apiKeyOnlyHeaders(),
     body: form,
   })
 
@@ -316,13 +410,9 @@ export async function deleteTemplate(id: string): Promise<void> {
 }
 
 export async function updateTemplate(id: string, form: FormData): Promise<TemplateResponse> {
-  const key = import.meta.env.VITE_API_KEY
-  const h: Record<string, string> = {}
-  if (key) h['X-API-Key'] = key
-
   const res = await fetch(`${BASE}/templates/${id}`, {
     method: 'PUT',
-    headers: h,
+    headers: apiKeyOnlyHeaders(),
     body: form,
   })
 
@@ -339,9 +429,7 @@ export async function exportWithTemplate(
   templateId: string,
   filename: string
 ): Promise<void> {
-  const key = import.meta.env.VITE_API_KEY
-  const h: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (key) h['X-API-Key'] = key
+  const h = authHeaders()
 
   const res = await fetch(`${BASE}/templates/${taskId}/export`, {
     method: 'POST',

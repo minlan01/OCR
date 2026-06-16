@@ -1,8 +1,10 @@
 """
-API Key 认证中间件
-对 /api/v1/admin/* 路径强制要求 X-API-Key 头
-如果配置了 API_KEY，则对所有 /api/v1/*（除 health/ping）强制执行
-非 API 路径（静态文件、SPA 页面）直接放行，避免与 StaticFiles mount 冲突
+认证中间件 — JWT Bearer + API Key 双模式
+
+优先级: JWT Bearer token > X-API-Key > 无认证(开发模式)
+
+公开路径（注册/登录/刷新/健康检查）直接放行。
+认证成功后将 user_id/tenant_id 注入 request.state。
 """
 from __future__ import annotations
 
@@ -14,18 +16,23 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from loguru import logger
 
 from config.settings import settings
+from api.security import decode_token
 
 
-# 始终豁免认证的路径（健康检查 + 文档）
+# 始终豁免认证的路径（健康检查 + 文档 + 认证端点）
 PUBLIC_PATHS = {
     "/api/v1/health",
     "/api/v1/ping",
     "/api/docs",
     "/api/redoc",
     "/api/openapi.json",
+    # 认证端点 — 公开
+    "/api/v1/auth/login",
+    "/api/v1/auth/register",
+    "/api/v1/auth/refresh",
 }
 
-# 静态资源扩展名 — 这些请求不触发 API 认证（Swagger UI / ReDoc 等加载的静态文件）
+# 静态资源扩展名
 STATIC_EXTENSIONS = {
     ".html", ".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg",
     ".ico", ".woff", ".woff2", ".ttf", ".eot", ".map", ".json",
@@ -33,14 +40,22 @@ STATIC_EXTENSIONS = {
 }
 
 
-class APIKeyMiddleware(BaseHTTPMiddleware):
-    """API Key 认证中间件"""
+class AuthMiddleware(BaseHTTPMiddleware):
+    """
+    统一认证中间件
+
+    1. 非 API 路径 → 放行
+    2. 公开路径 → 放行
+    3. JWT Bearer token → 解析并注入 user_id/tenant_id 到 request.state
+    4. X-API-Key → 兼容旧模式（不注入 user_id，纯 API 访问）
+    5. 开发模式（无 JWT secret 且无 API_KEY）→ 放行
+    6. 否则 → 401
+    """
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
 
-        # ── 非 API 路径直接放行（静态文件、SPA 页面等）──
-        # 放在最前面，避免 StaticFiles mount 的请求被拦截
+        # ── 非 API 路径直接放行 ──
         if not path.startswith("/api"):
             return await call_next(request)
 
@@ -48,37 +63,50 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         if path in PUBLIC_PATHS or path.startswith("/api/docs") or path.startswith("/api/redoc"):
             return await call_next(request)
 
-        # ── 静态资源文件（API docs 页面加载的 JS/CSS 等）──
-        # rpartition 返回 (head, sep, tail) 三元组
+        # ── 静态资源文件 ──
         _, _, ext = path.rpartition(".") if "." in path else ("", "", "")
         if ext and f".{ext}" in STATIC_EXTENSIONS:
             return await call_next(request)
 
-        # ── 如果未配置 API_KEY，跳过认证（开发模式）──
-        if not settings.api_key_plain:
-            return await call_next(request)
+        # ── 尝试 JWT 认证 ──
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            payload = decode_token(token)
 
-        # ── API 路径：配置了 key 时强制认证 ──
-        return await self._authenticate(request, call_next)
-
-    async def _authenticate(self, request: Request, call_next):
-        api_key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
-
-        if not api_key:
-            logger.warning(f"Missing API key for {request.method} {request.url.path}")
+            if payload and payload.get("type") == "access":
+                user_id = payload.get("sub")
+                tenant_id = payload.get("tenant_id")
+                if user_id and tenant_id:
+                    request.state.user_id = user_id
+                    request.state.tenant_id = tenant_id
+                    request.state.role = payload.get("role", "member")
+                    return await call_next(request)
+            # JWT 提供了但无效 → 401
             return JSONResponse(
                 status_code=401,
-                content={"detail": "Missing API key", "error_code": "UNAUTHORIZED"},
+                content={"detail": "Invalid or expired token", "error_code": "INVALID_TOKEN"},
             )
 
-        if not secrets.compare_digest(api_key, settings.api_key_plain):
-            logger.warning(f"Invalid API key for {request.method} {request.url.path}")
+        # ── 尝试 API Key 认证（兼容旧模式）──
+        api_key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
+        if api_key and settings.api_key_plain:
+            if secrets.compare_digest(api_key, settings.api_key_plain):
+                return await call_next(request)
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Invalid API key", "error_code": "FORBIDDEN"},
             )
 
-        return await call_next(request)
+        # ── 开发模式：未配置 JWT secret 且未配置 API_KEY → 放行 ──
+        if not settings.jwt_secret_key and not settings.api_key_plain:
+            return await call_next(request)
+
+        # ── 生产模式：需要认证 ──
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Authentication required", "error_code": "UNAUTHORIZED"},
+        )
 
 
 # ═══════════════════════════════════════════════════════════

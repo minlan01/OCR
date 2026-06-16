@@ -1,8 +1,15 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { isLoggedIn } from '@/api/client'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: '/login',
+      name: 'Login',
+      component: () => import('@/views/Login.vue'),
+      meta: { title: '登录', public: true },
+    },
     {
       path: '/',
       redirect: '/dashboard',
@@ -57,6 +64,29 @@ const router = createRouter({
       meta: { title: '证据整理' },
     },
   ],
+})
+
+// ─── 路由守卫：认证检查 ───
+router.beforeEach((to, _from, next) => {
+  const isPublic = to.meta.public === true
+
+  if (isPublic) {
+    // 已登录用户访问登录页 → 跳转首页
+    if (to.name === 'Login' && isLoggedIn()) {
+      next('/dashboard')
+      return
+    }
+    next()
+    return
+  }
+
+  // 非公开路由：检查是否登录
+  if (!isLoggedIn()) {
+    next({ name: 'Login', query: { redirect: to.fullPath } })
+    return
+  }
+
+  next()
 })
 
 router.afterEach((to) => {

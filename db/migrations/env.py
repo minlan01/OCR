@@ -31,6 +31,7 @@ config.set_main_option("sqlalchemy.url", settings.database_url)
 from db.session import Base
 from db.models import ScanTask, TaskStep, ScanFile, OutputTemplate  # noqa: F401
 from db.models_evidence import EvidenceCase, EvidenceMaterial, EvidenceStep, EvidenceRequirement  # noqa: F401
+from db.models_auth import Tenant, User  # noqa: F401
 
 target_metadata = Base.metadata
 

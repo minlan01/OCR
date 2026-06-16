@@ -17,8 +17,8 @@ from slowapi.errors import RateLimitExceeded
 
 from config.settings import settings
 from config.logging import setup_logging
-from api.routes import health, scan, admin, template, evidence
-from api.middleware import APIKeyMiddleware, RequestSizeLimitMiddleware
+from api.routes import health, scan, admin, template, evidence, auth
+from api.middleware import AuthMiddleware, RequestSizeLimitMiddleware
 from api.rate_limit import limiter
 
 
@@ -29,11 +29,11 @@ async def lifespan(app: FastAPI):
     setup_logging()
     logger.info(f"🚀 {settings.app_name} v{settings.app_version} starting | env={settings.app_env}")
 
-    # 安全提示：未配置 API_KEY 时所有 API 端点无认证保护
-    if not settings.api_key_plain:
+    # 安全提示
+    if not settings.api_key_plain and not settings.jwt_secret_key:
         logger.warning(
-            "⚠️  No API_KEY configured — all API endpoints are unprotected! "
-            "Set API_KEY in .env or environment variable to enable authentication."
+            "⚠️  No API_KEY or JWT_SECRET configured — all API endpoints are unprotected! "
+            "Set JWT_SECRET_KEY for SaaS auth mode."
         )
 
     # 尝试初始化 MinIO buckets（非阻塞）
@@ -78,8 +78,8 @@ def create_app() -> FastAPI:
     # 请求体大小限制（纵深防御，在认证之前拦截）
     app.add_middleware(RequestSizeLimitMiddleware)
 
-    # API Key 认证
-    app.add_middleware(APIKeyMiddleware)
+    # 认证中间件 (JWT + API Key 双模式)
+    app.add_middleware(AuthMiddleware)
 
     # 频率限制
     app.state.limiter = limiter
@@ -100,6 +100,7 @@ def create_app() -> FastAPI:
 
     # 注册路由
     app.include_router(health.router, prefix="/api/v1", tags=["Health"])
+    app.include_router(auth.router, prefix="/api/v1", tags=["Auth"])
     app.include_router(scan.router, prefix="/api/v1", tags=["Scans"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
     app.include_router(template.router, prefix="/api/v1", tags=["Templates"])

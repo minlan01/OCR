@@ -30,10 +30,21 @@
         <!-- 顶栏 -->
         <n-layout-header bordered style="height: 48px; display: flex; align-items: center; padding: 0 16px">
           <n-text strong style="font-size: 16px">ScanStruct Admin</n-text>
-          <n-space v-if="isOcrModule" style="margin-left: auto">
+          <n-space v-if="isOcrModule" style="margin-left: 40px">
             <n-button size="small" quaternary @click="refreshCurrent">
               <template #icon><n-icon><RefreshOutline /></n-icon></template>
               刷新
+            </n-button>
+          </n-space>
+          <!-- 用户信息 + 退出 -->
+          <n-space align="center" style="margin-left: auto">
+            <n-text depth="3" style="font-size: 13px">{{ userInfo?.display_name || '用户' }}</n-text>
+            <n-tag v-if="userInfo?.tenant_name" size="small" round :bordered="false" type="info">
+              {{ userInfo.tenant_name }}
+            </n-tag>
+            <n-button size="small" quaternary type="error" @click="handleLogout">
+              <template #icon><n-icon><LogOutOutline /></n-icon></template>
+              退出
             </n-button>
           </n-space>
         </n-layout-header>
@@ -55,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, h, watch, type Component } from 'vue'
+import { ref, computed, h, watch, onMounted, type Component } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -68,6 +79,7 @@ import {
   NIcon,
   NText,
   NSpace,
+  NTag,
   NMessageProvider,
   NDialogProvider,
   zhCN,
@@ -85,7 +97,9 @@ import {
   CreateOutline,
   ScanOutline,
   TimeOutline,
+  LogOutOutline,
 } from '@vicons/ionicons5'
+import { get, isLoggedIn, clearTokens, type UserInfo } from '@/api/client'
 
 const router = useRouter()
 const route = useRoute()
@@ -163,4 +177,24 @@ function onMenuSelect(key: string) {
 function refreshCurrent() {
   router.replace({ path: route.fullPath, query: { ...route.query, _t: Date.now() } })
 }
+
+// ─── 用户信息 + 退出 ───
+const userInfo = ref<UserInfo | null>(null)
+
+async function loadUserInfo() {
+  if (!isLoggedIn()) return
+  try {
+    userInfo.value = await get<UserInfo>('/auth/me')
+  } catch {
+    // token 失效等情况由拦截器处理
+  }
+}
+
+function handleLogout() {
+  clearTokens()
+  userInfo.value = null
+  router.push('/login')
+}
+
+onMounted(loadUserInfo)
 </script>
