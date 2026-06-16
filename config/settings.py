@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     ocr_max_file_size: int = 52_428_800  # 50 MB
     ocr_batch_size: int = 100
     ocr_confidence_threshold: float = 0.70
+    ocr_confidence_threshold_numeric: float = 0.85  # 金额/数字字段阈值
+    ocr_confidence_retry_threshold: float = 0.50   # 低于此值触发二次识别
+    ocr_cache_enabled: bool = True                 # Redis缓存OCR结果
+    ocr_cache_ttl: int = 86400                     # 缓存有效期(秒), 默认24h
+    ocr_region_retry_min_conf: float = 0.40        # 区域裁剪重识最低置信度
 
     # ==================== 百炼 OCR (阿里云 DashScope) ====================
     bailian_api_key: SecretStr = SecretStr("")
@@ -169,8 +174,12 @@ class Settings(BaseSettings):
     preprocess_dpi: int = 300
     preprocess_deskew: bool = True
     preprocess_denoise: bool = True
-    preprocess_binary: bool = False
+    preprocess_binary: bool = True        # 改为默认开启（v2管线含形态学去噪，效果更好）
     preprocess_crop_border: bool = True
+    preprocess_target_short_side: int = 1600   # 短边归一化目标像素，0=不缩放
+    preprocess_clahe_clip: float = 2.0         # CLAHE对比度限制，0=不做CLAHE
+    preprocess_sharpen: bool = True             # USM锐化（二值化模式下自动跳过）
+    preprocess_morph_clean: bool = True         # 形态学去噪点（仅二值化模式下生效）
     skip_classify: bool = False
 
     # ==================== 日志 ====================

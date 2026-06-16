@@ -27,8 +27,8 @@ class RapidOCREngine(BaseOCREngine):
     模型常驻内存，不重复初始化。
     """
 
-    # 批量处理线程数（ONNX Runtime CPU 模式下多线程并行推理）
-    _max_concurrent = int(os.environ.get("RAPIDOCR_MAX_WORKERS", "4"))
+    # 批量处理线程数：自适应 CPU 核心数（上限8）
+    _max_concurrent = min(int(os.environ.get("RAPIDOCR_MAX_WORKERS", str(os.cpu_count() or 4))), 8)
 
     def __init__(self):
         self._engine = None
@@ -62,13 +62,23 @@ class RapidOCREngine(BaseOCREngine):
                 model_dir = Path(tempfile.gettempdir()) / "rapidocr_models"
                 model_dir.mkdir(parents=True, exist_ok=True)
 
+            # ONNX Runtime 全局推理优化: 设置线程数和图优化
+            # 通过环境变量控制 onnxruntime 行为（RapidOCR 3.x 不直接支持 session_options 传参）
+            cpu_count = os.cpu_count() or 4
+            intra_threads = min(cpu_count, 4)  # 单算子并行线程
+            inter_threads = max(1, cpu_count // 2)  # 算子间并行线程
+            os.environ.setdefault("OMP_NUM_THREADS", str(intra_threads))
+            os.environ.setdefault("ORT_INTRA_OP_NUM_THREADS", str(intra_threads))
+            os.environ.setdefault("ORT_INTER_OP_NUM_THREADS", str(inter_threads))
+
             self._engine = RapidOCR(
                 params={"Global.model_root_dir": str(model_dir)}
             )
             self._model_loaded = True
             logger.info(
                 f"RapidOCR loaded | GPU=auto-detect | lang=ch (PP-OCRv4) "
-                f"| model_dir={model_dir} | workers={self._max_concurrent}"
+                f"| model_dir={model_dir} | workers={self._max_concurrent} "
+                f"| OMP/ORT_intra={intra_threads} | ORT_inter={inter_threads}"
             )
         except ImportError:
             logger.error(

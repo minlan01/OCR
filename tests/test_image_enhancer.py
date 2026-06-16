@@ -44,14 +44,21 @@ class TestImageEnhancerInit:
     def test_default_settings(self):
         enhancer = ImageEnhancer()
         assert enhancer.denoise is True
-        assert enhancer.binary is False
+        assert enhancer.binary is True       # v2: 默认开启
         assert enhancer.crop_border is True
+        assert enhancer.target_short_side == 1600
+        assert enhancer.clahe_clip == 2.0
+        assert enhancer.sharpen is True
+        assert enhancer.morph_clean is True
 
     def test_custom_settings(self):
-        enhancer = ImageEnhancer(denoise=False, binary=True, crop_border=False)
+        enhancer = ImageEnhancer(denoise=False, binary=False, crop_border=False,
+                                 target_short_side=0, clahe_clip=0)
         assert enhancer.denoise is False
-        assert enhancer.binary is True
+        assert enhancer.binary is False
         assert enhancer.crop_border is False
+        assert enhancer.target_short_side == 0
+        assert enhancer.clahe_clip == 0
 
 
 # ── ImageEnhancer.enhance ──────────────────────────────────

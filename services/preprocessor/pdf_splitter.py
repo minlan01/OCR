@@ -6,6 +6,7 @@ PDF 拆页服务
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -34,6 +35,7 @@ def _render_page(
         if prefer_extract:
             extracted = _try_extract_image_static(doc, page, output_path)
             if extracted:
+                logger.debug(f"Page {page_num + 1}: extracted embedded image (skipped render)")
                 doc.close()
                 return (page_num, extracted)
 
@@ -53,8 +55,12 @@ def _render_page(
         raise
 
 
-def _try_extract_image_static(doc, page, output_path: Path) -> Optional[Path]:
-    """静态版本：线程内提取嵌入图片"""
+def _try_extract_image_static(doc, page, output_path: Path, min_dpi: int = 150) -> Optional[Path]:
+    """静态版本：线程内提取嵌入图片
+
+    仅在嵌入图的有效 DPI >= min_dpi 时才直提（避免低分辨率图影响 OCR）。
+    有效 DPI = 图片像素宽度 / (页面宽度(inch))，页面默认 72pt = 1 inch。
+    """
     import fitz
 
     image_list = page.get_images(full=True)
@@ -86,15 +92,27 @@ def _try_extract_image_static(doc, page, output_path: Path) -> Optional[Path]:
     if best_img_info is None or best_coverage < 0.85:
         return None
 
+    # 检查嵌入图的有效 DPI
     xref = best_img_info[0]
-    smask = best_img_info[1] if len(best_img_info) > 1 else 0
-
     try:
         base_image = doc.extract_image(xref)
     except Exception:
         return None
     if not base_image:
         return None
+
+    img_width = base_image.get("width", 0)
+    page_width_inches = page_rect.width / 72.0
+    if page_width_inches > 0 and img_width > 0:
+        effective_dpi = img_width / page_width_inches
+        if effective_dpi < min_dpi:
+            logger.debug(
+                f"Page {page.number + 1}: embedded image DPI={effective_dpi:.0f} < {min_dpi}, "
+                f"will render instead"
+            )
+            return None
+
+    smask = best_img_info[1] if len(best_img_info) > 1 else 0
 
     img_ext = base_image.get("ext", "png")
     img_bytes = base_image.get("image")
@@ -175,7 +193,7 @@ class PDFSplitter:
         total_to_process = end_page - (start_page - 1)
         image_paths: list[Optional[Path]] = [None] * total_to_process
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 4, 8)) as pool:
             futures = {}
             for page_idx, page_num in enumerate(range(start_page - 1, end_page)):
                 f = pool.submit(
@@ -198,8 +216,11 @@ class PDFSplitter:
                     logger.warning(f"Split page {start_page + page_idx} failed: {e}")
 
         result = [p for p in image_paths if p is not None]
+        extracted_count = sum(1 for p in image_paths if p is not None and "extracted" in str(getattr(p, '_extracted', '')))
         logger.info(
-            f"PDF split: {pdf_path.name} -> {len(result)} pages (parallel 4 workers, dpi={self.dpi})"
+            f"PDF split: {pdf_path.name} -> {len(result)} pages "
+            f"(parallel {min(os.cpu_count() or 4, 8)} workers, dpi={self.dpi}, "
+            f"prefer_extract={prefer_extract})"
         )
         return result
 

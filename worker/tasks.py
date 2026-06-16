@@ -6,6 +6,7 @@ Celery 异步任务 — 完整处理管线
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -453,7 +454,16 @@ async def _run_scan_pdf_path(db, task, task_uuid, pdf_local, work_dir, summary, 
     # ---- Step 4: 图像增强 ----
     enhanced_paths = image_paths
     use_cloud_ocr = settings.ocr_engine_type in ("bailian", "dashscope", "qwen")
-    need_enhance = settings.preprocess_denoise or settings.preprocess_deskew or settings.preprocess_crop_border
+    need_enhance = (
+        settings.preprocess_denoise
+        or settings.preprocess_deskew
+        or settings.preprocess_crop_border
+        or settings.preprocess_binary
+        or settings.preprocess_target_short_side > 0
+        or settings.preprocess_clahe_clip > 0
+        or settings.preprocess_sharpen
+        or settings.preprocess_morph_clean
+    )
 
     if use_cloud_ocr:
         step_enh = await _create_step(db, task_uuid, "enhance")
@@ -473,6 +483,10 @@ async def _run_scan_pdf_path(db, task, task_uuid, pdf_local, work_dir, summary, 
                 denoise=settings.preprocess_denoise,
                 binary=settings.preprocess_binary,
                 crop_border=settings.preprocess_crop_border,
+                target_short_side=settings.preprocess_target_short_side,
+                clahe_clip=settings.preprocess_clahe_clip,
+                sharpen=settings.preprocess_sharpen,
+                morph_clean=settings.preprocess_morph_clean,
             )
 
             enhanced_dir = work_dir / "enhanced"
@@ -491,7 +505,7 @@ async def _run_scan_pdf_path(db, task, task_uuid, pdf_local, work_dir, summary, 
                 return (idx, denoised)
 
             enhanced_map = {}
-            with ThreadPoolExecutor(max_workers=4) as pool:
+            with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 4, 8)) as pool:
                 futures = {pool.submit(_enhance_one, (i, p)): i for i, p in enumerate(image_paths)}
                 for future in as_completed(futures):
                     try:
