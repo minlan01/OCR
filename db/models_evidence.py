@@ -40,6 +40,13 @@ class EvidenceCase(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="SET NULL"),
+        default=None,
+        nullable=True,
+        comment="租户ID（SaaS隔离用，开发模式可为null）",
+    )
     case_name: Mapped[str] = mapped_column(String(500), nullable=False)
     case_type: Mapped[str] = mapped_column(String(20), nullable=False)
     is_minor: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -80,6 +87,7 @@ class EvidenceCase(Base):
         Index("idx_evidence_cases_status", "status"),
         Index("idx_evidence_cases_created_at", created_at.desc()),
         Index("idx_evidence_cases_case_type", "case_type"),
+        Index("idx_evidence_cases_tenant_id", "tenant_id"),
         CheckConstraint(
             f"case_type IN ({VALID_EVIDENCE_CASE_TYPES})",
             name="ck_evidence_cases_case_type",

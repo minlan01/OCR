@@ -42,6 +42,7 @@ from api.schemas.evidence import (
 )
 from api.schemas.common import MessageResponse
 from api.rate_limit import limiter
+from api.dependencies import get_tenant_filter
 from config.settings import settings
 from db.models_evidence import EvidenceCase, EvidenceMaterial, EvidenceStep
 from db.session import get_db
@@ -130,8 +131,10 @@ def _build_case_out(case: EvidenceCase) -> EvidenceCaseResponse:
     )
 
 
-async def _get_case_or_404(case_id: uuid.UUID, db: AsyncSession) -> EvidenceCase:
+async def _get_case_or_404(case_id: uuid.UUID, db: AsyncSession, tenant_id: uuid.UUID | None = None) -> EvidenceCase:
     stmt = select(EvidenceCase).where(EvidenceCase.id == case_id)
+    if tenant_id is not None:
+        stmt = stmt.where(EvidenceCase.tenant_id == tenant_id)
     result = await db.execute(stmt)
     case = result.scalar_one_or_none()
     if case is None:
@@ -139,7 +142,7 @@ async def _get_case_or_404(case_id: uuid.UUID, db: AsyncSession) -> EvidenceCase
     return case
 
 
-async def _check_case_exists(case_id: uuid.UUID, db: AsyncSession) -> EvidenceCase:
+async def _check_case_exists(case_id: uuid.UUID, db: AsyncSession, tenant_id: uuid.UUID | None = None) -> EvidenceCase:
     """轻量级检查案件是否存在，不加载 materials 和 steps"""
     from sqlalchemy.orm import noload
     stmt = (
@@ -147,6 +150,8 @@ async def _check_case_exists(case_id: uuid.UUID, db: AsyncSession) -> EvidenceCa
         .options(noload(EvidenceCase.materials), noload(EvidenceCase.steps))
         .where(EvidenceCase.id == case_id)
     )
+    if tenant_id is not None:
+        stmt = stmt.where(EvidenceCase.tenant_id == tenant_id)
     result = await db.execute(stmt)
     case = result.scalar_one_or_none()
     if case is None:
@@ -218,9 +223,26 @@ async def create_case(
     request: Request,
     body: CreateEvidenceCaseRequest,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """创建证据案件"""
+    # ─── 租户配额检查 ───
+    if tenant_id is not None:
+        from db.models_auth import Tenant
+        tenant_result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
+        tenant = tenant_result.scalar_one_or_none()
+        if tenant and tenant.status != "active":
+            raise HTTPException(status_code=403, detail="租户已被暂停，无法创建案件")
+        if tenant:
+            count_stmt = select(func.count(EvidenceCase.id)).where(EvidenceCase.tenant_id == tenant_id)
+            current_count = (await db.execute(count_stmt)).scalar()
+            if current_count >= tenant.max_cases:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"已达租户案件上限 ({tenant.max_cases})，请联系管理员升级套餐",
+                )
     case = EvidenceCase(
+        tenant_id=tenant_id,
         case_name=body.case_name,
         case_type=body.case_type,
         is_minor=body.is_minor,
@@ -231,7 +253,7 @@ async def create_case(
     db.add(case)
     await db.flush()
     await db.refresh(case)
-    logger.info(f"Evidence case created: {case.id} type={body.case_type} minor={body.is_minor}")
+    logger.info(f"Evidence case created: {case.id} type={body.case_type} minor={body.is_minor} tenant={tenant_id}")
     return _build_case_out(case)
 
 
@@ -242,11 +264,14 @@ async def list_cases(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """案件列表"""
     from sqlalchemy.orm import noload
 
     count_stmt = select(func.count(EvidenceCase.id))
+    if tenant_id is not None:
+        count_stmt = count_stmt.where(EvidenceCase.tenant_id == tenant_id)
     total = (await db.execute(count_stmt)).scalar()
 
     stmt = (
@@ -256,6 +281,8 @@ async def list_cases(
         .offset((page - 1) * size)
         .limit(size)
     )
+    if tenant_id is not None:
+        stmt = stmt.where(EvidenceCase.tenant_id == tenant_id)
     result = await db.execute(stmt)
     cases = result.scalars().all()
 
@@ -271,9 +298,10 @@ async def get_case(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """案件详情"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
     return _build_case_out(case)
 
 
@@ -284,9 +312,10 @@ async def update_case(
     case_id: uuid.UUID,
     body: UpdateCaseRequest,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """更新案件基本信息（名称/类型/是否未成年人/律师信息/被告联系电话）"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
     if body.case_name is not None:
         case.case_name = body.case_name
     if body.case_type is not None:
@@ -312,9 +341,10 @@ async def cancel_case(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """取消正在处理的案件：杀掉 Celery 任务 + 清理 OCR 进程 + 标记为 failed"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     ACTIVE_STATUSES = {"processing", "analyzing", "exporting"}
     if case.status not in ACTIVE_STATUSES:
@@ -371,12 +401,13 @@ async def delete_case(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """删除案件及其所有材料、步骤（ORM级联删除）+ 清理MinIO存储
 
     processing/analyzing/exporting 状态的案件必须先调用 /cancel 取消后才能删除。
     """
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 状态保护：正在处理的案件不允许直接删除（会导致数据库锁竞争）
     ACTIVE_STATUSES = {"processing", "analyzing", "exporting"}
@@ -412,9 +443,10 @@ async def upload_materials(
     case_id: uuid.UUID,
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """批量上传证据材料（支持多文件，大文件流式上传）"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     if case.status in ("completed",):
         raise HTTPException(
@@ -575,12 +607,13 @@ async def start_process(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """一键处理：OCR + 分类 + 排序 → 生成清单"""
     if process_evidence_full is None:
         raise HTTPException(status_code=500, detail="Celery task dispatcher not available")
 
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 检查是否有未处理的素材（pending 或 failed 状态）
     pending_stmt = select(func.count()).select_from(EvidenceMaterial).where(
@@ -623,9 +656,10 @@ async def get_progress(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """处理进度"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     steps = case.steps or []
     completed_steps = sum(1 for s in steps if s.status == "completed")
@@ -688,11 +722,12 @@ async def get_catalog(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """获取证据材料清单"""
     from services.evidence.classifier import CATEGORY_NAMES
 
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
     catalog_data = case.catalog_data or {}
 
     groups = []
@@ -738,9 +773,10 @@ async def update_catalog(
     case_id: uuid.UUID,
     body: UpdateCatalogRequest,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """编辑清单（改分类/调序/改描述）"""
-    await _check_case_exists(case_id, db)
+    await _check_case_exists(case_id, db, tenant_id)
 
     for item_update in body.items:
         try:
@@ -781,9 +817,10 @@ async def update_material(
     material_id: uuid.UUID,
     body: UpdateMaterialRequest,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """编辑材料分类/信息"""
-    await _check_case_exists(case_id, db)
+    await _check_case_exists(case_id, db, tenant_id)
 
     stmt = select(EvidenceMaterial).where(
         EvidenceMaterial.id == material_id,
@@ -818,6 +855,7 @@ async def delete_material(
     case_id: uuid.UUID,
     material_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """删除材料（同时清理 MinIO 文件）
 
@@ -867,9 +905,10 @@ async def retry_material_ocr(
     case_id: uuid.UUID,
     material_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """重试单个素材的 OCR 识别"""
-    await _check_case_exists(case_id, db)
+    await _check_case_exists(case_id, db, tenant_id)
 
     stmt = select(EvidenceMaterial).where(
         EvidenceMaterial.id == material_id,
@@ -907,6 +946,7 @@ async def preview_material_pages(
     case_id: uuid.UUID,
     material_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """预览多页文档的全部页面（缩略图）
 
@@ -916,7 +956,7 @@ async def preview_material_pages(
     """
     import base64
 
-    await _check_case_exists(case_id, db)
+    await _check_case_exists(case_id, db, tenant_id)
 
     stmt = select(EvidenceMaterial).where(
         EvidenceMaterial.id == material_id,
@@ -1015,6 +1055,7 @@ async def select_material_pages(
     material_id: uuid.UUID,
     selected_pages: list[int] = Body(default=[], embed=True),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """选择多页文档中需要处理的目标页
 
@@ -1022,7 +1063,7 @@ async def select_material_pages(
     - 空列表 [] 表示处理全部页面
     - 选择后，后续 OCR 和分析只处理选中页面
     """
-    await _check_case_exists(case_id, db)
+    await _check_case_exists(case_id, db, tenant_id)
 
     stmt = select(EvidenceMaterial).where(
         EvidenceMaterial.id == material_id,
@@ -1062,12 +1103,13 @@ async def extract_material_page(
     page_num: int,
     dpi: int = Query(default=150, ge=72, le=300),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """提取指定页为高清图像
 
     返回该页的 JPEG 图像，用于独立 OCR 或人工审阅。
     """
-    await _check_case_exists(case_id, db)
+    await _check_case_exists(case_id, db, tenant_id)
 
     stmt = select(EvidenceMaterial).where(
         EvidenceMaterial.id == material_id,
@@ -1140,9 +1182,10 @@ async def download_catalog_pdf(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """下载证据目录 PDF（表格形式）"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     catalog_data = case.catalog_data or {}
     if not catalog_data.get("groups"):
@@ -1179,9 +1222,10 @@ async def download_materials_pdf(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """下载证据材料 PDF（图片网格排版，嵌入原始素材）"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 清除旧的 PDF 缓存（格式升级后强制重新生成）
     if case.catalog_pdf_path:
@@ -1277,12 +1321,13 @@ async def start_analysis(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """分析清单 → 生成文档数据"""
     if analyze_evidence is None:
         raise HTTPException(status_code=500, detail="Celery task dispatcher not available")
 
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 允许 failed 状态重新分析
     if case.status not in ("catalog_ready", "analysis_done", "failed"):
@@ -1331,9 +1376,10 @@ async def get_analysis(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """获取分析结果"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 如果分析失败，从 steps 中提取错误信息
     error_message = None
@@ -1361,9 +1407,10 @@ async def export_filing_evidence(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """导出立案证据 Word"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 清理旧文件
     _cleanup_old_export(case, "立案证据.docx")
@@ -1395,9 +1442,10 @@ async def export_complaint(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """导出民事起诉状 Word（纯数据驱动，无 event loop 冲突）"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     catalog_data = case.catalog_data or {}
     analysis_result = case.analysis_result or {}
@@ -1454,9 +1502,10 @@ async def export_appraisal_app(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """导出司法鉴定申请书 Word"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 清理旧文件
     _cleanup_old_export(case, "司法鉴定申请书.docx")
@@ -1488,9 +1537,10 @@ async def export_compensation(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """导出赔偿费用总表 Excel"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 清理旧文件
     _cleanup_old_export(case, "赔偿费用清单.xlsx")
@@ -1523,9 +1573,10 @@ async def export_fee_detail(
     case_id: uuid.UUID,
     fee_type: str,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """导出单项费用明细 Excel"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     try:
         from services.evidence.excel_generator import generate_fee_type_detail
@@ -1562,12 +1613,13 @@ async def create_bundle(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """全部打包 ZIP"""
     if export_evidence_bundle is None:
         raise HTTPException(status_code=500, detail="Celery task dispatcher not available")
 
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     if case.status not in ("analysis_done", "completed"):
         raise HTTPException(
@@ -1594,13 +1646,14 @@ async def download_bundle(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """下载打包好的 ZIP 文件
 
     如果已有 bundle_path（之前打包过），直接下载；
     否则在当前 async 上下文中获取数据，同步生成文档后打包下载。
     """
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     if case.status not in ("analysis_done", "completed", "exporting"):
         raise HTTPException(
@@ -1862,12 +1915,13 @@ async def calculate_compensation(
     case_id: uuid.UUID,
     req: Optional[CompensationCalculateRequest] = None,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """自动提取 + 计算赔偿费用"""
     from services.evidence.compensation_calculator import calculate_all, merge_params
     from services.evidence.compensation_extractor import extract_from_materials
 
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 获取素材
     stmt = select(EvidenceMaterial).where(
@@ -1910,9 +1964,10 @@ async def get_compensation(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """获取赔偿计算结果"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 获取 fee_receipt 类素材列表
     stmt = select(EvidenceMaterial).where(
@@ -1946,9 +2001,10 @@ async def update_compensation(
     case_id: uuid.UUID,
     req: CompensationUpdateRequest,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """保存手动调整的赔偿数据"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 深拷贝，确保 SQLAlchemy 检测到 JSONB 变更（原地修改不触发脏标记）
     import copy
@@ -1996,9 +2052,10 @@ async def export_compensation_calculation(
     request: Request,
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """导出赔偿计算 Excel（无数据时生成空模板）"""
-    case = await _get_case_or_404(case_id, db)
+    case = await _get_case_or_404(case_id, db, tenant_id)
 
     # 不再强制要求有计算数据，无数据时生成模板（金额留白）
     try:
