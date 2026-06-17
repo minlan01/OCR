@@ -27,6 +27,12 @@
       <n-tab-pane name="tenant" tab="租户信息">
         <!-- super_admin: 租户列表 -->
         <template v-if="isSuperAdmin">
+          <n-space justify="end" style="margin-bottom: 16px">
+            <n-button type="primary" @click="openTenantCreateModal">
+              <template #icon><n-icon><AddOutline /></n-icon></template>
+              添加租户
+            </n-button>
+          </n-space>
           <n-data-table
             :columns="tenantColumns"
             :data="tenantData"
@@ -155,6 +161,9 @@
         <n-form-item v-if="!editingUser" label="密码" path="password">
           <n-input v-model:value="userForm.password" type="password" placeholder="至少6位" show-password-on="click" />
         </n-form-item>
+        <n-form-item v-else label="新密码" path="password">
+          <n-input v-model:value="userForm.password" type="password" placeholder="留空则不修改密码" show-password-on="click" />
+        </n-form-item>
         <n-form-item label="角色" path="role">
           <n-select
             v-model:value="userForm.role"
@@ -173,8 +182,8 @@
       </template>
     </n-modal>
 
-    <!-- ═══ 编辑租户 Modal ═══ -->
-    <n-modal v-model:show="tenantModalShow" preset="card" title="编辑租户" style="width: 520px">
+    <!-- ═══ 编辑/创建租户 Modal ═══ -->
+    <n-modal v-model:show="tenantModalShow" preset="card" :title="editingTenantId ? '编辑租户' : '添加租户'" style="width: 520px">
       <n-form
         ref="tenantFormRef"
         :model="tenantForm"
@@ -209,7 +218,9 @@
       <template #footer>
         <n-space justify="end">
           <n-button @click="tenantModalShow = false">取消</n-button>
-          <n-button type="primary" :loading="tenantSaving" @click="submitTenantForm">保存</n-button>
+          <n-button type="primary" :loading="tenantSaving" @click="submitTenantForm">
+            {{ editingTenantId ? '保存' : '创建' }}
+          </n-button>
         </n-space>
       </template>
     </n-modal>
@@ -226,13 +237,13 @@ import {
   type DataTableColumns, type FormInst, type FormRules,
 } from 'naive-ui'
 import {
-  PersonAddOutline, CreateOutline, TrashOutline,
+  PersonAddOutline, CreateOutline, TrashOutline, AddOutline,
 } from '@vicons/ionicons5'
 import {
   getUsage, listUsers, createUser, updateUser, disableUser,
-  listTenants, getTenantDetail, updateTenant,
+  listTenants, getTenantDetail, updateTenant, createTenant,
   type UserInfo, type UserListItem, type UserCreateRequest, type UserUpdateRequest,
-  type TenantListItem, type TenantDetail, type TenantUpdateRequest,
+  type TenantListItem, type TenantDetail, type TenantUpdateRequest, type TenantCreateRequest,
   type UsageResponse,
 } from '@/api/client'
 
@@ -458,6 +469,9 @@ async function submitUserForm(): Promise<void> {
         display_name: userForm.value.display_name,
         role: userForm.value.role,
       }
+      if (userForm.value.password) {
+        payload.password = userForm.value.password
+      }
       await updateUser(editingUser.value.id, payload)
       message.success('用户已更新')
     } else {
@@ -629,11 +643,33 @@ function openTenantEditModal(row: TenantListItem): void {
   tenantModalShow.value = true
 }
 
+function openTenantCreateModal(): void {
+  editingTenantId.value = ''
+  tenantForm.value = {
+    name: '',
+    plan: 'free',
+    max_cases: 20,
+    max_concurrent: 2,
+    storage_quota_mb: 2048,
+    status: 'active',
+  }
+  tenantModalShow.value = true
+}
+
 async function submitTenantForm(): Promise<void> {
+  if (!tenantForm.value.name || !tenantForm.value.name.trim()) {
+    message.warning('请输入租户名称')
+    return
+  }
   tenantSaving.value = true
   try {
-    await updateTenant(editingTenantId.value, tenantForm.value)
-    message.success('租户配置已更新')
+    if (editingTenantId.value) {
+      await updateTenant(editingTenantId.value, tenantForm.value)
+      message.success('租户配置已更新')
+    } else {
+      await createTenant(tenantForm.value as TenantCreateRequest)
+      message.success('租户已创建')
+    }
     tenantModalShow.value = false
     loadTenants()
   } catch (err) {

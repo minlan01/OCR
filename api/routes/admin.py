@@ -23,6 +23,7 @@ from loguru import logger
 from api.rate_limit import limiter
 from api.schemas.common import AdminQueueResponse, AdminStatsResponse, PaginatedResponse
 from api.schemas.admin import (
+    TenantCreateRequest,
     TenantDetail,
     TenantListItem,
     TenantUpdateRequest,
@@ -320,6 +321,8 @@ async def update_user(
         user.display_name = payload.display_name
     if payload.is_active is not None:
         user.is_active = payload.is_active
+    if payload.password is not None:
+        user.hashed_password = hash_password(payload.password)
 
     await db.commit()
     await db.refresh(user)
@@ -373,6 +376,51 @@ async def disable_user(
 # ══════════════════════════════════════════════════════════════
 #  租户管理（super_admin 专属）
 # ══════════════════════════════════════════════════════════════
+
+@router.post("/tenants", response_model=TenantDetail, status_code=201)
+@limiter.limit("10/minute")
+async def create_tenant(
+    request: Request,
+    payload: TenantCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """创建租户（仅 super_admin）"""
+    if not _require_super_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required",
+        )
+
+    tenant = Tenant(
+        name=payload.name,
+        plan=payload.plan,
+        max_cases=payload.max_cases,
+        max_concurrent=payload.max_concurrent,
+        storage_quota_mb=payload.storage_quota_mb,
+        status=payload.status,
+    )
+    db.add(tenant)
+    await db.commit()
+    await db.refresh(tenant)
+
+    logger.info(f"Tenant created by {current_user.email}: {tenant.name}")
+    return TenantDetail(
+        id=tenant.id,
+        name=tenant.name,
+        plan=tenant.plan,
+        max_cases=tenant.max_cases,
+        max_concurrent=tenant.max_concurrent,
+        storage_quota_mb=tenant.storage_quota_mb,
+        storage_used_mb=tenant.storage_used_mb,
+        status=tenant.status,
+        created_at=tenant.created_at,
+        updated_at=tenant.updated_at,
+        user_count=0,
+        case_count=0,
+        last_active=None,
+    )
+
 
 @router.get("/tenants", response_model=PaginatedResponse[TenantListItem])
 @limiter.limit("20/minute")

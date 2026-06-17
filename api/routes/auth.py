@@ -10,6 +10,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
+from uuid import UUID
 
 from config.settings import settings
 from db.session import get_db
@@ -29,10 +30,16 @@ router = APIRouter()
 # ─── Schemas ───
 
 class RegisterRequest(BaseModel):
-    tenant_name: str
+    tenant_name: str | None = None
+    tenant_id: UUID | None = None
     email: EmailStr
     password: str
     display_name: str
+
+
+class TenantNameItem(BaseModel):
+    id: str
+    name: str
 
 
 class LoginRequest(BaseModel):
@@ -67,9 +74,23 @@ TokenResponse.model_rebuild()
 
 # ─── 路由 ───
 
+@router.get("/auth/tenants", response_model=list[TenantNameItem])
+async def list_tenant_names(db: AsyncSession = Depends(get_db)):
+    """获取租户名称列表（公开接口，注册时选择用）"""
+    result = await db.execute(
+        select(Tenant.id, Tenant.name)
+        .where(Tenant.status == "active")
+        .order_by(Tenant.name)
+    )
+    return [
+        TenantNameItem(id=str(row[0]), name=row[1])
+        for row in result.all()
+    ]
+
+
 @router.post("/auth/register", response_model=TokenResponse, status_code=201)
 async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    """注册新租户+管理员用户"""
+    """注册：可选择已有租户（member）或创建新租户（tenant_admin）"""
     # 检查邮箱是否已注册
     existing = await db.execute(select(User).where(User.email == req.email))
     if existing.scalar_one_or_none():
@@ -78,25 +99,43 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
             detail="Email already registered",
         )
 
-    # 创建租户
-    tenant = Tenant(
-        name=req.tenant_name,
-        plan="free",
-        max_cases=settings.default_tenant_max_cases,
-        max_concurrent=settings.default_tenant_max_concurrent,
-        storage_quota_mb=settings.default_tenant_storage_quota_mb,
-        status="active",
-    )
-    db.add(tenant)
-    await db.flush()  # 获取 tenant.id
+    # 选择已有租户 or 创建新租户
+    if req.tenant_id:
+        # 加入已有租户 → member
+        tenant_row = await db.execute(select(Tenant).where(Tenant.id == req.tenant_id))
+        tenant = tenant_row.scalar_one_or_none()
+        if not tenant or tenant.status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Selected tenant not found or inactive",
+            )
+        user_role = "member"
+    else:
+        # 创建新租户 → tenant_admin
+        if not req.tenant_name or not req.tenant_name.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Organization name is required when not joining an existing one",
+            )
+        tenant = Tenant(
+            name=req.tenant_name.strip(),
+            plan="free",
+            max_cases=settings.default_tenant_max_cases,
+            max_concurrent=settings.default_tenant_max_concurrent,
+            storage_quota_mb=settings.default_tenant_storage_quota_mb,
+            status="active",
+        )
+        db.add(tenant)
+        await db.flush()
+        user_role = "tenant_admin"
 
-    # 创建管理员用户
+    # 创建用户
     user = User(
         tenant_id=tenant.id,
         email=req.email,
         hashed_password=hash_password(req.password),
         display_name=req.display_name,
-        role="tenant_admin",
+        role=user_role,
         is_active=True,
     )
     db.add(user)

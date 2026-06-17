@@ -36,9 +36,30 @@
         <!-- 注册 -->
         <n-tab-pane name="register" tab="注册">
           <n-form ref="registerFormRef" :model="registerForm" :rules="registerRules" label-placement="top" size="large">
-            <n-form-item label="组织名称" path="tenant_name">
+            <!-- 组织名称：选择已有 or 新建 -->
+            <n-form-item label="组织" path="registerMode">
+              <n-radio-group v-model:value="registerMode" name="registerMode" style="width: 100%">
+                <n-space>
+                  <n-radio value="existing">加入已有组织</n-radio>
+                  <n-radio value="new">创建新组织</n-radio>
+                </n-space>
+              </n-radio-group>
+            </n-form-item>
+
+            <n-form-item v-if="registerMode === 'existing'" label="选择组织" path="tenant_id">
+              <n-select
+                v-model:value="registerForm.tenant_id"
+                :options="tenantOptions"
+                placeholder="请选择组织"
+                :loading="tenantsLoading"
+                filterable
+              />
+            </n-form-item>
+
+            <n-form-item v-else label="组织名称" path="tenant_name">
               <n-input v-model:value="registerForm.tenant_name" placeholder="律所/公司名称" />
             </n-form-item>
+
             <n-form-item label="邮箱" path="email">
               <n-input v-model:value="registerForm.email" placeholder="邮箱地址" :input-props="{ type: 'email' }" />
             </n-form-item>
@@ -69,7 +90,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   NTabs,
@@ -78,16 +99,43 @@ import {
   NFormItem,
   NInput,
   NButton,
+  NRadioGroup,
+  NRadio,
+  NSelect,
+  NSpace,
   useMessage,
   type FormInst,
   type FormRules,
 } from 'naive-ui'
-import { post, setTokens, isLoggedIn, type TokenResponse } from '@/api/client'
+import { post, get, setTokens, isLoggedIn, type TokenResponse, type TenantNameItem } from '@/api/client'
 
 const router = useRouter()
 const message = useMessage()
 const loading = ref(false)
 const activeTab = ref<'login' | 'register'>('login')
+
+// ─── 租户列表 ───
+const registerMode = ref<'existing' | 'new'>('new')
+const tenantOptions = ref<{ label: string; value: string }[]>([])
+const tenantsLoading = ref(false)
+
+async function loadTenants(): Promise<void> {
+  tenantsLoading.value = true
+  try {
+    const list = await get<TenantNameItem[]>('/auth/tenants')
+    tenantOptions.value = list.map((t) => ({ label: t.name, value: t.id }))
+  } catch {
+    // 静默失败，不影响注册
+  } finally {
+    tenantsLoading.value = false
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'register' && tenantOptions.value.length === 0) {
+    loadTenants()
+  }
+})
 
 // ─── 登录 ───
 const loginFormRef = ref<FormInst | null>(null)
@@ -124,19 +172,26 @@ async function handleLogin() {
 const registerFormRef = ref<FormInst | null>(null)
 const registerForm = reactive({
   tenant_name: '',
+  tenant_id: '' as string,
   email: '',
   display_name: '',
   password: '',
 })
-const registerRules: FormRules = {
-  tenant_name: [{ required: true, message: '请输入组织名称', trigger: 'blur' }],
+
+const registerRules = computed<FormRules>(() => ({
+  tenant_name: registerMode.value === 'new'
+    ? [{ required: true, message: '请输入组织名称', trigger: 'blur' }]
+    : [],
+  tenant_id: registerMode.value === 'existing'
+    ? [{ required: true, message: '请选择组织', trigger: 'change' }]
+    : [],
   email: [{ required: true, message: '请输入邮箱', trigger: 'blur' }],
   display_name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
     { min: 6, message: '密码至少6位', trigger: 'blur' },
   ],
-}
+}))
 
 async function handleRegister() {
   try {
@@ -146,7 +201,18 @@ async function handleRegister() {
   }
   loading.value = true
   try {
-    const res = await post<TokenResponse>('/auth/register', registerForm)
+    const body: Record<string, string> = {
+      email: registerForm.email,
+      display_name: registerForm.display_name,
+      password: registerForm.password,
+    }
+    if (registerMode.value === 'existing' && registerForm.tenant_id) {
+      body.tenant_id = registerForm.tenant_id
+    } else {
+      body.tenant_name = registerForm.tenant_name
+    }
+
+    const res = await post<TokenResponse>('/auth/register', body)
     setTokens(res.access_token, res.refresh_token)
     message.success(`注册成功，欢迎 ${res.user.display_name}`)
     router.push('/dashboard')

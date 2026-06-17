@@ -487,6 +487,7 @@ export interface UserUpdateRequest {
   display_name?: string
   role?: 'member' | 'tenant_admin'
   is_active?: boolean
+  password?: string
 }
 
 export interface TenantListItem {
@@ -526,6 +527,20 @@ export interface TenantUpdateRequest {
   max_concurrent?: number
   storage_quota_mb?: number
   status?: 'active' | 'suspended'
+}
+
+export interface TenantCreateRequest {
+  name: string
+  plan: 'free' | 'pro' | 'enterprise'
+  max_cases: number
+  max_concurrent: number
+  storage_quota_mb: number
+  status: 'active' | 'suspended'
+}
+
+export interface TenantNameItem {
+  id: string
+  name: string
 }
 
 export interface UsageResponse {
@@ -595,6 +610,14 @@ export async function updateTenant(
   payload: TenantUpdateRequest
 ): Promise<TenantDetail> {
   return put<TenantDetail>(`/admin/tenants/${tenantId}`, payload)
+}
+
+export async function createTenant(payload: TenantCreateRequest): Promise<TenantDetail> {
+  return post<TenantDetail>('/admin/tenants', payload)
+}
+
+export async function listTenantNames(): Promise<TenantNameItem[]> {
+  return get<TenantNameItem[]>('/auth/tenants')
 }
 
 // ─── 个人信息 / 密码管理 ───

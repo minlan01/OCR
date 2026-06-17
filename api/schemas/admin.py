@@ -43,6 +43,7 @@ class UserUpdateRequest(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=100)
     role: Literal["member", "tenant_admin"] | None = None
     is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=6, max_length=128)
 
 
 class UserResponse(BaseModel):
@@ -93,6 +94,16 @@ class TenantDetail(BaseModel):
     last_active: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class TenantCreateRequest(BaseModel):
+    """创建租户"""
+    name: str = Field(..., min_length=1, max_length=200)
+    plan: Literal["free", "pro", "enterprise"] = "free"
+    max_cases: int = Field(default=20, ge=0)
+    max_concurrent: int = Field(default=2, ge=1)
+    storage_quota_mb: int = Field(default=2048, ge=0)
+    status: Literal["active", "suspended"] = "active"
 
 
 class TenantUpdateRequest(BaseModel):
