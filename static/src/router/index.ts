@@ -71,6 +71,12 @@ const router = createRouter({
           component: () => import('@/views/Admin.vue'),
           meta: { title: '管理后台', requiresAdmin: true },
         },
+        {
+          path: 'profile',
+          name: 'Profile',
+          component: () => import('@/views/Profile.vue'),
+          meta: { title: '个人中心' },
+        },
       ],
     },
   ],

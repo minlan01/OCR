@@ -234,6 +234,67 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
     )
 
 
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
+@router.put("/auth/change-password")
+async def change_password(
+    req: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """修改当前用户密码"""
+    if len(req.new_password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be at least 6 characters",
+        )
+
+    if not current_user.hashed_password or not verify_password(req.old_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+
+    current_user.hashed_password = hash_password(req.new_password)
+    await db.commit()
+
+    logger.info(f"Password changed for user: {current_user.email}")
+    return {"message": "Password changed successfully"}
+
+
+class UpdateProfileRequest(BaseModel):
+    display_name: str | None = None
+
+
+@router.put("/auth/profile", response_model=UserInfo)
+async def update_profile(
+    req: UpdateProfileRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """更新当前用户个人信息"""
+    if req.display_name is not None:
+        current_user.display_name = req.display_name.strip()
+
+    await db.commit()
+
+    tenant_result = await db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
+    tenant = tenant_result.scalar_one()
+
+    return UserInfo(
+        id=str(current_user.id),
+        email=current_user.email,
+        display_name=current_user.display_name,
+        role=current_user.role,
+        tenant_id=str(tenant.id),
+        tenant_name=tenant.name,
+        plan=tenant.plan,
+    )
+
+
 @router.get("/auth/me", response_model=UserInfo)
 async def get_me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """获取当前登录用户信息"""

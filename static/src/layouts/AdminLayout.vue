@@ -35,7 +35,10 @@
         </n-space>
         <!-- 用户信息 + 退出 -->
         <n-space align="center" style="margin-left: auto">
-          <n-text depth="3" style="font-size: 13px">{{ userInfo?.display_name || '用户' }}</n-text>
+          <n-button size="small" quaternary @click="router.push('/profile')">
+            <template #icon><n-icon><PersonCircleOutline /></n-icon></template>
+            {{ userInfo?.display_name || '个人中心' }}
+          </n-button>
           <n-tag v-if="userInfo?.tenant_name" size="small" round :bordered="false" type="info">
             {{ userInfo.tenant_name }}
           </n-tag>
@@ -70,7 +73,6 @@ import {
   NMenu,
   NButton,
   NIcon,
-  NText,
   NSpace,
   NTag,
 } from 'naive-ui'
@@ -88,6 +90,7 @@ import {
   TimeOutline,
   LogOutOutline,
   SettingsOutline,
+  PersonCircleOutline,
 } from '@vicons/ionicons5'
 import { get, isLoggedIn, clearTokens, type UserInfo } from '@/api/client'
 

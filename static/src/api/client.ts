@@ -596,3 +596,13 @@ export async function updateTenant(
 ): Promise<TenantDetail> {
   return put<TenantDetail>(`/admin/tenants/${tenantId}`, payload)
 }
+
+// ─── 个人信息 / 密码管理 ───
+
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  await put('/auth/change-password', { old_password: oldPassword, new_password: newPassword })
+}
+
+export async function updateProfile(displayName: string): Promise<UserInfo> {
+  return put<UserInfo>('/auth/profile', { display_name: displayName })
+}
