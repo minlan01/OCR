@@ -1,75 +1,68 @@
 <template>
-  <n-config-provider :locale="zhCN" :date-locale="dateZhCN">
-    <n-layout has-sider position="absolute" style="height: 100vh">
-      <!-- 侧边栏 -->
-      <n-layout-sider
-        bordered
-        collapse-mode="width"
-        :collapsed-width="64"
-        :width="200"
+  <n-layout has-sider position="absolute" style="height: 100vh">
+    <!-- 侧边栏 -->
+    <n-layout-sider
+      bordered
+      collapse-mode="width"
+      :collapsed-width="64"
+      :width="200"
+      :collapsed="collapsed"
+      show-trigger
+      @collapse="collapsed = true"
+      @expand="collapsed = false"
+    >
+      <n-menu
         :collapsed="collapsed"
-        show-trigger
-        @collapse="collapsed = true"
-        @expand="collapsed = false"
+        :collapsed-width="64"
+        :collapsed-icon-size="22"
+        :options="menuOptions"
+        :value="activeMenu"
+        :expanded-keys="expandedKeys"
+        @update:value="onMenuSelect"
+        @update:expanded-keys="(keys: string[]) => expandedKeys = keys"
+      />
+    </n-layout-sider>
+
+    <n-layout>
+      <!-- 顶栏 -->
+      <n-layout-header bordered style="height: 48px; display: flex; align-items: center; padding: 0 16px">
+        <n-text strong style="font-size: 16px">ScanStruct</n-text>
+        <n-space v-if="isOcrModule" style="margin-left: 40px">
+          <n-button size="small" quaternary @click="refreshCurrent">
+            <template #icon><n-icon><RefreshOutline /></n-icon></template>
+            刷新
+          </n-button>
+        </n-space>
+        <!-- 用户信息 + 退出 -->
+        <n-space align="center" style="margin-left: auto">
+          <n-text depth="3" style="font-size: 13px">{{ userInfo?.display_name || '用户' }}</n-text>
+          <n-tag v-if="userInfo?.tenant_name" size="small" round :bordered="false" type="info">
+            {{ userInfo.tenant_name }}
+          </n-tag>
+          <n-button size="small" quaternary type="error" @click="handleLogout">
+            <template #icon><n-icon><LogOutOutline /></n-icon></template>
+            退出
+          </n-button>
+        </n-space>
+      </n-layout-header>
+
+      <!-- 内容区 -->
+      <n-layout-content
+        style="padding: 24px; overflow-y: auto"
+        :native-scrollbar="false"
       >
-        <n-menu
-          :collapsed="collapsed"
-          :collapsed-width="64"
-          :collapsed-icon-size="22"
-          :options="menuOptions"
-          :value="activeMenu"
-          :expanded-keys="expandedKeys"
-          @update:value="onMenuSelect"
-          @update:expanded-keys="(keys: string[]) => expandedKeys = keys"
-        />
-      </n-layout-sider>
-
-      <n-layout>
-        <n-message-provider>
-        <n-dialog-provider>
-        <!-- 顶栏 -->
-        <n-layout-header bordered style="height: 48px; display: flex; align-items: center; padding: 0 16px">
-          <n-text strong style="font-size: 16px">ScanStruct Admin</n-text>
-          <n-space v-if="isOcrModule" style="margin-left: 40px">
-            <n-button size="small" quaternary @click="refreshCurrent">
-              <template #icon><n-icon><RefreshOutline /></n-icon></template>
-              刷新
-            </n-button>
-          </n-space>
-          <!-- 用户信息 + 退出 -->
-          <n-space align="center" style="margin-left: auto">
-            <n-text depth="3" style="font-size: 13px">{{ userInfo?.display_name || '用户' }}</n-text>
-            <n-tag v-if="userInfo?.tenant_name" size="small" round :bordered="false" type="info">
-              {{ userInfo.tenant_name }}
-            </n-tag>
-            <n-button size="small" quaternary type="error" @click="handleLogout">
-              <template #icon><n-icon><LogOutOutline /></n-icon></template>
-              退出
-            </n-button>
-          </n-space>
-        </n-layout-header>
-
-        <!-- 内容区 -->
-        <n-layout-content
-          style="padding: 24px; overflow-y: auto"
-          :native-scrollbar="false"
-        >
-          <router-view v-slot="{ Component }">
-            <component :is="Component" :key="$route.fullPath" />
-          </router-view>
-        </n-layout-content>
-        </n-dialog-provider>
-        </n-message-provider>
-      </n-layout>
+        <router-view v-slot="{ Component }">
+          <component :is="Component" :key="$route.fullPath" />
+        </router-view>
+      </n-layout-content>
     </n-layout>
-  </n-config-provider>
+  </n-layout>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, h, watch, onMounted, type Component } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
-  NConfigProvider,
   NLayout,
   NLayoutSider,
   NLayoutHeader,
@@ -80,10 +73,6 @@ import {
   NText,
   NSpace,
   NTag,
-  NMessageProvider,
-  NDialogProvider,
-  zhCN,
-  dateZhCN,
 } from 'naive-ui'
 import {
   SpeedometerOutline,
@@ -200,7 +189,9 @@ async function loadUserInfo() {
   try {
     userInfo.value = await get<UserInfo>('/auth/me')
   } catch {
-    // token 失效等情况由拦截器处理
+    // token 失效等情况 — 跳转登录
+    clearTokens()
+    router.push('/login')
   }
 }
 

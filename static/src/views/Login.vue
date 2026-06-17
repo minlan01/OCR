@@ -2,6 +2,7 @@
   <div class="login-container">
     <div class="login-card">
       <div class="login-header">
+        <div class="login-logo">S</div>
         <h1 class="login-title">ScanStruct</h1>
         <p class="login-subtitle">扫描件智能结构化处理系统</p>
       </div>
@@ -11,14 +12,16 @@
         <n-tab-pane name="login" tab="登录">
           <n-form ref="loginFormRef" :model="loginForm" :rules="loginRules" label-placement="top" size="large">
             <n-form-item label="邮箱" path="email">
-              <n-input v-model:value="loginForm.email" placeholder="请输入邮箱" :input-props="{ type: 'email' }" />
+              <n-input v-model:value="loginForm.email" placeholder="请输入邮箱" :input-props="{ type: 'email' }" @keyup.enter="handleLogin" />
             </n-form-item>
             <n-form-item label="密码" path="password">
               <n-input v-model:value="loginForm.password" type="password" show-password-on="click" placeholder="请输入密码" @keyup.enter="handleLogin" />
             </n-form-item>
-            <n-button type="primary" block size="large" :loading="loading" @click="handleLogin">
-              登录
-            </n-button>
+            <div class="login-action">
+              <n-button type="primary" block size="large" :loading="loading" :disabled="loading" @click.prevent="handleLogin">
+                登录
+              </n-button>
+            </div>
           </n-form>
         </n-tab-pane>
 
@@ -35,11 +38,13 @@
               <n-input v-model:value="registerForm.display_name" placeholder="您的姓名" />
             </n-form-item>
             <n-form-item label="密码" path="password">
-              <n-input v-model:value="registerForm.password" type="password" show-password-on="click" placeholder="至少6位" />
+              <n-input v-model:value="registerForm.password" type="password" show-password-on="click" placeholder="至少6位" @keyup.enter="handleRegister" />
             </n-form-item>
-            <n-button type="primary" block size="large" :loading="loading" @click="handleRegister">
-              注册
-            </n-button>
+            <div class="login-action">
+              <n-button type="primary" block size="large" :loading="loading" :disabled="loading" @click.prevent="handleRegister">
+                注册
+              </n-button>
+            </div>
           </n-form>
         </n-tab-pane>
       </n-tabs>
@@ -48,7 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage, type FormInst, type FormRules } from 'naive-ui'
 import { post, setTokens, isLoggedIn, type TokenResponse } from '@/api/client'
@@ -81,8 +86,9 @@ async function handleLogin() {
     setTokens(res.access_token, res.refresh_token)
     message.success(`欢迎回来，${res.user.display_name}`)
     router.push('/dashboard')
-  } catch (e) {
-    message.error((e as Error).message)
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : '登录失败，请重试'
+    message.error(errMsg)
   } finally {
     loading.value = false
   }
@@ -118,17 +124,20 @@ async function handleRegister() {
     setTokens(res.access_token, res.refresh_token)
     message.success(`注册成功，欢迎 ${res.user.display_name}`)
     router.push('/dashboard')
-  } catch (e) {
-    message.error((e as Error).message)
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : '注册失败，请重试'
+    message.error(errMsg)
   } finally {
     loading.value = false
   }
 }
 
 // 已登录则跳转
-if (isLoggedIn()) {
-  router.push('/dashboard')
-}
+onMounted(() => {
+  if (isLoggedIn()) {
+    router.push('/dashboard')
+  }
+})
 </script>
 
 <style scoped>
@@ -137,7 +146,7 @@ if (isLoggedIn()) {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
 }
 
 .login-card {
@@ -145,8 +154,8 @@ if (isLoggedIn()) {
   max-width: 90vw;
   background: #fff;
   border-radius: 16px;
-  padding: 40px 36px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  padding: 40px 36px 32px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
 }
 
 .login-header {
@@ -154,10 +163,24 @@ if (isLoggedIn()) {
   margin-bottom: 32px;
 }
 
+.login-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 14px;
+  color: #fff;
+  font-size: 28px;
+  font-weight: 800;
+  margin-bottom: 16px;
+}
+
 .login-title {
   font-size: 28px;
   font-weight: 800;
-  color: #333;
+  color: #1a1a2e;
   margin: 0 0 8px;
 }
 
@@ -165,5 +188,39 @@ if (isLoggedIn()) {
   font-size: 14px;
   color: #888;
   margin: 0;
+}
+
+.login-action {
+  margin-top: 8px;
+}
+
+.login-action :deep(.n-button) {
+  height: 44px;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.login-action :deep(.n-button:hover) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.login-action :deep(.n-button:active) {
+  transform: translateY(0);
+}
+
+:deep(.n-tabs .n-tabs-tab) {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+:deep(.n-form-item-label) {
+  font-weight: 500;
 }
 </style>

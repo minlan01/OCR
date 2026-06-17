@@ -1,7 +1,13 @@
 <template>
-  <AdminLayout />
+  <n-config-provider :locale="zhCN" :date-locale="dateZhCN">
+    <n-message-provider>
+      <n-dialog-provider>
+        <router-view />
+      </n-dialog-provider>
+    </n-message-provider>
+  </n-config-provider>
 </template>
 
 <script setup lang="ts">
-import AdminLayout from '@/layouts/AdminLayout.vue'
+import { NConfigProvider, NMessageProvider, NDialogProvider, zhCN, dateZhCN } from 'naive-ui'
 </script>
