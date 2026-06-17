@@ -452,3 +452,147 @@ export async function exportWithTemplate(
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }
+
+// ─── Admin API 类型定义 ───
+
+export interface UserListItem {
+  id: string
+  email: string
+  display_name: string
+  role: string
+  is_active: boolean
+  last_login: string | null
+  created_at: string
+  tenant_id: string | null
+}
+
+export interface UserResponse {
+  id: string
+  email: string
+  display_name: string
+  role: string
+  is_active: boolean
+  tenant_id: string
+}
+
+export interface UserCreateRequest {
+  email: string
+  display_name: string
+  password: string
+  role: 'member' | 'tenant_admin'
+  tenant_id?: string
+}
+
+export interface UserUpdateRequest {
+  display_name?: string
+  role?: 'member' | 'tenant_admin'
+  is_active?: boolean
+}
+
+export interface TenantListItem {
+  id: string
+  name: string
+  plan: string
+  max_cases: number
+  max_concurrent: number
+  storage_quota_mb: number
+  storage_used_mb: number
+  status: string
+  user_count: number
+  case_count: number
+  created_at: string
+}
+
+export interface TenantDetail {
+  id: string
+  name: string
+  plan: string
+  max_cases: number
+  max_concurrent: number
+  storage_quota_mb: number
+  storage_used_mb: number
+  status: string
+  created_at: string
+  updated_at: string | null
+  user_count: number
+  case_count: number
+  last_active: string | null
+}
+
+export interface TenantUpdateRequest {
+  name?: string
+  plan?: 'free' | 'pro' | 'enterprise'
+  max_cases?: number
+  max_concurrent?: number
+  storage_quota_mb?: number
+  status?: 'active' | 'suspended'
+}
+
+export interface UsageResponse {
+  tenant: {
+    name: string
+    plan: string
+    max_cases: number
+  }
+  usage: {
+    evidence_cases: number
+    scan_tasks: number
+    storage_used_mb: number
+    storage_quota_mb: number
+    active_users: number
+    concurrent_used: number
+    concurrent_max: number
+  }
+}
+
+// ─── Admin API 调用方法 ───
+
+export async function getUsage(): Promise<UsageResponse> {
+  return get<UsageResponse>('/admin/usage')
+}
+
+export async function listUsers(
+  page: number = 1,
+  size: number = 20
+): Promise<PaginatedResponse<UserListItem>> {
+  return get<PaginatedResponse<UserListItem>>('/admin/users', {
+    page: String(page),
+    size: String(size),
+  })
+}
+
+export async function createUser(payload: UserCreateRequest): Promise<UserResponse> {
+  return post<UserResponse>('/admin/users', payload)
+}
+
+export async function updateUser(
+  userId: string,
+  payload: UserUpdateRequest
+): Promise<UserResponse> {
+  return put<UserResponse>(`/admin/users/${userId}`, payload)
+}
+
+export async function disableUser(userId: string): Promise<MessageResponse> {
+  return del<MessageResponse>(`/admin/users/${userId}`)
+}
+
+export async function listTenants(
+  page: number = 1,
+  size: number = 20
+): Promise<PaginatedResponse<TenantListItem>> {
+  return get<PaginatedResponse<TenantListItem>>('/admin/tenants', {
+    page: String(page),
+    size: String(size),
+  })
+}
+
+export async function getTenantDetail(tenantId: string): Promise<TenantDetail> {
+  return get<TenantDetail>(`/admin/tenants/${tenantId}`)
+}
+
+export async function updateTenant(
+  tenantId: string,
+  payload: TenantUpdateRequest
+): Promise<TenantDetail> {
+  return put<TenantDetail>(`/admin/tenants/${tenantId}`, payload)
+}

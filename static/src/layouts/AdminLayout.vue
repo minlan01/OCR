@@ -98,6 +98,7 @@ import {
   ScanOutline,
   TimeOutline,
   LogOutOutline,
+  SettingsOutline,
 } from '@vicons/ionicons5'
 import { get, isLoggedIn, clearTokens, type UserInfo } from '@/api/client'
 
@@ -109,7 +110,7 @@ function renderIcon(icon: Component) {
   return () => h(NIcon, null, { default: () => h(icon) })
 }
 
-const menuOptions = [
+const baseMenuOptions = [
   { label: '概览', key: '/dashboard', icon: renderIcon(SpeedometerOutline) },
   {
     label: '普通OCR处理',
@@ -141,6 +142,18 @@ const menuOptions = [
   },
 ]
 
+const adminMenuItem = {
+  label: '管理后台',
+  key: '/admin',
+  icon: renderIcon(SettingsOutline),
+}
+
+// 根据用户角色动态生成菜单（admin 角色才显示管理后台入口）
+const menuOptions = computed(() => {
+  const isAdmin = userInfo.value?.role === 'tenant_admin' || userInfo.value?.role === 'super_admin'
+  return isAdmin ? [...baseMenuOptions, adminMenuItem] : baseMenuOptions
+})
+
 const activeMenu = computed(() => {
   if (route.path.startsWith('/evidence')) return '/evidence'
   if (route.path.startsWith('/tasks')) return '/tasks'
@@ -148,6 +161,7 @@ const activeMenu = computed(() => {
   if (route.path.startsWith('/process')) return '/process'
   if (route.path.startsWith('/download')) return '/download'
   if (route.path.startsWith('/templates')) return '/templates'
+  if (route.path.startsWith('/admin')) return '/admin'
   return route.path
 })
 

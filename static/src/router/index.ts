@@ -63,6 +63,12 @@ const router = createRouter({
       component: () => import('@/views/EvidencePage.vue'),
       meta: { title: '证据整理' },
     },
+    {
+      path: '/admin',
+      name: 'Admin',
+      component: () => import('@/views/Admin.vue'),
+      meta: { title: '管理后台', requiresAdmin: true },
+    },
   ],
 })
 
