@@ -1,5 +1,10 @@
 """
-民事起诉状 API 路由
+DEPRECATED: 此模块已被 evidence 模块替代，保留仅为兼容性。
+ComplaintCase / ComplaintUpload / ComplaintStep 模型已从 db/models.py 中移除。
+本路由文件在运行时不会被正常加载（所有模型导入将失败）。
+如需民事起诉状功能，请使用 /api/v1/evidence 模块。
+
+原：民事起诉状 API 路由（已废弃）
 """
 from __future__ import annotations
 

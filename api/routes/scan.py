@@ -37,6 +37,7 @@ from api.schemas.scan import (
     ScanFileOut,
 )
 from api.rate_limit import limiter
+from api.dependencies import get_tenant_filter
 from services.exporter.docx_exporter import export_docx_bytes
 from config.settings import settings
 from db.models import ScanTask, TaskStep, ScanFile
@@ -137,9 +138,13 @@ def _fetch_result_json(task: ScanTask, task_id: uuid.UUID) -> dict:
         raise HTTPException(status_code=500, detail="Result data is corrupted, please retry")
 
 
-async def _get_task_or_404(task_id: uuid.UUID, db: AsyncSession) -> ScanTask:
-    """获取任务或抛出 404"""
+async def _get_task_or_404(
+    task_id: uuid.UUID, db: AsyncSession, tenant_id: uuid.UUID | None = None
+) -> ScanTask:
+    """获取任务或抛出 404（可选按 tenant_id 过滤）"""
     stmt = select(ScanTask).where(ScanTask.id == task_id)
+    if tenant_id is not None:
+        stmt = stmt.where(ScanTask.tenant_id == tenant_id)
     result = await db.execute(stmt)
     task = result.scalar_one_or_none()
     if task is None:
@@ -214,6 +219,7 @@ async def _upload_single_file(
     scanner_id: str = "manual",
     callback_url: str | None = None,
     meta_dict: dict | None = None,
+    tenant_id: uuid.UUID | None = None,
 ) -> ScanUploadResponse | dict:
     """上传单个文件，返回 ScanUploadResponse 或 {"skipped": ...} / {"failed": ...}"""
 
@@ -229,6 +235,8 @@ async def _upload_single_file(
     file_md5 = _compute_md5(content)
 
     stmt = select(ScanTask).where(ScanTask.file_md5 == file_md5)
+    if tenant_id is not None:
+        stmt = stmt.where(ScanTask.tenant_id == tenant_id)
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
     if existing:
@@ -246,6 +254,7 @@ async def _upload_single_file(
 
     task = ScanTask(
         id=task_id,
+        tenant_id=tenant_id,
         filename=filename,
         scanner_id=scanner_id,
         source_type="api_upload",
@@ -302,6 +311,7 @@ async def upload_scan(
     callback_url: Optional[str] = Form(default=None),
     metadata_json: Optional[str] = Form(default=None, alias="metadata"),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """上传扫描件 PDF，创建处理任务"""
 
@@ -360,6 +370,7 @@ async def upload_scan(
         scanner_id=_safe_scanner_id,
         callback_url=callback_url,
         meta_dict=meta_dict,
+        tenant_id=tenant_id,
     )
 
     if isinstance(result, dict):
@@ -382,6 +393,7 @@ async def batch_upload(
     scanner_id: Optional[str] = Form(default=None),
     callback_url: Optional[str] = Form(default=None),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """批量上传扫描件 PDF，每个文件创建独立处理任务"""
 
@@ -421,6 +433,7 @@ async def batch_upload(
             filename=filename,
             scanner_id=_safe_scanner_id,
             callback_url=callback_url,
+            tenant_id=tenant_id,
         )
 
         if isinstance(result, ScanUploadResponse):
@@ -445,6 +458,7 @@ async def batch_process(
     request: Request,
     body: BatchProcessRequest,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """批量启动识别处理
 
@@ -464,6 +478,8 @@ async def batch_process(
     for task_id in body.task_ids:
         # SELECT FOR UPDATE 防止并发请求同时拿到同一任务
         stmt = select(ScanTask).where(ScanTask.id == task_id).with_for_update()
+        if tenant_id is not None:
+            stmt = stmt.where(ScanTask.tenant_id == tenant_id)
         result = await db.execute(stmt)
         task = result.scalar_one_or_none()
 
@@ -517,6 +533,7 @@ async def list_scans(
         description="排序方向: asc / desc",
     ),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """查询扫描任务列表（分页+筛选+排序）
 
@@ -535,6 +552,8 @@ async def list_scans(
         conditions.append(ScanTask.status == status)
     if scanner_id:
         conditions.append(ScanTask.scanner_id == scanner_id)
+    if tenant_id is not None:
+        conditions.append(ScanTask.tenant_id == tenant_id)
 
     # 总数
     count_stmt = select(func.count(ScanTask.id))
@@ -584,9 +603,10 @@ async def get_scan_detail(
         description="是否生成预签名下载URL（有效期1小时）",
     ),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """查询任务详情（含处理步骤、文件产物、可选预签名URL）"""
-    task = await _get_task_or_404(task_id, db)
+    task = await _get_task_or_404(task_id, db, tenant_id)
 
     detail = _build_detail(task)
 
@@ -624,6 +644,7 @@ async def get_scan_result(
         description="是否以文件附件形式下载（否则内联返回JSON）",
     ),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """获取任务的结构化 JSON 结果
 
@@ -632,7 +653,7 @@ async def get_scan_result(
 
     任务必须处于 completed 状态且结果文件存在。
     """
-    task = await _get_task_or_404(task_id, db)
+    task = await _get_task_or_404(task_id, db, tenant_id)
     result_json = _fetch_result_json(task, task_id)
 
     if download:
@@ -663,6 +684,7 @@ async def download_scan_docx(
         description="下载格式（目前支持 docx）",
     ),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """下载结构化结果为 Word 文档 (.docx)
 
@@ -674,7 +696,7 @@ async def download_scan_docx(
     if format not in ("docx",):
         raise HTTPException(status_code=400, detail=f"Unsupported format: {format}. Supported: docx")
 
-    task = await _get_task_or_404(task_id, db)
+    task = await _get_task_or_404(task_id, db, tenant_id)
     result_json = _fetch_result_json(task, task_id)
 
     # 生成 Word 文档
@@ -713,6 +735,7 @@ async def retry_scan(
         description="是否强制重试（也允许重试已完成/处理中的任务）",
     ),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """重试扫描任务
 
@@ -723,7 +746,7 @@ async def retry_scan(
 
     返回 202 Accepted 表示任务已排队。
     """
-    task = await _get_task_or_404(task_id, db)
+    task = await _get_task_or_404(task_id, db, tenant_id)
 
     # 检查状态
     if not force and task.status != "failed":
@@ -828,6 +851,7 @@ async def delete_scan(
         description="是否保留原始 PDF 文件（仅清理中间产物）",
     ),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """删除任务及关联数据
 
@@ -839,7 +863,7 @@ async def delete_scan(
     参数:
     - `keep_raw=true`：保留原始 PDF，仅删除中间处理产物
     """
-    task = await _get_task_or_404(task_id, db)
+    task = await _get_task_or_404(task_id, db, tenant_id)
 
     logger.info(
         f"Deleting task {task_id}: filename={task.filename}, "

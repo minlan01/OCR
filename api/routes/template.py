@@ -12,7 +12,8 @@ import os
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from loguru import logger
 from api.rate_limit import limiter
-from sqlalchemy import select
+from api.dependencies import get_tenant_filter
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import OutputTemplate, ScanTask
@@ -31,15 +32,31 @@ _TEMPLATE_OUTPUT_DIR = os.environ.get("TEMPLATE_OUTPUT_DIR", os.path.join(os.pat
 
 
 @router.get("/", response_model=list[TemplateListItem])
-async def list_templates(db: AsyncSession = Depends(get_db)):
+async def list_templates(
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
+):
+    # 返回租户私有模板 + 全局模板（tenant_id IS NULL）
     stmt = select(OutputTemplate).order_by(OutputTemplate.created_at.desc())
+    if tenant_id is not None:
+        stmt = stmt.where(
+            or_(OutputTemplate.tenant_id == tenant_id, OutputTemplate.tenant_id.is_(None))
+        )
     result = await db.execute(stmt)
     return result.scalars().all()
 
 
 @router.get("/{template_id}", response_model=TemplateResponse)
-async def get_template(template_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_template(
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
+):
     stmt = select(OutputTemplate).where(OutputTemplate.id == template_id)
+    if tenant_id is not None:
+        stmt = stmt.where(
+            or_(OutputTemplate.tenant_id == tenant_id, OutputTemplate.tenant_id.is_(None))
+        )
     result = await db.execute(stmt)
     tmpl = result.scalar_one_or_none()
     if not tmpl:
@@ -58,6 +75,7 @@ async def create_template(
     generator_file: UploadFile | None = File(default=None),
     reference_file: UploadFile | None = File(default=None),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     schema_json = {}
     if schema_file:
@@ -90,6 +108,7 @@ async def create_template(
             raise HTTPException(status_code=400, detail="Reference document must be < 10MB")
 
     tmpl = OutputTemplate(
+        tenant_id=tenant_id,
         name=name,
         description=description or None,
         schema_json=schema_json,
@@ -117,8 +136,12 @@ async def update_template(
     reference_file: UploadFile | None = File(default=None),
     clear_reference: str | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
+    # 查找模板（仅允许修改本租户的模板；全局模板仅 super_admin 可改，此处由 tenant_id=None 时放行）
     stmt = select(OutputTemplate).where(OutputTemplate.id == template_id)
+    if tenant_id is not None:
+        stmt = stmt.where(OutputTemplate.tenant_id == tenant_id)
     result = await db.execute(stmt)
     tmpl = result.scalar_one_or_none()
     if not tmpl:
@@ -167,8 +190,15 @@ async def update_template(
 
 
 @router.delete("/{template_id}", status_code=204)
-async def delete_template(template_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def delete_template(
+    template_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
+):
+    # 仅允许删除本租户的模板
     stmt = select(OutputTemplate).where(OutputTemplate.id == template_id)
+    if tenant_id is not None:
+        stmt = stmt.where(OutputTemplate.tenant_id == tenant_id)
     result = await db.execute(stmt)
     tmpl = result.scalar_one_or_none()
     if not tmpl:
@@ -185,6 +215,7 @@ async def export_with_template(
     task_id: uuid.UUID,
     body: TemplateExportRequest,
     db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
     """按模板导出 Word 文档
 
@@ -194,13 +225,18 @@ async def export_with_template(
     from services.template.llm_extractor import extract_with_schema
     from services.template.generator_runner import run_generator_to_docx
 
-    task = await _get_task_or_404(task_id, db)
+    task = await _get_task_or_404(task_id, db, tenant_id)
     if task.status != "completed":
         raise HTTPException(status_code=400, detail=f"Task status is '{task.status}', must be 'completed'")
 
     result_json = _fetch_result_json(task, task_id)
 
+    # 查找模板（租户私有 + 全局）
     stmt = select(OutputTemplate).where(OutputTemplate.id == body.template_id)
+    if tenant_id is not None:
+        stmt = stmt.where(
+            or_(OutputTemplate.tenant_id == tenant_id, OutputTemplate.tenant_id.is_(None))
+        )
     result = await db.execute(stmt)
     tmpl = result.scalar_one_or_none()
     if not tmpl:

@@ -36,6 +36,13 @@ class ScanTask(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="SET NULL"),
+        default=None,
+        nullable=True,
+        comment="租户ID（SaaS隔离用，开发模式可为null）",
+    )
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
     scanner_id: Mapped[str | None] = mapped_column(String(100), default=None)
     source_type: Mapped[str] = mapped_column(String(30), nullable=False, default="watch_folder")
@@ -85,6 +92,7 @@ class ScanTask(Base):
         Index("idx_scan_tasks_created_at", created_at.desc()),
         Index("idx_scan_tasks_scanner_id", "scanner_id"),
         Index("idx_scan_tasks_priority", "priority"),
+        Index("idx_scan_tasks_tenant_id", "tenant_id"),
         CheckConstraint(
             f"status IN ({VALID_TASK_STATUSES})",
             name="ck_scan_tasks_status",
@@ -181,6 +189,13 @@ class OutputTemplate(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="SET NULL"),
+        default=None,
+        nullable=True,
+        comment="租户ID（SaaS隔离用，null表示全局模板）",
+    )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     schema_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -197,6 +212,7 @@ class OutputTemplate(Base):
 
     __table_args__ = (
         Index("idx_output_templates_name", "name"),
+        Index("idx_output_templates_tenant_id", "tenant_id"),
     )
 
     def __repr__(self) -> str:
