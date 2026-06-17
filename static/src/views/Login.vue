@@ -71,7 +71,17 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { useMessage, type FormInst, type FormRules } from 'naive-ui'
+import {
+  NTabs,
+  NTabPane,
+  NForm,
+  NFormItem,
+  NInput,
+  NButton,
+  useMessage,
+  type FormInst,
+  type FormRules,
+} from 'naive-ui'
 import { post, setTokens, isLoggedIn, type TokenResponse } from '@/api/client'
 
 const router = useRouter()
