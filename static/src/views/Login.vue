@@ -17,11 +17,19 @@
             <n-form-item label="密码" path="password">
               <n-input v-model:value="loginForm.password" type="password" show-password-on="click" placeholder="请输入密码" @keyup.enter="handleLogin" />
             </n-form-item>
-            <div class="login-action">
-              <n-button type="primary" block size="large" :loading="loading" :disabled="loading" @click.prevent="handleLogin">
-                登录
-              </n-button>
-            </div>
+            <n-button
+              type="primary"
+              block
+              size="large"
+              :loading="loading"
+              :disabled="loading"
+              strong
+              round
+              style="margin-top: 8px; height: 44px; font-size: 16px; font-weight: 600;"
+              @click="handleLogin"
+            >
+              登录
+            </n-button>
           </n-form>
         </n-tab-pane>
 
@@ -40,11 +48,19 @@
             <n-form-item label="密码" path="password">
               <n-input v-model:value="registerForm.password" type="password" show-password-on="click" placeholder="至少6位" @keyup.enter="handleRegister" />
             </n-form-item>
-            <div class="login-action">
-              <n-button type="primary" block size="large" :loading="loading" :disabled="loading" @click.prevent="handleRegister">
-                注册
-              </n-button>
-            </div>
+            <n-button
+              type="primary"
+              block
+              size="large"
+              :loading="loading"
+              :disabled="loading"
+              strong
+              round
+              style="margin-top: 8px; height: 44px; font-size: 16px; font-weight: 600;"
+              @click="handleRegister"
+            >
+              注册
+            </n-button>
           </n-form>
         </n-tab-pane>
       </n-tabs>
@@ -188,31 +204,6 @@ onMounted(() => {
   font-size: 14px;
   color: #888;
   margin: 0;
-}
-
-.login-action {
-  margin-top: 8px;
-}
-
-.login-action :deep(.n-button) {
-  height: 44px;
-  font-size: 16px;
-  font-weight: 600;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border: none;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.login-action :deep(.n-button:hover) {
-  opacity: 0.9;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-}
-
-.login-action :deep(.n-button:active) {
-  transform: translateY(0);
 }
 
 :deep(.n-tabs .n-tabs-tab) {
