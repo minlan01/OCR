@@ -241,8 +241,14 @@ async def create_user(
     _require_tenant_admin_or_higher(current_user)
 
     # 确定目标租户
-    target_tenant_id: uuid.UUID
-    if _require_super_admin(current_user) and payload.tenant_id is not None:
+    target_tenant_id: uuid.UUID | None
+    if _require_super_admin(current_user):
+        # super_admin 必须显式指定 tenant_id
+        if payload.tenant_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="super_admin must specify tenant_id when creating a user",
+            )
         target_tenant_id = payload.tenant_id
     else:
         target_tenant_id = current_user.tenant_id
@@ -479,21 +485,31 @@ async def list_tenants(
         )
     ).scalars().all()
 
-    # 聚合用户数与案件数
+    # 一次性聚合 user_count 和 case_count（消除 N+1 查询）
+    tenant_ids = [t.id for t in tenants]
+    user_counts: dict = {}
+    case_counts: dict = {}
+    if tenant_ids:
+        user_rows = (
+            await db.execute(
+                select(User.tenant_id, func.count(User.id))
+                .where(User.tenant_id.in_(tenant_ids))
+                .group_by(User.tenant_id)
+            )
+        ).all()
+        user_counts = {row[0]: row[1] for row in user_rows}
+
+        case_rows = (
+            await db.execute(
+                select(EvidenceCase.tenant_id, func.count(EvidenceCase.id))
+                .where(EvidenceCase.tenant_id.in_(tenant_ids))
+                .group_by(EvidenceCase.tenant_id)
+            )
+        ).all()
+        case_counts = {row[0]: row[1] for row in case_rows}
+
     items: list[TenantListItem] = []
     for t in tenants:
-        user_count = (
-            await db.execute(
-                select(func.count(User.id)).where(User.tenant_id == t.id)
-            )
-        ).scalar() or 0
-        case_count = (
-            await db.execute(
-                select(func.count(EvidenceCase.id)).where(
-                    EvidenceCase.tenant_id == t.id
-                )
-            )
-        ).scalar() or 0
         items.append(
             TenantListItem(
                 id=t.id,
@@ -504,8 +520,8 @@ async def list_tenants(
                 storage_quota_mb=t.storage_quota_mb,
                 storage_used_mb=t.storage_used_mb,
                 status=t.status,
-                user_count=user_count,
-                case_count=case_count,
+                user_count=user_counts.get(t.id, 0),
+                case_count=case_counts.get(t.id, 0),
                 created_at=t.created_at,
                 features=t.features or {"evidence": True, "timeline": False},
             )

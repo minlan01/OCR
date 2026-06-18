@@ -55,7 +55,11 @@ async def get_db() -> AsyncSession:
     async with async_session_factory() as session:
         try:
             yield session
-            await session.commit()
+            # 仅在 session 有 pending changes 时才 commit（避免纯 GET 请求产生 WAL）
+            if session.in_transaction() and session.is_active:
+                # 检查是否有 dirty/new/deleted 对象
+                if session.dirty or session.new or session.deleted:
+                    await session.commit()
         except Exception:
             await session.rollback()
             raise

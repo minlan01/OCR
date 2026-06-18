@@ -123,11 +123,16 @@ async function handleContinue() {
     try {
       await store.startOcr(store.currentCase.case_id)
       store.startPolling(store.currentCase.case_id, 2000)
-      await new Promise(resolve => {
+      await new Promise((resolve, reject) => {
+        const MAX_WAIT_MS = 5 * 60 * 1000  // 5 分钟超时
+        const startTime = Date.now()
         const check = setInterval(() => {
           if (store.isOcrComplete) {
             clearInterval(check)
             resolve(undefined)
+          } else if (Date.now() - startTime > MAX_WAIT_MS) {
+            clearInterval(check)
+            reject(new Error('OCR 处理超时'))
           }
         }, 2000)
       })

@@ -96,7 +96,6 @@ class User(Base):
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="users")
 
     __table_args__ = (
-        Index("idx_users_tenant_id", "tenant_id"),
         Index("idx_users_role", "role"),
     )
 

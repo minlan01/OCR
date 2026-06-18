@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import ast
 import re
 import tempfile
 from collections import Counter
@@ -144,14 +145,94 @@ def _extract_styles_from_reference(doc_bytes: bytes) -> dict[str, Any]:
     return styles
 
 
+# ── 安全：AST 白名单校验 ──
+# 禁止 import、open、eval/exec、属性访问 __dunder__ 等
+
+_FORBIDDEN_MODULES = {
+    "os", "sys", "subprocess", "shutil", "pathlib",
+    "socket", "http", "urllib", "requests",
+    "ctypes", "multiprocessing", "threading",
+    "pickle", "marshal", "importlib",
+}
+_FORBIDDEN_BUILTINS = {"__import__", "eval", "exec", "compile", "open", "globals", "locals"}
+
+_MAX_CODE_SIZE = 256 * 1024  # 256KB
+
+
+class _CodeSafetyValidator(ast.NodeVisitor):
+    """遍历 AST 检查危险操作"""
+
+    def __init__(self):
+        self.violations: list[str] = []
+
+    def visit_Import(self, node):
+        for alias in node.names:
+            root = alias.name.split(".")[0]
+            if root in _FORBIDDEN_MODULES:
+                self.violations.append(f"Import of '{alias.name}' is forbidden")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node):
+        if node.module:
+            root = node.module.split(".")[0]
+            if root in _FORBIDDEN_MODULES:
+                self.violations.append(f"Import from '{node.module}' is forbidden")
+        self.generic_visit(node)
+
+    def visit_Call(self, node):
+        # 检查 __import__("os") 等变体
+        if isinstance(node.func, ast.Name) and node.func.id in _FORBIDDEN_BUILTINS:
+            self.violations.append(f"Call to '{node.func.id}()' is forbidden")
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node):
+        # 禁止 __dunder__ 属性访问（__class__, __subclasses__, __globals__ 等）
+        if node.attr.startswith("__") and node.attr.endswith("__"):
+            self.violations.append(f"Access to dunder attribute '{node.attr}' is forbidden")
+        self.generic_visit(node)
+
+
+def _validate_generator_code(code: str) -> None:
+    """安全校验生成器代码：大小限制 + AST 白名单"""
+    if len(code) > _MAX_CODE_SIZE:
+        raise ValueError(
+            f"Generator code too large: {len(code)} bytes (max {_MAX_CODE_SIZE // 1024}KB)"
+        )
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        raise ValueError(f"Generator code has syntax error: {e}")
+
+    validator = _CodeSafetyValidator()
+    validator.visit(tree)
+    if validator.violations:
+        raise ValueError(
+            "Generator code contains forbidden operations: " + "; ".join(validator.violations[:5])
+        )
+
+
 def _execute_generator(code: str, data: dict) -> str:
     """在受限命名空间中执行生成器代码
 
     约定:
       - 顶层 generate(data) -> str 函数，或
       - 类 __init__(self, data) + generate(self) -> str
+
+    安全措施:
+      - AST 白名单校验（禁止 import os/sys/subprocess 等）
+      - 代码大小限制（256KB）
+      - 禁止 __dunder__ 属性访问
+      - 受限内置命名空间
     """
-    namespace: dict[str, Any] = {}
+    # 安全校验
+    _validate_generator_code(code)
+
+    # 受限内置：移除危险函数
+    safe_builtins = {k: v for k, v in __builtins__.__dict__.items() if k not in _FORBIDDEN_BUILTINS} if isinstance(__builtins__, dict) else \
+        {k: getattr(__builtins__, k) for k in dir(__builtins__) if k not in _FORBIDDEN_BUILTINS and not k.startswith("_")}
+    safe_builtins["__builtins__"] = safe_builtins  # 递归限制
+
+    namespace: dict[str, Any] = {"__builtins__": safe_builtins}
     try:
         exec(code, namespace)
     except Exception as e:

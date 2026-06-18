@@ -189,7 +189,22 @@ async function handleGenerate() {
   try {
     const feeParam = manualTotalFee.value != null ? manualTotalFee.value : undefined
     await store.generateDoc(store.currentCase.case_id, feeParam)
+    // 轮询超时 5 分钟，防止定时器永久运行
+    const MAX_POLL_MS = 5 * 60 * 1000
+    const startTime = Date.now()
     const pollInterval = setInterval(async () => {
+      // 超时保护
+      if (Date.now() - startTime > MAX_POLL_MS) {
+        clearInterval(pollInterval)
+        generating.value = false
+        return
+      }
+      // 组件卸载或案件丢失时停止轮询
+      if (!store.currentCase) {
+        clearInterval(pollInterval)
+        generating.value = false
+        return
+      }
       await store.fetchCase(store.currentCase!.case_id)
       if (store.isDocReady || store.currentCase?.status === 'failed') {
         clearInterval(pollInterval)

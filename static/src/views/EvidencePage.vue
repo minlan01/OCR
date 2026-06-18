@@ -14,11 +14,6 @@
       </n-space>
     </n-space>
 
-    <!-- 案件列表弹窗（仅案件内使用） -->
-    <n-modal v-if="!showHomePage" v-model:show="showCaseListModal" preset="card" title="已有案件" style="width: 800px; max-width: 90vw">
-      <n-data-table :columns="caseListColumns" :data="caseList" :loading="caseListLoading" :bordered="false" size="small" />
-    </n-modal>
-
     <!-- ═══ 案件首页（独立于步骤条之外） ═══ -->
     <template v-if="showHomePage">
       <n-card v-if="showCreateForm" title="创建证据案件" style="margin-bottom: 16px">
@@ -1091,7 +1086,6 @@ const STEP = {
 const showHomePage = ref(true) // 案件首页（独立于步骤条）
 const currentStep = ref<number>(STEP.UPLOAD)
 const currentCase = ref<evidenceApi.EvidenceCase | null>(null)
-const showCaseListModal = ref(false)
 const showCreateForm = ref(false)
 
 // 创建表单
@@ -2243,6 +2237,7 @@ function handleUpdateItem(materialId: string, field: string, value: string) {
   const existing = pendingUpdates.value.get(materialId) || {}
   existing[field] = value
   pendingUpdates.value.set(materialId, existing)
+  catalogDirty.value = true  // 标记有未保存的修改
 }
 
 // 保存目录
@@ -2406,8 +2401,7 @@ async function continueCase(caseId: string) {
   _resetAllState()
   // 标记为"继续案件"模式
   isContinuedCase.value = true
-  // 关闭案件列表弹窗 & 隐藏首页
-  showCaseListModal.value = false
+  // 隐藏首页（案件列表弹窗已废弃，showCaseListModal 仅保留为兼容性占位）
   showHomePage.value = false
 
   try {
@@ -2590,7 +2584,22 @@ const caseListColumns = [
 
 onMounted(async () => {
   await loadCaseList()
-  // 默认显示案件首页，用户点击"继续"或"创建"后进入案件内步骤
+  // 尝试从 sessionStorage 恢复未完成的案件状态（若有）
+  const savedCaseId = sessionStorage.getItem('evidence_current_case_id')
+  const savedStep = sessionStorage.getItem('evidence_current_step')
+  if (savedCaseId) {
+    try {
+      const c = await evidenceApi.getCase(savedCaseId)
+      currentCase.value = c
+      isContinuedCase.value = true
+      showHomePage.value = false
+      if (savedStep) currentStep.value = Number(savedStep)
+    } catch {
+      // 案件不存在或权限问题 — 清理 sessionStorage
+      sessionStorage.removeItem('evidence_current_case_id')
+      sessionStorage.removeItem('evidence_current_step')
+    }
+  }
 })
 
 // 监听案件和步骤变化，保存到 sessionStorage

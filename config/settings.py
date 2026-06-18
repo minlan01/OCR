@@ -60,12 +60,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_broker_url: str = "redis://localhost:6379/1"
     redis_result_backend: str = "redis://localhost:6379/2"
-    redis_password: str = ""  # Redis 密码（生产环境建议设置）
+    redis_password: SecretStr = SecretStr("")  # Redis 密码（生产环境建议设置）
 
     # ==================== MinIO ====================
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = ""  # 必须通过 .env 或环境变量提供
-    minio_secret_key: str = ""  # 必须通过 .env 或环境变量提供
+    minio_secret_key: SecretStr = SecretStr("")  # 必须通过 .env 或环境变量提供
     minio_secure: bool = False
     minio_bucket_raw: str = "scan-raw"
     # TODO: 待后续阶段使用（当前仅 minio_bucket_raw 和 minio_bucket_result 被生产代码引用）
@@ -142,7 +142,7 @@ class Settings(BaseSettings):
     # ==================== 百度云 OCR ====================
     baidu_ocr_app_id: str = ""
     baidu_ocr_api_key: str = ""
-    baidu_ocr_secret_key: str = ""
+    baidu_ocr_secret_key: SecretStr = SecretStr("")
     baidu_ocr_timeout: int = 30
     baidu_ocr_max_concurrent: int = 5  # SaaS: 从10降低到5
 
@@ -234,11 +234,13 @@ class Settings(BaseSettings):
     @classmethod
     def require_minio_creds_in_production(cls, v, info):
         """生产环境必须配置 MinIO 凭据"""
-        if info.data.get("app_env") == "production" and not v:
-            raise ValueError(
-                f"{info.field_name} is required when APP_ENV=production. "
-                "Set it in .env or environment variable."
-            )
+        if info.data.get("app_env") == "production":
+            key = v.get_secret_value() if isinstance(v, SecretStr) else v
+            if not key:
+                raise ValueError(
+                    f"{info.field_name} is required when APP_ENV=production. "
+                    "Set it in .env or environment variable."
+                )
         return v
 
     @field_validator("api_key")
@@ -273,7 +275,8 @@ class Settings(BaseSettings):
         """选择百度云引擎或多引擎模式时必须配置凭证"""
         engine_type = info.data.get("ocr_engine_type", "")
         if engine_type in ("baidu", "multi"):
-            if not v:
+            key = v.get_secret_value() if isinstance(v, SecretStr) else v
+            if not key:
                 field = info.field_name
                 raise ValueError(
                     f"{field} is required when OCR_ENGINE_TYPE=baidu or multi. "
@@ -292,6 +295,18 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "glm_api_key is required when OCR_ENGINE_TYPE=glm or multi. "
                     "Set GLM_API_KEY in your .env file."
+                )
+        return v
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def require_jwt_secret_in_production(cls, v, info):
+        """生产环境必须配置 JWT 密钥且长度 >= 32"""
+        if info.data.get("app_env") == "production":
+            if not v or len(v) < 32:
+                raise ValueError(
+                    "jwt_secret_key must be at least 32 characters when APP_ENV=production. "
+                    "Set JWT_SECRET_KEY in your .env file."
                 )
         return v
 
@@ -421,11 +436,12 @@ class Settings(BaseSettings):
 
     def _inject_redis_password(self, url: str) -> str:
         """为 Redis URL 注入密码（如果已配置且 URL 中尚未包含密码）"""
-        if not self.redis_password:
+        pwd = self.redis_password.get_secret_value() if isinstance(self.redis_password, SecretStr) else self.redis_password
+        if not pwd:
             return url
         if "@" in url.split("://", 1)[-1]:
             return url
-        return url.replace("redis://", f"redis://:{self.redis_password}@")
+        return url.replace("redis://", f"redis://:{pwd}@")
 
     @property
     def redis_url_with_auth(self) -> str:

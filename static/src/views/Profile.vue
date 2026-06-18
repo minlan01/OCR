@@ -53,20 +53,19 @@ import {
   NH2, NCard, NForm, NFormItem, NInput, NButton, NSpace, NTag,
   useMessage, type FormInst, type FormRules,
 } from 'naive-ui'
-import { get, changePassword, updateProfile, type UserInfo } from '@/api/client'
+import { changePassword, updateProfile } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
 
 const message = useMessage()
 
-const userInfo = ref<UserInfo | null>(null)
+const authStore = useAuthStore()
+const { userInfo } = storeToRefs(authStore)
 const displayName = ref('')
 
 async function loadUserInfo() {
-  try {
-    userInfo.value = await get<UserInfo>('/auth/me')
-    displayName.value = userInfo.value.display_name
-  } catch {
-    // handled by interceptor
-  }
+  const info = await authStore.loadUserInfo()
+  if (info) displayName.value = info.display_name
 }
 
 onMounted(loadUserInfo)

@@ -35,7 +35,7 @@
             <tr>
               <th style="width: 40px"></th>
               <th>文件名</th>
-              <th style="width: 100px">文件大小</th>
+              <th style="width: 100px">页数</th>
               <th style="width: 170px">上传时间</th>
               <th style="width: 80px">来源</th>
             </tr>
@@ -51,7 +51,7 @@
               <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
                 {{ task.filename }}
               </td>
-              <td>{{ formatSize(task.page_count) }}</td>
+              <td>{{ task.page_count }} 页</td>
               <td>{{ formatDate(task.created_at) }}</td>
               <td>
                 <n-tag size="small" :type="task.error_code === 'api_upload' ? 'info' : 'default'">

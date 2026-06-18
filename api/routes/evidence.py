@@ -506,6 +506,39 @@ async def upload_materials(
                 detail=f"不支持的文件扩展名: {ext}（允许: {', '.join(settings.allowed_extensions)}）",
             )
 
+        # 文件魔数校验（防止扩展名伪装攻击）
+        magic_head = await file.read(8)
+        await file.seek(0)
+        MAGIC_NUMBERS = {
+            "pdf": [b"%PDF"],
+            "docx": [b"PK\x03\x04"],  # zip 格式
+            "xlsx": [b"PK\x03\x04"],
+            "image_jpg": [b"\xff\xd8\xff"],
+            "image_png": [b"\x89PNG\r\n\x1a\n"],
+            "image_gif": [b"GIF87a", b"GIF89a"],
+            "image_bmp": [b"BM"],
+            "image_webp": [b"RIFF"],
+            "image_tiff": [b"II*\x00", b"MM\x00*"],
+        }
+        magic_ok = False
+        if file_type == "pdf":
+            magic_ok = any(magic_head.startswith(m) for m in MAGIC_NUMBERS["pdf"])
+        elif file_type in ("docx", "xlsx"):
+            magic_ok = any(magic_head.startswith(m) for m in MAGIC_NUMBERS["docx"])
+        elif file_type == "image":
+            for key in ("image_jpg", "image_png", "image_gif", "image_bmp", "image_webp", "image_tiff"):
+                if any(magic_head.startswith(m) for m in MAGIC_NUMBERS[key]):
+                    magic_ok = True
+                    break
+        elif file_type == "audio":
+            # 音频格式多样，仅做扩展名校验
+            magic_ok = True
+        if not magic_ok:
+            raise HTTPException(
+                status_code=400,
+                detail=f"文件内容与扩展名不符（可能被篡改）: {file.filename}",
+            )
+
         original_filename = file.filename or "upload"
         minio_key = f"evidence/{case_id}/{uuid.uuid4()}_{quote(original_filename)}"
         content_type = file.content_type or "application/octet-stream"
@@ -862,7 +895,7 @@ async def delete_material(
     案件正在 processing 时禁止删除材料（会导致锁竞争），
     请先取消案件处理后再删除。
     """
-    case = await _check_case_exists(case_id, db)
+    case = await _check_case_exists(case_id, db, tenant_id=tenant_id)
 
     # 状态保护
     ACTIVE_STATUSES = {"processing", "analyzing", "exporting"}

@@ -93,7 +93,9 @@ import {
   SettingsOutline,
   PersonCircleOutline,
 } from '@vicons/ionicons5'
-import { get, isLoggedIn, clearTokens, setAutoLogin, type UserInfo } from '@/api/client'
+import { isLoggedIn, clearTokens, setAutoLogin } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
 
 const router = useRouter()
 const route = useRoute()
@@ -209,20 +211,20 @@ function refreshCurrent() {
 }
 
 // ─── 用户信息 + 退出 ───
-const userInfo = ref<UserInfo | null>(null)
+const authStore = useAuthStore()
+const { userInfo } = storeToRefs(authStore)
 
 async function loadUserInfo() {
   if (!isLoggedIn()) return
-  try {
-    userInfo.value = await get<UserInfo>('/auth/me')
-    // 非 admin 用户默认跳转到用量页面（概览页面对他们不可见）
-    if (userInfo.value && userInfo.value.role === 'member' && route.path === '/dashboard') {
-      router.replace('/usage')
-    }
-  } catch {
-    // token 失效等情况 — 跳转登录
+  const info = await authStore.loadUserInfo()
+  if (!info) {
     clearTokens()
     router.push('/login')
+    return
+  }
+  // 非 admin 用户默认跳转到用量页面（概览页面对他们不可见）
+  if (info.role === 'member' && route.path === '/dashboard') {
+    router.replace('/usage')
   }
 }
 
@@ -230,7 +232,7 @@ function handleLogout() {
   // 主动退出时取消自动登录（保存密码仍保留）
   setAutoLogin(false)
   clearTokens()
-  userInfo.value = null
+  authStore.clear()
   router.push('/login')
 }
 

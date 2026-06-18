@@ -136,10 +136,12 @@ import {
   PeopleOutline,
 } from '@vicons/ionicons5'
 import StatCard from '@/components/StatCard.vue'
-import { get, type UsageResponse, type UserInfo, type TenantListItem } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
+import { get, type UsageResponse, type TenantListItem } from '@/api/client'
 
-const userInfo = ref<UserInfo | null>(null)
-const isSuperAdmin = computed(() => userInfo.value?.role === 'super_admin')
+const authStore = useAuthStore()
+const { userInfo, isSuperAdmin } = storeToRefs(authStore)
 const usageData = ref<UsageResponse | null>(null)
 const loading = ref(false)
 const tenantUsageData = ref<TenantListItem[]>([])
@@ -189,9 +191,7 @@ const tenantUsageColumns = computed<DataTableColumns<TenantListItem>>(() => [
 ])
 
 async function loadUserInfo(): Promise<void> {
-  try {
-    userInfo.value = await get<UserInfo>('/auth/me')
-  } catch { /* interceptor handles */ }
+  await authStore.loadUserInfo()
 }
 
 async function loadUsage(): Promise<void> {

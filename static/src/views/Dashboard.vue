@@ -184,7 +184,9 @@ import {
 } from '@vicons/ionicons5'
 import StatCard from '@/components/StatCard.vue'
 import { useScanStore } from '@/stores/scan'
-import { get, type QueueItem, type ScanTaskSummary, type UserInfo, type TenantListItem } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
+import { get, type QueueItem, type ScanTaskSummary, type TenantListItem } from '@/api/client'
 
 const store = useScanStore()
 const recentTasks = ref<ScanTaskSummary[]>([])
@@ -193,12 +195,9 @@ const queueItems = ref<QueueItem[]>([])
 const totalUsers = ref(0)
 const tenantData = ref<TenantListItem[]>([])
 
-// ─── 用户信息与权限 ───
-const userInfo = ref<UserInfo | null>(null)
-const isAdmin = computed(
-  () => userInfo.value?.role === 'tenant_admin' || userInfo.value?.role === 'super_admin'
-)
-const isSuperAdmin = computed(() => userInfo.value?.role === 'super_admin')
+// ─── 用户信息与权限（使用全局 auth store） ───
+const authStore = useAuthStore()
+const { userInfo, isAdmin, isSuperAdmin } = storeToRefs(authStore)
 
 const statsAvgConf = computed(() => {
   if (store.stats?.avg_confidence == null) return '—'
@@ -232,11 +231,7 @@ const tenantOverviewColumns = computed(() => [
 ])
 
 async function loadUserInfo(): Promise<void> {
-  try {
-    userInfo.value = await get<UserInfo>('/auth/me')
-  } catch {
-    // interceptor handles
-  }
+  await authStore.loadUserInfo()
 }
 
 async function loadRecent() {

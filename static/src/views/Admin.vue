@@ -267,13 +267,15 @@ import {
   type TenantListItem, type TenantDetail, type TenantUpdateRequest, type TenantCreateRequest,
   type UsageResponse,
 } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
+import { storeToRefs } from 'pinia'
 
 const message = useMessage()
 const dialog = useDialog()
 
-// ─── 当前用户信息 ───
-const currentUser = ref<UserInfo | null>(null)
-const isSuperAdmin = computed(() => currentUser.value?.role === 'super_admin')
+// ─── 当前用户信息（使用全局 auth store） ───
+const authStore = useAuthStore()
+const { userInfo: currentUser, isSuperAdmin } = storeToRefs(authStore)
 
 const activeTab = ref<'users' | 'tenant' | 'usage'>('users')
 
@@ -891,13 +893,8 @@ function onTabChange(tab: string): void {
 
 // ─── 初始化 ───
 onMounted(async () => {
-  // 加载当前用户信息
-  try {
-    const { get } = await import('@/api/client')
-    currentUser.value = await get<UserInfo>('/auth/me')
-  } catch {
-    // 拦截器会处理
-  }
+  // 加载当前用户信息（共享 auth store，避免重复请求）
+  await authStore.loadUserInfo()
 
   // 超管预加载租户列表（用于创建用户时选择）
   if (isSuperAdmin.value) {

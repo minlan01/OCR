@@ -5,8 +5,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, EmailStr, Field
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
@@ -25,6 +27,7 @@ from api.security import (
 from api.dependencies import get_current_user
 
 router = APIRouter()
+_limiter = Limiter(key_func=get_remote_address)
 
 
 # ─── Schemas ───
@@ -33,7 +36,7 @@ class RegisterRequest(BaseModel):
     tenant_name: str | None = None
     tenant_id: UUID | None = None
     email: EmailStr
-    password: str
+    password: str = Field(min_length=6, max_length=128)
     display_name: str
 
 
@@ -90,7 +93,8 @@ async def list_tenant_names(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/auth/register", response_model=TokenResponse, status_code=201)
-async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+@_limiter.limit("3/minute")
+async def register(request: Request, req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """注册：可选择已有租户（member）或创建新租户（tenant_admin）"""
     # 检查邮箱是否已注册
     existing = await db.execute(select(User).where(User.email == req.email))
@@ -166,7 +170,8 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/auth/login", response_model=TokenResponse)
-async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+@_limiter.limit("5/minute")
+async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(get_db)):
     """登录获取 JWT token"""
     result = await db.execute(
         select(User).where(User.email == req.email)
@@ -193,6 +198,7 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     # 更新最后登录时间
     user.last_login = datetime.now(timezone.utc)
+    await db.commit()
 
     # 获取租户信息（super_admin 无租户，跳过租户检查）
     tenant = None
@@ -231,7 +237,8 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/auth/refresh", response_model=TokenResponse)
-async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db)):
+@_limiter.limit("10/minute")
+async def refresh_token(request: Request, req: RefreshRequest, db: AsyncSession = Depends(get_db)):
     """用 refresh token 换取新的 access token"""
     payload = decode_token(req.refresh_token)
 

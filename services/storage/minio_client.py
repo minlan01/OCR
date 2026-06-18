@@ -40,10 +40,13 @@ class MinioClient:
                 retries=urllib3.Retry(total=3, backoff_factor=0.5),
                 maxsize=10,
             )
+            _minio_secret = settings.minio_secret_key
+            if hasattr(_minio_secret, 'get_secret_value'):
+                _minio_secret = _minio_secret.get_secret_value()
             self._client = Minio(
                 endpoint=settings.minio_endpoint,
                 access_key=settings.minio_access_key,
-                secret_key=settings.minio_secret_key,
+                secret_key=_minio_secret,
                 secure=settings.minio_secure,
                 http_client=http_client,
             )
@@ -215,15 +218,22 @@ class MinioClient:
 
     def download_bytes(self, bucket: str, object_key: str) -> bytes:
         """从 MinIO 下载文件为字节"""
+        response = None
         try:
             response = self.client.get_object(bucket_name=bucket, object_name=object_key)
             data = response.read()
-            response.close()
-            response.release_conn()
             return data
         except S3Error as e:
             logger.error(f"MinIO download failed: {bucket}/{object_key} | {e}")
             raise
+        finally:
+            # 无论成功还是异常都确保释放连接
+            if response is not None:
+                try:
+                    response.close()
+                    response.release_conn()
+                except Exception:
+                    pass
 
     def download_file(self, bucket: str, object_key: str, file_path: str) -> None:
         """从 MinIO 下载文件到本地"""

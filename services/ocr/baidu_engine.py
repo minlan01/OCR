@@ -41,7 +41,10 @@ class BaiduOCREngine(BaseOCREngine):
     ):
         self._app_id = app_id if app_id is not None else settings.baidu_ocr_app_id
         self._api_key = api_key if api_key is not None else settings.baidu_ocr_api_key
-        self._secret_key = secret_key if secret_key is not None else settings.baidu_ocr_secret_key
+        _sk = settings.baidu_ocr_secret_key
+        if hasattr(_sk, 'get_secret_value'):
+            _sk = _sk.get_secret_value()
+        self._secret_key = secret_key if secret_key is not None else _sk
         self._timeout = timeout if timeout is not None else settings.baidu_ocr_timeout
         self._max_concurrent = settings.baidu_ocr_max_concurrent
         self._client = None

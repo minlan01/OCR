@@ -96,6 +96,8 @@ async def create_template(
     generator_code = None
     if generator_file:
         raw = await generator_file.read()
+        if len(raw) > 256 * 1024:  # 256KB 限制（防超大代码注入）
+            raise HTTPException(status_code=400, detail="Generator code too large (max 256KB)")
         try:
             generator_code = raw.decode("utf-8")
         except UnicodeDecodeError as e:
@@ -138,7 +140,7 @@ async def update_template(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
-    # 查找模板（仅允许修改本租户的模板；全局模板仅 super_admin 可改，此处由 tenant_id=None 时放行）
+    # 查找模板（仅允许修改本租户的模板；tenant_id=None 时仅查全局模板）
     stmt = select(OutputTemplate).where(OutputTemplate.id == template_id)
     if tenant_id is not None:
         stmt = stmt.where(OutputTemplate.tenant_id == tenant_id)
@@ -253,7 +255,7 @@ async def export_with_template(
         )
     except Exception as e:
         logger.error(f"LLM extraction failed for task {task_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"LLM extraction failed: {e}")
+        raise HTTPException(status_code=500, detail="LLM extraction failed. Please contact administrator.")
 
     try:
         docx_bytes = run_generator_to_docx(

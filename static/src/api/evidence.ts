@@ -3,6 +3,7 @@
  * 证据整理模块全部端点封装
  */
 import * as api from './client'
+import { apiKeyOnlyHeaders } from './client'
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 
@@ -180,9 +181,8 @@ export async function uploadMaterials(caseId: string, files: File[]): Promise<Ma
   for (const file of files) {
     form.append('files', file)
   }
-  const key = import.meta.env.VITE_API_KEY
-  const h: Record<string, string> = {}
-  if (key) h['X-API-Key'] = key
+  // 复用 client.ts 的 apiKeyOnlyHeaders 确保 JWT 用户也带 Token
+  const h = apiKeyOnlyHeaders()
 
   const res = await fetch(`/api/v1/evidence/cases/${caseId}/upload`, {
     method: 'POST',
@@ -448,11 +448,5 @@ export async function updateCompensation(caseId: string, data: CompensationUpdat
 
 /** 导出赔偿费用清单 */
 export async function exportCompensationCalc(caseId: string): Promise<void> {
-  const resp = await api.get(`/evidence/cases/${caseId}/compensation/export`, { responseType: 'blob' })
-  const url = window.URL.createObjectURL(new Blob([resp as BlobPart]))
-  const link = document.createElement('a')
-  link.href = url
-  link.download = '赔偿费用清单.xlsx'
-  link.click()
-  window.URL.revokeObjectURL(url)
+  await api.downloadBlob(`/evidence/cases/${caseId}/compensation/export`, '赔偿费用清单.xlsx')
 }

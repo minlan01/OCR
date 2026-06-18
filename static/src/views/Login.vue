@@ -153,7 +153,14 @@ const loginForm = reactive({
   password: '',
 })
 const loginRules: FormRules = {
-  email: [{ required: true, message: '请输入邮箱', trigger: 'blur' }],
+  email: [
+    { required: true, message: '请输入邮箱', trigger: 'blur' },
+    {
+      pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+      message: '请输入有效的邮箱地址',
+      trigger: 'blur',
+    },
+  ],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 

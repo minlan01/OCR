@@ -38,10 +38,10 @@ const REMEMBER_EMAIL_KEY = 'ss_remember_email'
 const REMEMBER_PASSWORD_KEY = 'ss_remember_password'
 const AUTO_LOGIN_KEY = 'ss_auto_login'
 
-/** 保存邮箱+密码到 localStorage（密码 base64 编码，非加密仅混淆） */
-export function saveCredentials(email: string, password: string): void {
+/** 保存邮箱到 localStorage（不再保存密码，避免明文泄露风险） */
+export function saveCredentials(email: string, _password: string): void {
   localStorage.setItem(REMEMBER_EMAIL_KEY, email)
-  localStorage.setItem(REMEMBER_PASSWORD_KEY, btoa(unescape(encodeURIComponent(password))))
+  // 密码不持久化 — 安全第一
 }
 
 /** 清除保存的邮箱+密码 */
@@ -55,15 +55,9 @@ export function getSavedEmail(): string {
   return localStorage.getItem(REMEMBER_EMAIL_KEY) || ''
 }
 
-/** 获取保存的密码（解码） */
+/** 获取保存的密码 — 出于安全考虑不再持久化密码，始终返回空 */
 export function getSavedPassword(): string {
-  const encoded = localStorage.getItem(REMEMBER_PASSWORD_KEY)
-  if (!encoded) return ''
-  try {
-    return decodeURIComponent(escape(atob(encoded)))
-  } catch {
-    return ''
-  }
+  return ''
 }
 
 /** 设置/清除自动登录标记 */
@@ -144,7 +138,7 @@ function authHeaders(): Record<string, string> {
   return h
 }
 
-function apiKeyOnlyHeaders(): Record<string, string> {
+export function apiKeyOnlyHeaders(): Record<string, string> {
   // FormData/文件上传等场景：不设 Content-Type，只传 API Key
   const h: Record<string, string> = {}
   const token = getAccessToken()

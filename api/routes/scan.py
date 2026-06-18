@@ -363,6 +363,22 @@ async def upload_scan(
             detail="Invalid scanner_id: must be 1-128 alphanumeric characters, underscores, or hyphens",
         )
 
+    # SSRF 防护：校验 callback_url
+    if callback_url:
+        from urllib.parse import urlparse
+        parsed = urlparse(callback_url)
+        if parsed.scheme not in ("http", "https"):
+            raise HTTPException(status_code=400, detail="callback_url must be http(s)")
+        host = (parsed.hostname or "").lower()
+        # 禁止内网/本地地址
+        BLOCKED_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+        BLOCKED_PREFIXES = ("169.254.", "10.", "172.16.", "172.17.", "172.18.", "172.19.",
+                            "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+                            "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+                            "192.168.")
+        if host in BLOCKED_HOSTS or any(host.startswith(p) for p in BLOCKED_PREFIXES):
+            raise HTTPException(status_code=400, detail="callback_url cannot point to private/loopback addresses")
+
     result = await _upload_single_file(
         db=db,
         content=content,
@@ -763,12 +779,13 @@ async def retry_scan(
 
     # === 幂等保护：清理上次运行的中间产物 ===
 
-    # 1. 清理工作目录中的中间文件
+    # 1. 清理工作目录中的中间文件（用 asyncio.to_thread 避免阻塞事件循环）
     work_dir = Path(settings.archive_dir) / "processing" / str(task_id)
     if work_dir.exists():
         try:
             import shutil
-            shutil.rmtree(work_dir)
+            import asyncio
+            await asyncio.to_thread(shutil.rmtree, work_dir)
             logger.info(f"Retry: cleaned work directory for {task_id}")
         except Exception as e:
             logger.warning(f"Retry: failed to clean work directory for {task_id}: {e}")

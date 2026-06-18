@@ -95,9 +95,9 @@ export const useComplaintStore = defineStore('complaint', () => {
     form.append('slot', slot)
     form.append('file', file)
 
-    const key = import.meta.env.VITE_API_KEY
-    const h: Record<string, string> = {}
-    if (key) h['X-API-Key'] = key
+    // 复用 client.ts 的 apiKeyOnlyHeaders 确保 JWT 用户也带 Token
+    const { apiKeyOnlyHeaders } = await import('@/api/client')
+    const h = apiKeyOnlyHeaders()
 
     const res = await fetch(`/api/v1/complaint/cases/${caseId}/upload`, {
       method: 'POST',

@@ -50,6 +50,7 @@ import { ref, h, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   NDataTable, NTag, NButton, NSelect, NInput, NSpace, NSpin, NPopconfirm, NIcon,
+  useMessage,
 } from 'naive-ui'
 import { RefreshOutline } from '@vicons/ionicons5'
 import type { DataTableColumns } from 'naive-ui'
@@ -57,6 +58,7 @@ import { useScanStore } from '@/stores/scan'
 import type { ScanTaskSummary } from '@/api/client'
 
 const router = useRouter()
+const message = useMessage()
 const store = useScanStore()
 
 const filterStatus = ref<string>('')
@@ -215,7 +217,7 @@ async function handleRetry(taskId: string) {
     await store.retryTask(taskId)
     loadTasks()
   } catch (e: any) {
-    alert('重试失败: ' + e.message)
+    message.error('重试失败: ' + e.message)
   }
 }
 
@@ -224,7 +226,7 @@ async function handleDelete(taskId: string) {
     await store.deleteTask(taskId)
     loadTasks()
   } catch (e: any) {
-    alert('删除失败: ' + e.message)
+    message.error('删除失败: ' + e.message)
   }
 }
 

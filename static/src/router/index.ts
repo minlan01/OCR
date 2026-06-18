@@ -89,22 +89,15 @@ const router = createRouter({
 })
 
 // ─── 路由守卫：认证检查 ───
-// 每次全新打开页面（新标签页/刷新/输入URL）都必须先经过登录页
-let isFirstLoad = true
-
 router.beforeEach((to, _from, next) => {
   const isPublic = to.meta.public === true
 
-  // 首次加载：不管去哪个路由，都先重定向到登录页
-  // 后续 SPA 内部导航不受此限制
-  if (isFirstLoad && !isPublic) {
-    isFirstLoad = false
-    next({ name: 'Login' })
-    return
-  }
-  isFirstLoad = false
-
   if (isPublic) {
+    // 已登录用户访问登录页 → 跳转到首页（避免重复登录）
+    if (to.name === 'Login' && isLoggedIn()) {
+      next({ path: '/dashboard' })
+      return
+    }
     next()
     return
   }
@@ -113,6 +106,23 @@ router.beforeEach((to, _from, next) => {
   if (!isLoggedIn()) {
     next({ name: 'Login', query: { redirect: to.fullPath } })
     return
+  }
+
+  // 管理后台路由：检查角色权限
+  if (to.meta.requiresAdmin) {
+    const userInfoStr = localStorage.getItem('ss_user_info')
+    if (userInfoStr) {
+      try {
+        const userInfo = JSON.parse(userInfoStr)
+        const role = userInfo.role || ''
+        if (role !== 'super_admin' && role !== 'tenant_admin') {
+          next({ path: '/dashboard' })
+          return
+        }
+      } catch {
+        // 解析失败，放行让后端拒绝
+      }
+    }
   }
 
   next()

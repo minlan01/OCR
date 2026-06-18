@@ -291,7 +291,7 @@ async function handleRetry() {
     await store.retryTask(taskId)
     store.fetchDetail(taskId)
   } catch (e: any) {
-    alert('重试失败: ' + e.message)
+    message.error('重试失败: ' + e.message)
   }
 }
 
@@ -300,7 +300,7 @@ async function handleDelete() {
     await store.deleteTask(taskId)
     router.push('/tasks')
   } catch (e: any) {
-    alert('删除失败: ' + e.message)
+    message.error('删除失败: ' + e.message)
   }
 }
 
