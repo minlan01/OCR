@@ -157,6 +157,24 @@ const loginRules: FormRules = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
+/** 自动登录：复用保存的凭据静默登录 */
+async function autoLoginRequest() {
+  loading.value = true
+  try {
+    const res = await post<TokenResponse>('/auth/login', {
+      email: getSavedEmail(),
+      password: getSavedPassword(),
+    })
+    setTokens(res.access_token, res.refresh_token)
+    message.success(`欢迎回来，${res.user.display_name}`)
+    router.push('/dashboard')
+  } catch {
+    // 自动登录失败（密码改了等），静默忽略，留在登录页让用户手动登录
+  } finally {
+    loading.value = false
+  }
+}
+
 async function handleLogin() {
   try {
     await loginFormRef.value?.validate()
@@ -242,8 +260,8 @@ async function handleRegister() {
   }
 }
 
-// 已登录则跳转 / 自动登录 / 回填保存的密码
-onMounted(() => {
+// 页面加载：回填密码 + 自动登录触发
+onMounted(async () => {
   // 回填记住的密码
   if (hasSavedCredentials()) {
     loginForm.email = getSavedEmail()
@@ -251,15 +269,9 @@ onMounted(() => {
     rememberPassword.value = true
   }
 
-  // 自动登录：如果标记了自动登录且有 token，直接跳转
-  if (isAutoLogin() && isLoggedIn()) {
-    router.push('/dashboard')
-    return
-  }
-
-  // 普通已登录状态也跳转
-  if (isLoggedIn()) {
-    router.push('/dashboard')
+  // 自动登录：在登录页自动发起登录请求
+  if (isAutoLogin() && hasSavedCredentials()) {
+    await autoLoginRequest()
   }
 })
 </script>
