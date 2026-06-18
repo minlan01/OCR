@@ -303,12 +303,12 @@ async def update_user(
             detail="Cannot disable your own account",
         )
 
-    # role 校验：不能修改 super_admin；不能将他人提升至与自己同级或更高
-    if payload.role is not None:
+    # role 校验：不能修改 super_admin 的角色；不能将他人提升至与自己同级或更高
+    if payload.role is not None and payload.role != user.role:
         if user.role == "super_admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot modify a super_admin",
+                detail="Cannot change role of a super_admin",
             )
         if _ROLE_LEVEL[payload.role] > _ROLE_LEVEL[current_user.role]:
             raise HTTPException(

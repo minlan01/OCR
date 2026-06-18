@@ -164,12 +164,14 @@
         <n-form-item v-else label="新密码" path="password">
           <n-input v-model:value="userForm.password" type="password" placeholder="留空则不修改密码" show-password-on="click" />
         </n-form-item>
-        <n-form-item label="角色" path="role">
+        <n-form-item v-if="editingUser?.role !== 'super_admin'" label="角色" path="role">
           <n-select
             v-model:value="userForm.role"
             :options="roleOptions"
-            :disabled="editingUser?.role === 'super_admin'"
           />
+        </n-form-item>
+        <n-form-item v-else label="角色">
+          <n-tag type="error" size="small">超级管理员</n-tag>
         </n-form-item>
       </n-form>
       <template #footer>
@@ -396,7 +398,7 @@ interface UserFormState {
   email: string
   display_name: string
   password: string
-  role: 'member' | 'tenant_admin'
+  role: 'member' | 'tenant_admin' | undefined
 }
 
 const userForm = ref<UserFormState>({
@@ -450,7 +452,7 @@ function openEditModal(row: UserListItem): void {
     email: row.email,
     display_name: row.display_name,
     password: '',
-    role: row.role === 'super_admin' ? 'member' : (row.role as 'member' | 'tenant_admin'),
+    role: row.role === 'super_admin' ? undefined : (row.role as 'member' | 'tenant_admin'),
   }
   userModalShow.value = true
 }
@@ -467,7 +469,10 @@ async function submitUserForm(): Promise<void> {
     if (editingUser.value) {
       const payload: UserUpdateRequest = {
         display_name: userForm.value.display_name,
-        role: userForm.value.role,
+      }
+      // super_admin 不发 role（后端不允许修改角色）
+      if (editingUser.value.role !== 'super_admin') {
+        payload.role = userForm.value.role
       }
       if (userForm.value.password) {
         payload.password = userForm.value.password
@@ -479,7 +484,7 @@ async function submitUserForm(): Promise<void> {
         email: userForm.value.email,
         display_name: userForm.value.display_name,
         password: userForm.value.password,
-        role: userForm.value.role,
+        role: userForm.value.role || 'member',
       }
       await createUser(payload)
       message.success('用户已创建')
