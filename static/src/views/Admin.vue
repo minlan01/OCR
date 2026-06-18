@@ -365,8 +365,8 @@ const userColumns = computed<DataTableColumns<UserListItem>>(() => [
           }
         )
       )
-      // 禁用（不能禁用自己、不能禁用 super_admin）
-      if (row.id !== currentUser.value?.id && row.role !== 'super_admin' && row.is_active) {
+      // 删除（不能删除自己、不能删除 super_admin）
+      if (row.id !== currentUser.value?.id && row.role !== 'super_admin') {
         actions.push(
           h(
             NButton,
@@ -374,11 +374,11 @@ const userColumns = computed<DataTableColumns<UserListItem>>(() => [
               size: 'tiny',
               quaternary: true,
               type: 'error',
-              onClick: () => confirmDisable(row),
+              onClick: () => confirmDelete(row),
             },
             {
               icon: () => h(NIcon, null, { default: () => h(TrashOutline) }),
-              default: () => '禁用',
+              default: () => '删除',
             }
           )
         )
@@ -498,16 +498,16 @@ async function submitUserForm(): Promise<void> {
   }
 }
 
-function confirmDisable(row: UserListItem): void {
-  dialog.warning({
-    title: '确认禁用',
-    content: `确定要禁用用户 "${row.display_name}" (${row.email}) 吗？禁用后该用户将无法登录。`,
-    positiveText: '确认禁用',
+function confirmDelete(row: UserListItem): void {
+  dialog.error({
+    title: '确认删除',
+    content: `确定要删除用户 "${row.display_name}" (${row.email}) 吗？此操作不可恢复，该用户的所有数据将被永久清除。`,
+    positiveText: '确认删除',
     negativeText: '取消',
     async onPositiveClick() {
       try {
         await disableUser(row.id)
-        message.success('用户已禁用')
+        message.success('用户已删除')
         loadUsers()
       } catch (err) {
         message.error((err as Error).message)

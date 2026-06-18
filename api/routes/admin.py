@@ -197,8 +197,15 @@ async def list_users(
     base = select(User)
     count_base = select(func.count(User.id))
     if not _require_super_admin(current_user):
-        base = base.where(User.tenant_id == current_user.tenant_id)
-        count_base = count_base.where(User.tenant_id == current_user.tenant_id)
+        # 非 super_admin：只看本租户，且看不到 super_admin
+        base = base.where(
+            User.tenant_id == current_user.tenant_id,
+            User.role != "super_admin",
+        )
+        count_base = count_base.where(
+            User.tenant_id == current_user.tenant_id,
+            User.role != "super_admin",
+        )
 
     total = (await db.execute(count_base)).scalar() or 0
     offset = (page - 1) * size
@@ -331,13 +338,20 @@ async def update_user(
 
 @router.delete("/users/{user_id}", status_code=200)
 @limiter.limit("10/minute")
-async def disable_user(
+async def delete_user(
     request: Request,
     user_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """禁用用户（软删除 is_active=False）"""
+    """删除用户（硬删除）
+
+    规则:
+    - super_admin 不能被删除（唯一性保护）
+    - 不能删除自己
+    - tenant_admin 只能删除本租户内的成员
+    - super_admin 可以删除除自己外的所有用户
+    """
     _require_tenant_admin_or_higher(current_user)
 
     user = (
@@ -346,31 +360,31 @@ async def disable_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 租户隔离
-    if not _require_super_admin(current_user) and user.tenant_id != current_user.tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot disable users outside your tenant",
-        )
-
-    # 不能禁用自己
+    # 不能删除自己
     if user.id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot disable your own account",
+            detail="Cannot delete your own account",
         )
 
-    # 不能禁用 super_admin
+    # super_admin 唯一性保护：任何人都不能删除 super_admin
     if user.role == "super_admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Cannot disable a super_admin",
+            detail="Cannot delete a super_admin account",
         )
 
-    user.is_active = False
+    # 租户隔离：非 super_admin 只能删除本租户用户
+    if not _require_super_admin(current_user) and user.tenant_id != current_user.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete users outside your tenant",
+        )
+
+    await db.delete(user)
     await db.commit()
-    logger.info(f"User disabled by {current_user.email}: {user.email}")
-    return {"message": "User disabled", "success": True}
+    logger.info(f"User deleted by {current_user.email}: {user.email}")
+    return {"message": "User deleted", "success": True}
 
 
 # ══════════════════════════════════════════════════════════════
