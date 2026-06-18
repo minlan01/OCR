@@ -95,6 +95,7 @@ export interface UserInfo {
   tenant_id: string
   tenant_name: string
   plan: string
+  features: Record<string, boolean> | null
 }
 
 export interface TokenResponse {
@@ -556,6 +557,7 @@ export interface TenantListItem {
   user_count: number
   case_count: number
   created_at: string
+  features: Record<string, boolean> | null
 }
 
 export interface TenantDetail {
@@ -572,6 +574,7 @@ export interface TenantDetail {
   user_count: number
   case_count: number
   last_active: string | null
+  features: Record<string, boolean> | null
 }
 
 export interface TenantUpdateRequest {
@@ -581,6 +584,7 @@ export interface TenantUpdateRequest {
   max_concurrent?: number
   storage_quota_mb?: number
   status?: 'active' | 'suspended'
+  features?: Record<string, boolean> | null
 }
 
 export interface TenantCreateRequest {
@@ -590,6 +594,7 @@ export interface TenantCreateRequest {
   max_concurrent: number
   storage_quota_mb: number
   status: 'active' | 'suspended'
+  features?: Record<string, boolean> | null
 }
 
 export interface TenantNameItem {

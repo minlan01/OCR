@@ -16,7 +16,7 @@ from sqlalchemy import (
     String,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.session import Base
@@ -46,6 +46,10 @@ class Tenant(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("NOW()"), onupdate=text("NOW()")
+    )
+    features: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, default=None,
+        comment="功能开关 JSON: {evidence: bool, timeline: bool, ocr: bool}"
     )
 
     # 关联

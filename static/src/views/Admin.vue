@@ -224,6 +224,16 @@
             ]"
           />
         </n-form-item>
+        <n-form-item label="功能开关">
+          <n-space vertical>
+            <n-checkbox v-model:checked="tenantFeatures.evidence">
+              证据整理
+            </n-checkbox>
+            <n-checkbox v-model:checked="tenantFeatures.timeline">
+              病历时间整理
+            </n-checkbox>
+          </n-space>
+        </n-form-item>
       </n-form>
       <template #footer>
         <n-space justify="end">
@@ -243,7 +253,7 @@ import {
   NTabs, NTabPane, NButton, NIcon, NDataTable, NSpace, NTag, NModal,
   NForm, NFormItem, NInput, NInputNumber, NSelect, NCard, NStatistic,
   NGrid, NGridItem, NProgress, NDescriptions, NDescriptionsItem, NText,
-  NSpin, NEmpty, useMessage, useDialog,
+  NSpin, NEmpty, NCheckbox, useMessage, useDialog,
   type DataTableColumns, type FormInst, type FormRules,
 } from 'naive-ui'
 import {
@@ -681,6 +691,17 @@ const tenantColumns = computed<DataTableColumns<TenantListItem>>(() => [
     },
   },
   {
+    title: '功能',
+    key: 'features',
+    render(row) {
+      const tags: ReturnType<typeof h>[] = []
+      if (row.features?.evidence) tags.push(h(NTag, { size: 'small', type: 'info' }, { default: () => '证据整理' }))
+      if (row.features?.timeline) tags.push(h(NTag, { size: 'small', type: 'success' }, { default: () => '时间整理' }))
+      if (!tags.length) tags.push(h(NTag, { size: 'small' }, { default: () => '无' }))
+      return h(NSpace, { size: 4 }, { default: () => tags })
+    },
+  },
+  {
     title: '操作',
     key: 'actions',
     width: 80,
@@ -741,6 +762,11 @@ const tenantForm = ref<TenantUpdateRequest>({
   status: 'active',
 })
 
+const tenantFeatures = ref<{ evidence: boolean; timeline: boolean }>({
+  evidence: true,
+  timeline: false,
+})
+
 function openTenantEditModal(row: TenantListItem): void {
   editingTenantId.value = row.id
   tenantForm.value = {
@@ -750,6 +776,10 @@ function openTenantEditModal(row: TenantListItem): void {
     max_concurrent: row.max_concurrent,
     storage_quota_mb: row.storage_quota_mb,
     status: row.status as 'active' | 'suspended',
+  }
+  tenantFeatures.value = {
+    evidence: row.features?.evidence ?? true,
+    timeline: row.features?.timeline ?? false,
   }
   tenantModalShow.value = true
 }
@@ -764,6 +794,7 @@ function openTenantCreateModal(): void {
     storage_quota_mb: 2048,
     status: 'active',
   }
+  tenantFeatures.value = { evidence: true, timeline: false }
   tenantModalShow.value = true
 }
 
@@ -774,6 +805,9 @@ async function submitTenantForm(): Promise<void> {
   }
   tenantSaving.value = true
   try {
+    // 将功能开关合并到表单数据中
+    tenantForm.value.features = { ...tenantFeatures.value }
+
     if (editingTenantId.value) {
       await updateTenant(editingTenantId.value, tenantForm.value)
       message.success('租户配置已更新')

@@ -13,6 +13,7 @@ GET  /api/v1/admin/usage         - 当前租户使用量
 """
 from __future__ import annotations
 
+import copy
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -420,6 +421,7 @@ async def create_tenant(
         max_concurrent=payload.max_concurrent,
         storage_quota_mb=payload.storage_quota_mb,
         status=payload.status,
+        features=copy.deepcopy(payload.features) if payload.features else None,
     )
     db.add(tenant)
     await db.commit()
@@ -440,6 +442,7 @@ async def create_tenant(
         user_count=0,
         case_count=0,
         last_active=None,
+        features=tenant.features,
     )
 
 
@@ -495,6 +498,7 @@ async def list_tenants(
                 user_count=user_count,
                 case_count=case_count,
                 created_at=t.created_at,
+                features=t.features or {"evidence": True, "timeline": False},
             )
         )
 
@@ -559,6 +563,7 @@ async def get_tenant(
         user_count=user_count,
         case_count=case_count,
         last_active=last_active_row,
+        features=tenant.features,
     )
 
 
@@ -596,6 +601,9 @@ async def update_tenant(
         tenant.storage_quota_mb = payload.storage_quota_mb
     if payload.status is not None:
         tenant.status = payload.status
+    # JSONB 修改铁律：深拷贝确保 SQLAlchemy 检测到变更
+    if payload.features is not None:
+        tenant.features = copy.deepcopy(payload.features)
 
     await db.commit()
     await db.refresh(tenant)
@@ -633,6 +641,7 @@ async def update_tenant(
         user_count=user_count,
         case_count=case_count,
         last_active=last_active_row,
+        features=tenant.features,
     )
 
 

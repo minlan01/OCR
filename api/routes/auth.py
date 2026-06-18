@@ -66,6 +66,7 @@ class UserInfo(BaseModel):
     tenant_id: str
     tenant_name: str
     plan: str
+    features: dict | None = None
 
 
 # 前向引用解决
@@ -159,6 +160,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
             tenant_id=str(tenant.id),
             tenant_name=tenant.name,
             plan=tenant.plan,
+            features=tenant.features,
         ),
     )
 
@@ -223,6 +225,7 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
             tenant_id=str(tenant.id) if tenant else "",
             tenant_name=tenant.name if tenant else "System",
             plan=tenant.plan if tenant else "enterprise",
+            features=tenant.features if tenant else None,
         ),
     )
 
@@ -275,6 +278,7 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
             tenant_id=str(tenant.id) if tenant else "",
             tenant_name=tenant.name if tenant else "System",
             plan=tenant.plan if tenant else "enterprise",
+            features=tenant.features if tenant else None,
         ),
     )
 
@@ -328,7 +332,7 @@ async def update_profile(
 
     # 获取租户信息（super_admin 无租户）
     tenant = None
-    if current_user.tenant_id:
+    if current_user.tenant_id is not None:
         tenant_result = await db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
         tenant = tenant_result.scalar_one_or_none()
 
@@ -340,21 +344,26 @@ async def update_profile(
         tenant_id=str(tenant.id) if tenant else "",
         tenant_name=tenant.name if tenant else "System",
         plan=tenant.plan if tenant else "enterprise",
+        features=tenant.features if tenant else None,
     )
 
 
 @router.get("/auth/me", response_model=UserInfo)
 async def get_me(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """获取当前登录用户信息"""
-    tenant_result = await db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
-    tenant = tenant_result.scalar_one()
+    # super_admin 的 tenant_id 可能为 None，需兼容
+    tenant = None
+    if current_user.tenant_id is not None:
+        tenant_result = await db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
+        tenant = tenant_result.scalar_one_or_none()
 
     return UserInfo(
         id=str(current_user.id),
         email=current_user.email,
         display_name=current_user.display_name,
         role=current_user.role,
-        tenant_id=str(tenant.id),
-        tenant_name=tenant.name,
-        plan=tenant.plan,
+        tenant_id=str(tenant.id) if tenant else "",
+        tenant_name=tenant.name if tenant else "System",
+        plan=tenant.plan if tenant else "enterprise",
+        features=tenant.features if tenant else None,
     )

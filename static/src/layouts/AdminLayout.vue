@@ -102,37 +102,51 @@ function renderIcon(icon: Component) {
   return () => h(NIcon, null, { default: () => h(icon) })
 }
 
-const baseMenuOptions = [
-  { label: '概览', key: '/dashboard', icon: renderIcon(SpeedometerOutline) },
-  {
-    label: '普通OCR处理',
-    key: 'ocr-group',
-    icon: renderIcon(ScanOutline),
-    children: [
-      { label: '任务列表', key: '/tasks', icon: renderIcon(ListOutline) },
-      { label: '上传', key: '/upload', icon: renderIcon(CloudUploadOutline) },
-      { label: '处理文档', key: '/process', icon: renderIcon(DocumentTextOutline) },
-      { label: '下载中心', key: '/download', icon: renderIcon(CloudDownloadOutline) },
-      { label: '模板管理', key: '/templates', icon: renderIcon(DocumentOutline) },
-    ],
-  },
-  {
-    label: '证据整理',
-    key: 'evidence-group',
-    icon: renderIcon(FolderOpenOutline),
-    children: [
-      { label: '诉状生成', key: '/evidence', icon: renderIcon(CreateOutline) },
-    ],
-  },
-  {
-    label: '病历时间整理',
-    key: 'timeline-group',
-    icon: renderIcon(TimeOutline),
-    children: [
-      { label: '（即将上线）', key: '/timeline-placeholder', disabled: true },
-    ],
-  },
-]
+const baseMenuOptions = computed(() => {
+  const features = userInfo.value?.features
+  // super_admin 或 features 为 null 时全部显示
+  const showAll = !features || userInfo.value?.role === 'super_admin'
+
+  const options: Array<Record<string, unknown>> = [
+    { label: '概览', key: '/dashboard', icon: renderIcon(SpeedometerOutline) },
+    {
+      label: '普通OCR处理',
+      key: 'ocr-group',
+      icon: renderIcon(ScanOutline),
+      children: [
+        { label: '任务列表', key: '/tasks', icon: renderIcon(ListOutline) },
+        { label: '上传', key: '/upload', icon: renderIcon(CloudUploadOutline) },
+        { label: '处理文档', key: '/process', icon: renderIcon(DocumentTextOutline) },
+        { label: '下载中心', key: '/download', icon: renderIcon(CloudDownloadOutline) },
+        { label: '模板管理', key: '/templates', icon: renderIcon(DocumentOutline) },
+      ],
+    },
+  ]
+
+  if (showAll || features.evidence !== false) {
+    options.push({
+      label: '证据整理',
+      key: 'evidence-group',
+      icon: renderIcon(FolderOpenOutline),
+      children: [
+        { label: '诉状生成', key: '/evidence', icon: renderIcon(CreateOutline) },
+      ],
+    })
+  }
+
+  if (showAll || features.timeline !== false) {
+    options.push({
+      label: '病历时间整理',
+      key: 'timeline-group',
+      icon: renderIcon(TimeOutline),
+      children: [
+        { label: '（即将上线）', key: '/timeline-placeholder', disabled: true },
+      ],
+    })
+  }
+
+  return options
+})
 
 const adminMenuItem = {
   label: '管理后台',
@@ -143,7 +157,7 @@ const adminMenuItem = {
 // 根据用户角色动态生成菜单（admin 角色才显示管理后台入口）
 const menuOptions = computed(() => {
   const isAdmin = userInfo.value?.role === 'tenant_admin' || userInfo.value?.role === 'super_admin'
-  return isAdmin ? [...baseMenuOptions, adminMenuItem] : baseMenuOptions
+  return isAdmin ? [...baseMenuOptions.value, adminMenuItem] : baseMenuOptions.value
 })
 
 const activeMenu = computed(() => {

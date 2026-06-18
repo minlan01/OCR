@@ -74,6 +74,7 @@ class TenantListItem(BaseModel):
     user_count: int = 0
     case_count: int = 0
     created_at: datetime
+    features: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -93,6 +94,7 @@ class TenantDetail(BaseModel):
     user_count: int = 0
     case_count: int = 0
     last_active: datetime | None = None
+    features: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -105,6 +107,7 @@ class TenantCreateRequest(BaseModel):
     max_concurrent: int = Field(default=2, ge=1)
     storage_quota_mb: int = Field(default=2048, ge=0)
     status: Literal["active", "suspended"] = "active"
+    features: dict | None = Field(default=None, description="功能开关")
 
 
 class TenantUpdateRequest(BaseModel):
@@ -115,6 +118,7 @@ class TenantUpdateRequest(BaseModel):
     max_concurrent: int | None = Field(default=None, ge=1)
     storage_quota_mb: int | None = Field(default=None, ge=0)
     status: Literal["active", "suspended"] | None = None
+    features: dict | None = None
 
 
 # ─── 使用量 ───
