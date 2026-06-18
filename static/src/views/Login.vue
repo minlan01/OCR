@@ -17,6 +17,10 @@
             <n-form-item label="密码" path="password">
               <n-input v-model:value="loginForm.password" type="password" show-password-on="click" placeholder="请输入密码" @keyup.enter="handleLogin" />
             </n-form-item>
+            <div class="login-options">
+              <n-checkbox v-model:checked="rememberPassword">记住密码</n-checkbox>
+              <n-checkbox v-model:checked="autoLogin">自动登录</n-checkbox>
+            </div>
             <n-button
               type="primary"
               block
@@ -103,11 +107,12 @@ import {
   NRadio,
   NSelect,
   NSpace,
+  NCheckbox,
   useMessage,
   type FormInst,
   type FormRules,
 } from 'naive-ui'
-import { post, get, setTokens, isLoggedIn, type TokenResponse, type TenantNameItem } from '@/api/client'
+import { post, get, setTokens, isLoggedIn, saveCredentials, getSavedEmail, getSavedPassword, hasSavedCredentials, setAutoLogin, isAutoLogin, type TokenResponse, type TenantNameItem } from '@/api/client'
 
 const router = useRouter()
 const message = useMessage()
@@ -137,6 +142,10 @@ watch(activeTab, (tab) => {
   }
 })
 
+// ─── 记住密码 + 自动登录 ───
+const rememberPassword = ref(false)
+const autoLogin = ref(false)
+
 // ─── 登录 ───
 const loginFormRef = ref<FormInst | null>(null)
 const loginForm = reactive({
@@ -158,6 +167,15 @@ async function handleLogin() {
   try {
     const res = await post<TokenResponse>('/auth/login', loginForm)
     setTokens(res.access_token, res.refresh_token)
+
+    // 记住密码：保存/清除凭据
+    if (rememberPassword.value) {
+      saveCredentials(loginForm.email, loginForm.password)
+    }
+
+    // 自动登录标记
+    setAutoLogin(autoLogin.value)
+
     message.success(`欢迎回来，${res.user.display_name}`)
     router.push('/dashboard')
   } catch (e: unknown) {
@@ -224,8 +242,22 @@ async function handleRegister() {
   }
 }
 
-// 已登录则跳转
+// 已登录则跳转 / 自动登录 / 回填保存的密码
 onMounted(() => {
+  // 回填记住的密码
+  if (hasSavedCredentials()) {
+    loginForm.email = getSavedEmail()
+    loginForm.password = getSavedPassword()
+    rememberPassword.value = true
+  }
+
+  // 自动登录：如果标记了自动登录且有 token，直接跳转
+  if (isAutoLogin() && isLoggedIn()) {
+    router.push('/dashboard')
+    return
+  }
+
+  // 普通已登录状态也跳转
   if (isLoggedIn()) {
     router.push('/dashboard')
   }
@@ -289,5 +321,11 @@ onMounted(() => {
 
 :deep(.n-form-item-label) {
   font-weight: 500;
+}
+
+.login-options {
+  display: flex;
+  gap: 24px;
+  padding: 0 2px 12px;
 }
 </style>

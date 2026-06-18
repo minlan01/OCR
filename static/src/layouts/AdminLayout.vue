@@ -92,7 +92,7 @@ import {
   SettingsOutline,
   PersonCircleOutline,
 } from '@vicons/ionicons5'
-import { get, isLoggedIn, clearTokens, type UserInfo } from '@/api/client'
+import { get, isLoggedIn, clearTokens, setAutoLogin, type UserInfo } from '@/api/client'
 
 const router = useRouter()
 const route = useRoute()
@@ -199,6 +199,8 @@ async function loadUserInfo() {
 }
 
 function handleLogout() {
+  // 主动退出时取消自动登录（保存密码仍保留）
+  setAutoLogin(false)
   clearTokens()
   userInfo.value = null
   router.push('/login')

@@ -32,6 +32,59 @@ export function isLoggedIn(): boolean {
   return !!getAccessToken()
 }
 
+// ─── 记住密码 / 自动登录 ───
+
+const REMEMBER_EMAIL_KEY = 'ss_remember_email'
+const REMEMBER_PASSWORD_KEY = 'ss_remember_password'
+const AUTO_LOGIN_KEY = 'ss_auto_login'
+
+/** 保存邮箱+密码到 localStorage（密码 base64 编码，非加密仅混淆） */
+export function saveCredentials(email: string, password: string): void {
+  localStorage.setItem(REMEMBER_EMAIL_KEY, email)
+  localStorage.setItem(REMEMBER_PASSWORD_KEY, btoa(unescape(encodeURIComponent(password))))
+}
+
+/** 清除保存的邮箱+密码 */
+export function clearSavedCredentials(): void {
+  localStorage.removeItem(REMEMBER_EMAIL_KEY)
+  localStorage.removeItem(REMEMBER_PASSWORD_KEY)
+}
+
+/** 获取保存的邮箱 */
+export function getSavedEmail(): string {
+  return localStorage.getItem(REMEMBER_EMAIL_KEY) || ''
+}
+
+/** 获取保存的密码（解码） */
+export function getSavedPassword(): string {
+  const encoded = localStorage.getItem(REMEMBER_PASSWORD_KEY)
+  if (!encoded) return ''
+  try {
+    return decodeURIComponent(escape(atob(encoded)))
+  } catch {
+    return ''
+  }
+}
+
+/** 设置/清除自动登录标记 */
+export function setAutoLogin(enabled: boolean): void {
+  if (enabled) {
+    localStorage.setItem(AUTO_LOGIN_KEY, 'true')
+  } else {
+    localStorage.removeItem(AUTO_LOGIN_KEY)
+  }
+}
+
+/** 是否启用了自动登录 */
+export function isAutoLogin(): boolean {
+  return localStorage.getItem(AUTO_LOGIN_KEY) === 'true'
+}
+
+/** 是否有保存的凭据 */
+export function hasSavedCredentials(): boolean {
+  return !!localStorage.getItem(REMEMBER_EMAIL_KEY) && !!localStorage.getItem(REMEMBER_PASSWORD_KEY)
+}
+
 // ─── Auth API ───
 
 export interface UserInfo {
