@@ -23,9 +23,8 @@ async def get_current_user(
     如果未登录则抛出 401
     """
     user_id = getattr(request.state, "user_id", None)
-    tenant_id = getattr(request.state, "tenant_id", None)
 
-    if not user_id or not tenant_id:
+    if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",

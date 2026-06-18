@@ -78,9 +78,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if payload and payload.get("type") == "access":
                 user_id = payload.get("sub")
                 tenant_id = payload.get("tenant_id")
-                if user_id and tenant_id:
+                # super_admin 的 tenant_id 为空字符串，允许通过
+                if user_id and (tenant_id is not None) and (tenant_id != "" or payload.get("role") == "super_admin"):
                     request.state.user_id = user_id
-                    request.state.tenant_id = tenant_id
+                    request.state.tenant_id = tenant_id if tenant_id else None
                     request.state.role = payload.get("role", "member")
                     return await call_next(request)
             # JWT 提供了但无效 → 401

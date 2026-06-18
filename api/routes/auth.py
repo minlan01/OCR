@@ -192,17 +192,21 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     # 更新最后登录时间
     user.last_login = datetime.now(timezone.utc)
 
-    # 获取租户信息
-    tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
-    tenant = tenant_result.scalar_one_or_none()
+    # 获取租户信息（super_admin 无租户，跳过租户检查）
+    tenant = None
+    if user.tenant_id:
+        tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
+        tenant = tenant_result.scalar_one_or_none()
 
-    if not tenant or tenant.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Tenant suspended",
-        )
+        if not tenant or tenant.status != "active":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Tenant suspended",
+            )
 
-    token_data = {"sub": str(user.id), "tenant_id": str(tenant.id), "role": user.role}
+    # super_admin 的 tenant_id 可能为 None，token 中用空字符串代替
+    token_tid = str(tenant.id) if tenant else ""
+    token_data = {"sub": str(user.id), "tenant_id": token_tid, "role": user.role}
     access_token = create_access_token(token_data)
     refresh_token = create_refresh_token(token_data)
 
@@ -216,9 +220,9 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
             email=user.email,
             display_name=user.display_name,
             role=user.role,
-            tenant_id=str(tenant.id),
-            tenant_name=tenant.name,
-            plan=tenant.plan,
+            tenant_id=str(tenant.id) if tenant else "",
+            tenant_name=tenant.name if tenant else "System",
+            plan=tenant.plan if tenant else "enterprise",
         ),
     )
 
@@ -247,14 +251,16 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
             detail="User not found or inactive",
         )
 
-    # 获取租户
-    tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
-    tenant = tenant_result.scalar_one_or_none()
+    # 获取租户（super_admin 无租户）
+    tenant = None
+    if user.tenant_id:
+        tenant_result = await db.execute(select(Tenant).where(Tenant.id == user.tenant_id))
+        tenant = tenant_result.scalar_one_or_none()
+        if not tenant or tenant.status != "active":
+            raise HTTPException(status_code=403, detail="Tenant suspended")
 
-    if not tenant or tenant.status != "active":
-        raise HTTPException(status_code=403, detail="Tenant suspended")
-
-    token_data = {"sub": str(user.id), "tenant_id": str(tenant.id), "role": user.role}
+    token_tid = str(tenant.id) if tenant else ""
+    token_data = {"sub": str(user.id), "tenant_id": token_tid, "role": user.role}
     new_access = create_access_token(token_data)
     new_refresh = create_refresh_token(token_data)
 
@@ -266,9 +272,9 @@ async def refresh_token(req: RefreshRequest, db: AsyncSession = Depends(get_db))
             email=user.email,
             display_name=user.display_name,
             role=user.role,
-            tenant_id=str(tenant.id),
-            tenant_name=tenant.name,
-            plan=tenant.plan,
+            tenant_id=str(tenant.id) if tenant else "",
+            tenant_name=tenant.name if tenant else "System",
+            plan=tenant.plan if tenant else "enterprise",
         ),
     )
 
@@ -320,17 +326,20 @@ async def update_profile(
 
     await db.commit()
 
-    tenant_result = await db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
-    tenant = tenant_result.scalar_one()
+    # 获取租户信息（super_admin 无租户）
+    tenant = None
+    if current_user.tenant_id:
+        tenant_result = await db.execute(select(Tenant).where(Tenant.id == current_user.tenant_id))
+        tenant = tenant_result.scalar_one_or_none()
 
     return UserInfo(
         id=str(current_user.id),
         email=current_user.email,
         display_name=current_user.display_name,
         role=current_user.role,
-        tenant_id=str(tenant.id),
-        tenant_name=tenant.name,
-        plan=tenant.plan,
+        tenant_id=str(tenant.id) if tenant else "",
+        tenant_name=tenant.name if tenant else "System",
+        plan=tenant.plan if tenant else "enterprise",
     )
 
 
