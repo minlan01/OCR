@@ -240,6 +240,7 @@ import {
 } from 'naive-ui'
 import {
   PersonAddOutline, CreateOutline, TrashOutline, AddOutline,
+  BanOutline, CheckmarkCircleOutline,
 } from '@vicons/ionicons5'
 import {
   getUsage, listUsers, createUser, updateUser, disableUser,
@@ -346,7 +347,7 @@ const userColumns = computed<DataTableColumns<UserListItem>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 160,
+    width: 220,
     render(row) {
       const actions: ReturnType<typeof h>[] = []
       // 编辑
@@ -365,6 +366,42 @@ const userColumns = computed<DataTableColumns<UserListItem>>(() => [
           }
         )
       )
+      // 禁用/启用（不能操作自己、不能操作 super_admin）
+      if (row.id !== currentUser.value?.id && row.role !== 'super_admin') {
+        if (row.is_active) {
+          actions.push(
+            h(
+              NButton,
+              {
+                size: 'tiny',
+                quaternary: true,
+                type: 'warning',
+                onClick: () => confirmDisable(row),
+              },
+              {
+                icon: () => h(NIcon, null, { default: () => h(BanOutline) }),
+                default: () => '禁用',
+              }
+            )
+          )
+        } else {
+          actions.push(
+            h(
+              NButton,
+              {
+                size: 'tiny',
+                quaternary: true,
+                type: 'success',
+                onClick: () => enableUser(row),
+              },
+              {
+                icon: () => h(NIcon, null, { default: () => h(CheckmarkCircleOutline) }),
+                default: () => '启用',
+              }
+            )
+          )
+        }
+      }
       // 删除（不能删除自己、不能删除 super_admin）
       if (row.id !== currentUser.value?.id && row.role !== 'super_admin') {
         actions.push(
@@ -501,7 +538,7 @@ async function submitUserForm(): Promise<void> {
 function confirmDelete(row: UserListItem): void {
   dialog.error({
     title: '确认删除',
-    content: `确定要删除用户 "${row.display_name}" (${row.email}) 吗？此操作不可恢复，该用户的所有数据将被永久清除。`,
+    content: `确定要删除用户 "${row.display_name}" (${row.email}) 吗？此操作不可恢复，该用户将被永久清除。`,
     positiveText: '确认删除',
     negativeText: '取消',
     async onPositiveClick() {
@@ -514,6 +551,34 @@ function confirmDelete(row: UserListItem): void {
       }
     },
   })
+}
+
+function confirmDisable(row: UserListItem): void {
+  dialog.warning({
+    title: '确认禁用',
+    content: `确定要禁用用户 "${row.display_name}" (${row.email}) 吗？禁用后该用户将无法登录，但数据保留。可随时重新启用。`,
+    positiveText: '确认禁用',
+    negativeText: '取消',
+    async onPositiveClick() {
+      try {
+        await updateUser(row.id, { is_active: false })
+        message.success('用户已禁用')
+        loadUsers()
+      } catch (err) {
+        message.error((err as Error).message)
+      }
+    },
+  })
+}
+
+async function enableUser(row: UserListItem): Promise<void> {
+  try {
+    await updateUser(row.id, { is_active: true })
+    message.success('用户已启用')
+    loadUsers()
+  } catch (err) {
+    message.error((err as Error).message)
+  }
 }
 
 // ═══════════════════════════════════════════
