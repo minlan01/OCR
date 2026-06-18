@@ -20,7 +20,9 @@ async def get_current_user(
 ) -> User:
     """
     从 request.state 获取当前登录用户（由 AuthMiddleware 注入）
-    如果未登录则抛出 401
+
+    API Key 模式（api_key_mode=True）不关联特定用户，此依赖会抛 401；
+    仅用于 JWT 认证的路由。scan/template 等使用 get_tenant_filter 即可。
     """
     user_id = getattr(request.state, "user_id", None)
 
@@ -85,12 +87,32 @@ def require_role(*allowed_roles: str) -> Callable:
     return _check_role
 
 
-async def get_tenant_filter(request: Request) -> uuid.UUID | None:
+async def get_tenant_filter(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> uuid.UUID | None:
     """
     获取当前租户ID用于查询过滤
-    如果未认证返回 None（兼容旧 API Key 模式）
+
+    - JWT 模式：从 request.state.tenant_id 获取（由中间件注入）
+    - API Key 模式：从 X-Tenant-Id / ?tenant_id 获取，并验证租户存在且活跃
+    - 未认证/无租户：返回 None（兼容旧 API Key 全局访问）
     """
     tenant_id = getattr(request.state, "tenant_id", None)
-    if tenant_id:
-        return uuid.UUID(tenant_id)
-    return None
+    if not tenant_id:
+        return None
+
+    try:
+        tid = uuid.UUID(tenant_id)
+    except (ValueError, TypeError):
+        return None
+
+    # API Key 模式：需要验证租户存在且活跃
+    if getattr(request.state, "api_key_mode", False):
+        result = await db.execute(
+            select(Tenant).where(Tenant.id == tid, Tenant.status == "active")
+        )
+        if not result.scalar_one_or_none():
+            return None
+
+    return tid

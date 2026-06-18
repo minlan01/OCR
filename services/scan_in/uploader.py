@@ -36,10 +36,11 @@ async def create_task_from_file(
     metadata: Optional[dict] = None,
     file_size: Optional[int] = None,
     file_md5: Optional[str] = None,
+    tenant_id: Optional[uuid.UUID] = None,
 ) -> ScanTask:
     """
     从本地文件创建扫描任务：
-    1. 计算 MD5 并查重
+    1. 计算 MD5 并查重（按 tenant_id 隔离）
     2. 上传原始 PDF 到 MinIO
     3. 创建数据库任务记录
     """
@@ -48,8 +49,10 @@ async def create_task_from_file(
     file_md5 = file_md5 or _compute_file_md5(file_path)
 
     async with async_session_factory() as db:
-        # 查重
+        # 查重（按 tenant 隔离 — 不同租户文件不能互相去重）
         stmt = select(ScanTask).where(ScanTask.file_md5 == file_md5)
+        if tenant_id is not None:
+            stmt = stmt.where(ScanTask.tenant_id == tenant_id)
         result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
         if existing:
@@ -63,6 +66,7 @@ async def create_task_from_file(
 
         task = ScanTask(
             id=task_id,
+            tenant_id=tenant_id,
             filename=filename,
             scanner_id=scanner_id,
             source_type="watch_folder",

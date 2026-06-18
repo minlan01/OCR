@@ -24,9 +24,27 @@ _KEY = "scanstruct:concurrent_case_count"
 _KEY_TTL: int = 7200  # 2小时
 
 
+# Lua 脚本：原子化 acquire（incr → 检查 → 超限则 decr 回滚）
+# 保证 incr+decr 不会被打断，消除竞态：
+#   返回 1 = 成功获取，返回 0 = 已满
+_LUA_ACQUIRE = """
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+end
+if current <= tonumber(ARGV[1]) then
+    return current
+else
+    redis.call('DECR', KEYS[1])
+    return 0
+end
+"""
+
+
 # ─── Redis 连接（懒加载） ──────────────────────────────────────────────────
 
 _redis: redis.Redis | None = None
+_lua_acquire_sha: str | None = None
 
 
 def _get_redis() -> redis.Redis:
@@ -45,7 +63,7 @@ def _get_redis() -> redis.Redis:
 # ─── 公开 API ──────────────────────────────────────────────────────────────
 
 def try_acquire_case() -> bool:
-    """尝试获取案件处理许可。
+    """尝试获取案件处理许可（原子操作）。
 
     Returns:
         True  — 获得许可，可以开始处理
@@ -53,20 +71,14 @@ def try_acquire_case() -> bool:
     """
     try:
         r = _get_redis()
-        current = r.incr(_KEY)
-        if current == 1:
-            # 第一个计数器，设置过期时间作为安全兜底
-            r.expire(_KEY, _KEY_TTL)
-
-        if current <= _MAX_CONCURRENT_CASES:
+        # 用 Lua 脚本一次性完成 incr + 检查 + 超限回滚（消除竞态）
+        result = r.eval(_LUA_ACQUIRE, 1, _KEY, _MAX_CONCURRENT_CASES, _KEY_TTL)
+        current = int(result)
+        if current > 0:
             logger.info(f"[并发控制] 获得处理许可 ({current}/{_MAX_CONCURRENT_CASES})")
             return True
-
-        # 超过上限，回退计数
-        r.decr(_KEY)
         logger.warning(
-            f"[并发控制] 系统繁忙，当前 {current-1} 个案件在处理，"
-            f"上限 {_MAX_CONCURRENT_CASES}，排队等待"
+            f"[并发控制] 系统繁忙，已达上限 {_MAX_CONCURRENT_CASES}，排队等待"
         )
         return False
 

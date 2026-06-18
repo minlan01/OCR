@@ -66,10 +66,10 @@ class LLMRateLimiter:
 
     @property
     def redis(self):
-        """延迟初始化 Redis 连接"""
+        """延迟初始化 Redis 连接（异步版，避免阻塞事件循环）"""
         if self._redis is None:
-            import redis
-            self._redis = redis.from_url(
+            import redis.asyncio as aioredis
+            self._redis = aioredis.from_url(
                 settings.redis_url,
                 decode_responses=True,
                 socket_timeout=5.0,
@@ -85,12 +85,12 @@ class LLMRateLimiter:
         """获取 429 计数器键"""
         return f"{SEMAPHORE_PREFIX}{model_type}:429"
 
-    def get_limit(self, model_type: str) -> int:
-        """获取当前并发上限（可能被降级）"""
+    async def get_limit(self, model_type: str) -> int:
+        """获取当前并发上限（可能被降级，异步）"""
         base = self._limits.get(model_type, DEFAULT_LIMITS.get(model_type, 5))
         # 检查是否需要降级
         try:
-            count = self.redis.get(self._counter_key(model_type))
+            count = await self.redis.get(self._counter_key(model_type))
             if count and int(count) >= DEGRADATION_THRESHOLD:
                 # 降级到基础值的一半（最少 1）
                 degraded = max(1, base // 2)
@@ -114,23 +114,23 @@ class LLMRateLimiter:
             True 表示获取成功，False 表示超时
         """
         key = self._key(model_type)
-        limit = self.get_limit(model_type)
+        limit = await self.get_limit(model_type)
         deadline = time.monotonic() + timeout
 
         while time.monotonic() < deadline:
             try:
-                # 原子操作：INCR + 检查上限
-                current = self.redis.incr(key)
+                # 原子操作：INCR + 检查上限（异步）
+                current = await self.redis.incr(key)
                 if current == 1:
                     # 第一个许可，设置 TTL 防泄漏
-                    self.redis.expire(key, PERMIT_TTL)
+                    await self.redis.expire(key, PERMIT_TTL)
 
                 if current <= limit:
                     logger.debug(f"LLM semaphore acquired: {model_type} ({current}/{limit})")
                     return True
                 else:
                     # 超出上限，回退
-                    self.redis.decr(key)
+                    await self.redis.decr(key)
                     # 等待一小段时间再重试
                     await asyncio.sleep(min(1.0, deadline - time.monotonic()))
             except Exception as e:
@@ -142,24 +142,24 @@ class LLMRateLimiter:
         return False
 
     async def release(self, model_type: str) -> None:
-        """释放调用许可"""
+        """释放调用许可（异步）"""
         key = self._key(model_type)
         try:
-            current = self.redis.decr(key)
+            current = await self.redis.decr(key)
             # 防止计数器变为负数
             if current < 0:
-                self.redis.set(key, 0)
+                await self.redis.set(key, 0)
                 logger.warning(f"LLM semaphore underflow: {model_type}, reset to 0")
         except Exception as e:
             logger.warning(f"LLM semaphore release error: {e}")
 
     async def record_429(self, model_type: str) -> None:
-        """记录一次 429 错误（用于自适应降级）"""
+        """记录一次 429 错误（用于自适应降级，异步）"""
         counter_key = self._counter_key(model_type)
         try:
-            count = self.redis.incr(counter_key)
+            count = await self.redis.incr(counter_key)
             if count == 1:
-                self.redis.expire(counter_key, DEGRADATION_WINDOW)
+                await self.redis.expire(counter_key, DEGRADATION_WINDOW)
             logger.info(f"LLM 429 recorded: {model_type} (count: {count}/{DEGRADATION_THRESHOLD})")
         except Exception as e:
             logger.warning(f"LLM 429 record error: {e}")
@@ -198,7 +198,7 @@ async def call_llm_with_retry(
     model_type: str = "text",
     max_retries: int = 3,
     base_delay: float = 2.0,
-) -> any:
+):
     """带限流 + 429 重试的 LLM 调用封装
 
     Args:

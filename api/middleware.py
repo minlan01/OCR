@@ -91,9 +91,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         # ── 尝试 API Key 认证（兼容旧模式）──
+        # API Key 是系统级密钥，不关联特定用户/租户。
+        # 注入 api_key_mode=True + role=super_admin，后续依赖项可据此判断。
+        # 优先从查询参数 tenant_id / X-Tenant-Id 读取目标租户（供外部集成用）。
         api_key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
         if api_key and settings.api_key_plain:
             if secrets.compare_digest(api_key, settings.api_key_plain):
+                request.state.api_key_mode = True
+                request.state.role = "super_admin"
+                # 尝试从请求头或查询参数获取 tenant_id
+                tid = (
+                    request.headers.get("X-Tenant-Id")
+                    or request.query_params.get("tenant_id")
+                )
+                request.state.tenant_id = tid if tid else None
+                request.state.user_id = None  # API Key 不关联特定用户
                 return await call_next(request)
             return JSONResponse(
                 status_code=403,

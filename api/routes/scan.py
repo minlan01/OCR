@@ -139,12 +139,15 @@ def _fetch_result_json(task: ScanTask, task_id: uuid.UUID) -> dict:
 
 
 async def _get_task_or_404(
-    task_id: uuid.UUID, db: AsyncSession, tenant_id: uuid.UUID | None = None
+    task_id: uuid.UUID, db: AsyncSession, tenant_id: uuid.UUID | None = None,
+    *, for_update: bool = False,
 ) -> ScanTask:
-    """获取任务或抛出 404（可选按 tenant_id 过滤）"""
+    """获取任务或抛出 404（可选按 tenant_id 过滤；可选行锁）"""
     stmt = select(ScanTask).where(ScanTask.id == task_id)
     if tenant_id is not None:
         stmt = stmt.where(ScanTask.tenant_id == tenant_id)
+    if for_update:
+        stmt = stmt.with_for_update()
     result = await db.execute(stmt)
     task = result.scalar_one_or_none()
     if task is None:
@@ -762,7 +765,7 @@ async def retry_scan(
 
     返回 202 Accepted 表示任务已排队。
     """
-    task = await _get_task_or_404(task_id, db, tenant_id)
+    task = await _get_task_or_404(task_id, db, tenant_id, for_update=True)
 
     # 检查状态
     if not force and task.status != "failed":
