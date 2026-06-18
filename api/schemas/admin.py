@@ -54,7 +54,7 @@ class UserResponse(BaseModel):
     display_name: str
     role: str
     is_active: bool
-    tenant_id: UUID
+    tenant_id: UUID | None = None
 
     model_config = {"from_attributes": True}
 
