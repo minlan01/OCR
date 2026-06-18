@@ -155,6 +155,14 @@
             :disabled="!!editingUser"
           />
         </n-form-item>
+        <n-form-item v-if="!editingUser && isSuperAdmin" label="所属租户" path="tenant_id">
+          <n-select
+            v-model:value="userForm.tenant_id"
+            :options="tenantSelectOptions"
+            placeholder="选择租户"
+            filterable
+          />
+        </n-form-item>
         <n-form-item label="姓名" path="display_name">
           <n-input v-model:value="userForm.display_name" placeholder="显示名称" />
         </n-form-item>
@@ -320,6 +328,13 @@ const userColumns = computed<DataTableColumns<UserListItem>>(() => [
     key: 'display_name',
   },
   {
+    title: '所属租户',
+    key: 'tenant_name',
+    render(row) {
+      return row.tenant_name || '—'
+    },
+  },
+  {
     title: '角色',
     key: 'role',
     render(row) {
@@ -436,6 +451,7 @@ interface UserFormState {
   display_name: string
   password: string
   role: 'member' | 'tenant_admin' | undefined
+  tenant_id: string | null
 }
 
 const userForm = ref<UserFormState>({
@@ -443,6 +459,7 @@ const userForm = ref<UserFormState>({
   display_name: '',
   password: '',
   role: 'member',
+  tenant_id: null,
 })
 
 const userFormRules: FormRules = {
@@ -477,9 +494,28 @@ const roleOptions = [
   { label: '租户管理员', value: 'tenant_admin' },
 ]
 
+// ─── 超管创建用户时选择的租户列表 ───
+const tenantSelectOptions = ref<{ label: string; value: string }[]>([])
+
+async function loadTenantOptionsForSelect(): Promise<void> {
+  try {
+    const res = await listTenants(1, 100)
+    tenantSelectOptions.value = res.items.map((t) => ({ label: t.name, value: t.id }))
+  } catch {
+    // 静默失败
+  }
+}
+
 function openCreateModal(): void {
   editingUser.value = null
-  userForm.value = { email: '', display_name: '', password: '', role: 'member' }
+  // 超管创建用户时默认选第一个租户；租户管理员锁定自己的租户
+  userForm.value = {
+    email: '',
+    display_name: '',
+    password: '',
+    role: 'member',
+    tenant_id: isSuperAdmin.value ? (tenantSelectOptions.value[0]?.value ?? null) : (currentUser.value?.tenant_id ?? null),
+  }
   userModalShow.value = true
 }
 
@@ -490,6 +526,7 @@ function openEditModal(row: UserListItem): void {
     display_name: row.display_name,
     password: '',
     role: row.role === 'super_admin' ? undefined : (row.role as 'member' | 'tenant_admin'),
+    tenant_id: row.tenant_id,
   }
   userModalShow.value = true
 }
@@ -522,6 +559,10 @@ async function submitUserForm(): Promise<void> {
         display_name: userForm.value.display_name,
         password: userForm.value.password,
         role: userForm.value.role || 'member',
+      }
+      // 超管指定租户；租户管理员后端自动绑定自己的租户
+      if (isSuperAdmin.value && userForm.value.tenant_id) {
+        payload.tenant_id = userForm.value.tenant_id
       }
       await createUser(payload)
       message.success('用户已创建')
@@ -818,6 +859,11 @@ onMounted(async () => {
     currentUser.value = await get<UserInfo>('/auth/me')
   } catch {
     // 拦截器会处理
+  }
+
+  // 超管预加载租户列表（用于创建用户时选择）
+  if (isSuperAdmin.value) {
+    loadTenantOptionsForSelect()
   }
 
   // 默认加载用户列表

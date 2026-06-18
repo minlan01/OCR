@@ -191,10 +191,12 @@ async def list_users(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取用户列表（super_admin 看全部，tenant_admin 看本租户）"""
+    """获取用户列表（super_admin 看全部含租户名，tenant_admin 看本租户且看不到 super_admin）"""
     _require_tenant_admin_or_higher(current_user)
 
-    base = select(User)
+    base = select(User, Tenant.name.label("tenant_name")).outerjoin(
+        Tenant, User.tenant_id == Tenant.id
+    )
     count_base = select(func.count(User.id))
     if not _require_super_admin(current_user):
         # 非 super_admin：只看本租户，且看不到 super_admin
@@ -213,9 +215,14 @@ async def list_users(
         await db.execute(
             base.order_by(User.created_at.desc()).offset(offset).limit(size)
         )
-    ).scalars().all()
+    ).all()
 
-    items = [UserListItem.model_validate(u) for u in rows]
+    items = []
+    for user_obj, tenant_name in rows:
+        item = UserListItem.model_validate(user_obj)
+        item.tenant_name = tenant_name
+        items.append(item)
+
     return PaginatedResponse[UserListItem](
         items=items, page=page, size=size, total=total
     )

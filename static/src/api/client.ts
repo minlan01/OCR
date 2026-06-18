@@ -517,6 +517,7 @@ export interface UserListItem {
   last_login: string | null
   created_at: string
   tenant_id: string | null
+  tenant_name: string | null
 }
 
 export interface UserResponse {

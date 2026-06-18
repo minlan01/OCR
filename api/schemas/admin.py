@@ -22,6 +22,7 @@ class UserListItem(BaseModel):
     last_login: datetime | None = None
     created_at: datetime
     tenant_id: UUID | None = None
+    tenant_name: str | None = None
 
     model_config = {"from_attributes": True}
 
