@@ -78,6 +78,7 @@ import {
 } from 'naive-ui'
 import {
   SpeedometerOutline,
+  StatsChartOutline,
   ListOutline,
   CloudUploadOutline,
   DocumentTextOutline,
@@ -104,24 +105,32 @@ function renderIcon(icon: Component) {
 
 const baseMenuOptions = computed(() => {
   const features = userInfo.value?.features
+  const role = userInfo.value?.role
   // super_admin 或 features 为 null 时全部显示
-  const showAll = !features || userInfo.value?.role === 'super_admin'
+  const showAll = !features || role === 'super_admin'
 
-  const options: Array<Record<string, unknown>> = [
-    { label: '概览', key: '/dashboard', icon: renderIcon(SpeedometerOutline) },
-    {
-      label: '普通OCR处理',
-      key: 'ocr-group',
-      icon: renderIcon(ScanOutline),
-      children: [
-        { label: '任务列表', key: '/tasks', icon: renderIcon(ListOutline) },
-        { label: '上传', key: '/upload', icon: renderIcon(CloudUploadOutline) },
-        { label: '处理文档', key: '/process', icon: renderIcon(DocumentTextOutline) },
-        { label: '下载中心', key: '/download', icon: renderIcon(CloudDownloadOutline) },
-        { label: '模板管理', key: '/templates', icon: renderIcon(DocumentOutline) },
-      ],
-    },
-  ]
+  const options: Array<Record<string, unknown>> = []
+
+  // 概览 — 仅 admin 角色（super_admin / tenant_admin）显示
+  if (role === 'super_admin' || role === 'tenant_admin') {
+    options.push({ label: '概览', key: '/dashboard', icon: renderIcon(SpeedometerOutline) })
+  }
+
+  // 用量 — 所有用户都显示
+  options.push({ label: '用量', key: '/usage', icon: renderIcon(StatsChartOutline) })
+
+  options.push({
+    label: '普通OCR处理',
+    key: 'ocr-group',
+    icon: renderIcon(ScanOutline),
+    children: [
+      { label: '任务列表', key: '/tasks', icon: renderIcon(ListOutline) },
+      { label: '上传', key: '/upload', icon: renderIcon(CloudUploadOutline) },
+      { label: '处理文档', key: '/process', icon: renderIcon(DocumentTextOutline) },
+      { label: '下载中心', key: '/download', icon: renderIcon(CloudDownloadOutline) },
+      { label: '模板管理', key: '/templates', icon: renderIcon(DocumentOutline) },
+    ],
+  })
 
   if (showAll || features.evidence !== false) {
     options.push({
@@ -162,6 +171,7 @@ const menuOptions = computed(() => {
 
 const activeMenu = computed(() => {
   if (route.path.startsWith('/evidence')) return '/evidence'
+  if (route.path.startsWith('/usage')) return '/usage'
   if (route.path.startsWith('/tasks')) return '/tasks'
   if (route.path.startsWith('/upload')) return '/upload'
   if (route.path.startsWith('/process')) return '/process'
@@ -205,6 +215,10 @@ async function loadUserInfo() {
   if (!isLoggedIn()) return
   try {
     userInfo.value = await get<UserInfo>('/auth/me')
+    // 非 admin 用户默认跳转到用量页面（概览页面对他们不可见）
+    if (userInfo.value && userInfo.value.role === 'member' && route.path === '/dashboard') {
+      router.replace('/usage')
+    }
   } catch {
     // token 失效等情况 — 跳转登录
     clearTokens()

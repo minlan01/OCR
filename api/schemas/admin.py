@@ -45,6 +45,10 @@ class UserUpdateRequest(BaseModel):
     role: Literal["member", "tenant_admin"] | None = None
     is_active: bool | None = None
     password: str | None = Field(default=None, min_length=6, max_length=128)
+    tenant_id: UUID | None = Field(
+        default=None,
+        description="仅 super_admin 可修改用户所属租户",
+    )
 
 
 class UserResponse(BaseModel):

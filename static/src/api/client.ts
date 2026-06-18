@@ -543,6 +543,7 @@ export interface UserUpdateRequest {
   role?: 'member' | 'tenant_admin'
   is_active?: boolean
   password?: string
+  tenant_id?: string
 }
 
 export interface TenantListItem {

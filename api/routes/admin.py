@@ -338,6 +338,15 @@ async def update_user(
         user.is_active = payload.is_active
     if payload.password is not None:
         user.hashed_password = hash_password(payload.password)
+    # 仅 super_admin 可修改用户所属租户
+    if payload.tenant_id is not None and _require_super_admin(current_user):
+        # 验证目标租户存在
+        target_tenant = (
+            await db.execute(select(Tenant).where(Tenant.id == payload.tenant_id))
+        ).scalar_one_or_none()
+        if not target_tenant:
+            raise HTTPException(status_code=404, detail="Target tenant not found")
+        user.tenant_id = payload.tenant_id
 
     await db.commit()
     await db.refresh(user)
@@ -656,9 +665,48 @@ async def get_usage(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """当前租户使用量（所有登录用户均可查看自己的租户）"""
+    """当前租户使用量（所有登录用户均可查看自己的租户；super_admin 看全局汇总）"""
+    is_super = current_user.role == "super_admin"
     tenant_id = current_user.tenant_id
 
+    if is_super and tenant_id is None:
+        # super_admin 无租户 → 返回全局汇总
+        total_tenants = (await db.execute(select(func.count(Tenant.id)))).scalar() or 0
+        total_users = (await db.execute(select(func.count(User.id)).where(User.is_active.is_(True)))).scalar() or 0
+        total_evidence = (await db.execute(select(func.count(EvidenceCase.id)))).scalar() or 0
+        total_scans = (await db.execute(select(func.count(ScanTask.id)))).scalar() or 0
+        total_storage = (
+            await db.execute(select(func.coalesce(func.sum(Tenant.storage_used_mb), 0)))
+        ).scalar() or 0
+        total_quota = (
+            await db.execute(select(func.coalesce(func.sum(Tenant.storage_quota_mb), 0)))
+        ).scalar() or 0
+        total_concurrent = (
+            await db.execute(
+                select(func.count(ScanTask.id)).where(
+                    ScanTask.status.in_(["processing", "pending", "received", "retrying"]),
+                )
+            )
+        ).scalar() or 0
+
+        return UsageResponse(
+            tenant=UsageTenant(
+                name="全局",
+                plan="enterprise",
+                max_cases=0,
+            ),
+            usage=UsageData(
+                evidence_cases=total_evidence,
+                scan_tasks=total_scans,
+                storage_used_mb=total_storage,
+                storage_quota_mb=total_quota,
+                active_users=total_users,
+                concurrent_used=total_concurrent,
+                concurrent_max=0,
+            ),
+        )
+
+    # 有租户的用户
     tenant = (
         await db.execute(select(Tenant).where(Tenant.id == tenant_id))
     ).scalar_one_or_none()

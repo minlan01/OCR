@@ -66,6 +66,12 @@ const router = createRouter({
           meta: { title: '证据整理' },
         },
         {
+          path: 'usage',
+          name: 'Usage',
+          component: () => import('@/views/UsageView.vue'),
+          meta: { title: '用量' },
+        },
+        {
           path: 'admin',
           name: 'Admin',
           component: () => import('@/views/Admin.vue'),

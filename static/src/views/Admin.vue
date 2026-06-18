@@ -155,7 +155,7 @@
             :disabled="!!editingUser"
           />
         </n-form-item>
-        <n-form-item v-if="!editingUser && isSuperAdmin" label="所属租户" path="tenant_id">
+        <n-form-item v-if="isSuperAdmin" label="所属租户" path="tenant_id">
           <n-select
             v-model:value="userForm.tenant_id"
             :options="tenantSelectOptions"
@@ -560,6 +560,10 @@ async function submitUserForm(): Promise<void> {
       }
       if (userForm.value.password) {
         payload.password = userForm.value.password
+      }
+      // 超管编辑时可修改用户所属租户
+      if (isSuperAdmin.value && userForm.value.tenant_id) {
+        payload.tenant_id = userForm.value.tenant_id
       }
       await updateUser(editingUser.value.id, payload)
       message.success('用户已更新')
