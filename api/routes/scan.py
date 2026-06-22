@@ -11,6 +11,7 @@ DELETE /api/v1/scans/{task_id}         - 删除任务（含MinIO清理+Celery撤
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
 import uuid
@@ -213,6 +214,72 @@ def _build_detail(task: ScanTask) -> ScanTaskDetail:
 
 
 # ═══════════════════════════════════════════════════════════
+# SSRF 防护 — 共享校验函数（upload + batch-upload + process 复用）
+# ═══════════════════════════════════════════════════════════
+def _validate_callback_url(callback_url: str | None) -> None:
+    """校验 callback_url 防止 SSRF 攻击。
+
+    覆盖：IPv4 私网、IPv6 本地/ULA/link-local、DNS 本地域名、非 http(s) 协议。
+    """
+    if not callback_url:
+        return
+    from urllib.parse import urlparse
+
+    parsed = urlparse(callback_url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="callback_url must be http(s)")
+
+    host = (parsed.hostname or "").lower().strip("[]")
+    if not host:
+        raise HTTPException(status_code=400, detail="callback_url missing hostname")
+
+    # 本地域名直接拦截
+    LOCAL_HOSTS = ("localhost", "0.0.0.0", "::", "::1")
+    if host in LOCAL_HOSTS:
+        raise HTTPException(status_code=400, detail="callback_url cannot point to loopback")
+
+    # 尝试解析为 IP（含 IPv6 映射地址 ::ffff:127.0.0.1）
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise HTTPException(status_code=400, detail="callback_url cannot point to private/reserved addresses")
+    except ValueError:
+        # 不是 IP 字面量 → 域名，拦截本地伪域名
+        if host.endswith(".local") or host.endswith(".internal") or host.endswith(".localhost"):
+            raise HTTPException(status_code=400, detail="callback_url cannot point to local domain")
+        # 注意：DNS rebinding 无法在静态校验完全防御，
+        # 需在发起 callback 请求时二次校验解析 IP（见 services/callback.py）
+
+
+# ═══════════════════════════════════════════════════════════
+# Celery 任务撤销 — 通过 inspect().active() 匹配 args 查找真实 task_id
+# （process_scan.delay(uuid) 传的是参数，Celery 内部 task_id 是另一个值）
+# ═══════════════════════════════════════════════════════════
+def _revoke_scan_celery_task(celery_app, task_id) -> None:
+    """撤销与指定 ScanTask UUID 关联的 Celery 任务。
+
+    先用 inspect().active() 查找 args 含该 UUID 的 Celery 任务，
+    再 revoke 真实的 Celery task_id（而非 ScanTask UUID）。
+    """
+    tid_str = str(task_id)
+    try:
+        # 1. 精确匹配：在活跃任务 args 中查找
+        active = celery_app.control.inspect().get("active", {})
+        for _worker, tasks in active.items():
+            for t in tasks:
+                args = t.get("args") or []
+                if any(str(a) == tid_str for a in args):
+                    celery_app.control.revoke(t["id"], terminate=True, signal="SIGTERM")
+                    logger.info(f"Revoked Celery task {t['id']} for ScanTask {tid_str}")
+                    return
+        # 2. 没找到活跃任务 → 直接 revoke UUID（兼容 Celery 用 UUID 作 task_id 的旧路径）
+        celery_app.control.revoke(tid_str, terminate=True, signal="SIGTERM")
+        logger.debug(f"No active Celery task matched ScanTask {tid_str}, sent revoke anyway")
+    except Exception as e:
+        logger.debug(f"Celery revoke skipped for {tid_str}: {e}")
+
+
+# ═══════════════════════════════════════════════════════════
 # 内部上传逻辑（单文件，可被 upload / batch-upload 复用）
 # ═══════════════════════════════════════════════════════════
 async def _upload_single_file(
@@ -237,7 +304,11 @@ async def _upload_single_file(
 
     file_md5 = _compute_md5(content)
 
-    stmt = select(ScanTask).where(ScanTask.file_md5 == file_md5)
+    # MD5 去重：只匹配非 failed 的同租户任务（failed 文件允许重新上传）
+    stmt = select(ScanTask).where(
+        ScanTask.file_md5 == file_md5,
+        ScanTask.status != "failed",
+    )
     if tenant_id is not None:
         stmt = stmt.where(ScanTask.tenant_id == tenant_id)
     result = await db.execute(stmt)
@@ -366,21 +437,8 @@ async def upload_scan(
             detail="Invalid scanner_id: must be 1-128 alphanumeric characters, underscores, or hyphens",
         )
 
-    # SSRF 防护：校验 callback_url
-    if callback_url:
-        from urllib.parse import urlparse
-        parsed = urlparse(callback_url)
-        if parsed.scheme not in ("http", "https"):
-            raise HTTPException(status_code=400, detail="callback_url must be http(s)")
-        host = (parsed.hostname or "").lower()
-        # 禁止内网/本地地址
-        BLOCKED_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
-        BLOCKED_PREFIXES = ("169.254.", "10.", "172.16.", "172.17.", "172.18.", "172.19.",
-                            "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
-                            "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
-                            "192.168.")
-        if host in BLOCKED_HOSTS or any(host.startswith(p) for p in BLOCKED_PREFIXES):
-            raise HTTPException(status_code=400, detail="callback_url cannot point to private/loopback addresses")
+    # SSRF 防护：校验 callback_url（upload 和 batch-upload 共用）
+    _validate_callback_url(callback_url)
 
     result = await _upload_single_file(
         db=db,
@@ -428,6 +486,9 @@ async def batch_upload(
             status_code=400,
             detail="Invalid scanner_id: must be 1-128 alphanumeric characters, underscores, or hyphens",
         )
+
+    # SSRF 防护：batch-upload 也必须校验 callback_url（与 upload 共用）
+    _validate_callback_url(callback_url)
 
     uploaded: list[ScanUploadResponse] = []
     skipped: list[dict] = []
@@ -810,10 +871,7 @@ async def retry_scan(
 
     # 3. 撤销可能仍在运行的旧 Celery 任务
     if celery_app is not None:
-        try:
-            celery_app.control.revoke(str(task_id), terminate=True, signal="SIGTERM")
-        except Exception as e:
-            logger.debug(f"Retry: Celery revoke skipped for {task_id}: {e}")
+        _revoke_scan_celery_task(celery_app, task_id)
 
     # === 重置任务状态 ===
     task.status = "pending"
@@ -892,12 +950,7 @@ async def delete_scan(
 
     # === 1. 撤销 Celery 任务 ===
     if celery_app is not None:
-        try:
-            # 尝试终止正在运行的任务
-            celery_app.control.revoke(str(task_id), terminate=True, signal="SIGTERM")
-            logger.info(f"Revoked Celery task for {task_id}")
-        except Exception as e:
-            logger.warning(f"Failed to revoke Celery task for {task_id}: {e}")
+        _revoke_scan_celery_task(celery_app, task_id)
     else:
         logger.debug(f"Celery not available, skip task revocation for {task_id}")
 

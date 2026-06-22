@@ -91,15 +91,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         # ── 尝试 API Key 认证（兼容旧模式）──
-        # API Key 是系统级密钥，不关联特定用户/租户。
-        # 注入 api_key_mode=True + role=super_admin，后续依赖项可据此判断。
-        # 优先从查询参数 tenant_id / X-Tenant-Id 读取目标租户（供外部集成用）。
+        # API Key 是系统级密钥，不关联特定用户。
+        # 安全策略：API Key 模式必须显式指定 tenant_id（X-Tenant-Id / ?tenant_id），
+        # 否则视为全局访问 → 仅允许读操作（不允许写入 admin 类路由）。
+        # 角色降级为 "api_client"，而非 super_admin，避免密钥泄露导致全局提权。
         api_key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
         if api_key and settings.api_key_plain:
             if secrets.compare_digest(api_key, settings.api_key_plain):
                 request.state.api_key_mode = True
-                request.state.role = "super_admin"
-                # 尝试从请求头或查询参数获取 tenant_id
+                request.state.role = "api_client"
+                # 必须显式指定租户
                 tid = (
                     request.headers.get("X-Tenant-Id")
                     or request.query_params.get("tenant_id")

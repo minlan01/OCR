@@ -6,6 +6,7 @@ Phase2: 分析 → 导出
 from __future__ import annotations
 
 import asyncio
+import copy
 import io
 import uuid
 from datetime import datetime, timezone
@@ -481,13 +482,15 @@ async def upload_materials(
         )
 
     uploaded = []
-    for file in files:
-        # 先检查 Content-Length 避免读取超大文件到内存
-        if file.size and file.size > settings.max_upload_size:
-            raise HTTPException(
-                status_code=400,
-                detail=f"文件过大: {file.filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
-            )
+    uploaded_minio_keys: list[str] = []  # 跟踪已上传对象，失败时回滚清理
+    try:
+        for file in files:
+            # 先检查 Content-Length 避免读取超大文件到内存
+            if file.size and file.size > settings.max_upload_size:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"文件过大: {file.filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
+                )
 
         file_type = _detect_file_type(file.filename or "")
         # 文件类型白名单校验（含音频）
@@ -629,6 +632,20 @@ async def upload_materials(
         await db.flush()
         await db.refresh(material)
         uploaded.append(material)
+        uploaded_minio_keys.append(minio_key)  # 标记为已成功（供回滚清理）
+
+    except Exception:
+        # 批量上传中途失败：清理已上传的 MinIO 孤儿对象，避免存储泄漏
+        for orphan_key in uploaded_minio_keys:
+            try:
+                minio_client.delete_object(
+                    bucket=EVIDENCE_MINIO_BUCKET,
+                    object_key=orphan_key,
+                )
+                logger.warning(f"Cleaned orphan MinIO object: {orphan_key}")
+            except Exception as cleanup_err:
+                logger.error(f"Failed to clean orphan {orphan_key}: {cleanup_err}")
+        raise  # 重新抛出原异常
 
     logger.info(f"Uploaded {len(uploaded)} files to evidence case {case_id}")
     return [_build_material_out(m) for m in uploaded]
@@ -1451,7 +1468,7 @@ async def export_filing_evidence(
     try:
         from services.evidence.word_generator import generate_filing_evidence_inline_data
         catalog_data = case.catalog_data or {}
-        analysis_result = case.analysis_result or {}
+        analysis_result = copy.deepcopy(case.analysis_result or {})
         doc_bytes = generate_filing_evidence_inline_data(catalog_data, analysis_result)
         if not doc_bytes:
             raise ValueError("Generated document is empty")
@@ -1481,7 +1498,7 @@ async def export_complaint(
     case = await _get_case_or_404(case_id, db, tenant_id)
 
     catalog_data = case.catalog_data or {}
-    analysis_result = case.analysis_result or {}
+    analysis_result = copy.deepcopy(case.analysis_result or {})
     lawyer_info = case.lawyer_info or []
 
     # 注入赔偿计算总额（供民事起诉状诉讼请求引用）
@@ -1546,7 +1563,7 @@ async def export_appraisal_app(
     try:
         from services.evidence.word_generator import generate_appraisal_inline_data
         catalog_data = case.catalog_data or {}
-        analysis_result = case.analysis_result or {}
+        analysis_result = copy.deepcopy(case.analysis_result or {})
         doc_bytes = generate_appraisal_inline_data(catalog_data, analysis_result)
         if not doc_bytes:
             raise ValueError("Generated document is empty")
@@ -1581,7 +1598,7 @@ async def export_compensation(
     try:
         from services.evidence.excel_generator import generate_compensation_inline_data
         catalog_data = case.catalog_data or {}
-        analysis_result = case.analysis_result or {}
+        analysis_result = copy.deepcopy(case.analysis_result or {})
         doc_bytes = generate_compensation_inline_data(catalog_data, analysis_result)
         if not doc_bytes:
             raise ValueError("Generated document is empty")
@@ -1721,7 +1738,7 @@ async def download_bundle(
     case_name = case.case_name or "案件"
     folder_name = f"{case_name}立案立档包"
     catalog_data = case.catalog_data or {}
-    analysis_result = case.analysis_result or {}
+    analysis_result = copy.deepcopy(case.analysis_result or {})
     lawyer_info = case.lawyer_info or []
     export_files: dict[str, bytes] = {}
 
@@ -2093,7 +2110,7 @@ async def export_compensation_calculation(
     # 不再强制要求有计算数据，无数据时生成模板（金额留白）
     try:
         from services.evidence.excel_generator import generate_compensation_calculation_excel
-        analysis_result = case.analysis_result or {}
+        analysis_result = copy.deepcopy(case.analysis_result or {})
         excel_bytes = await asyncio.to_thread(
             generate_compensation_calculation_excel,
             case.compensation_data,  # 可为 None/空
