@@ -135,7 +135,7 @@ services:
       - scanstruct-net
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
     container_name: scanstruct-minio
     command: server /data --console-address :9001
     environment:
@@ -304,7 +304,7 @@ services:
       - ha  # 仅在 docker compose --profile ha up 时启用，默认不启动
 
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-01-17T23-26-28Z
     container_name: scanstruct-minio-init
     entrypoint: >
       /bin/sh -c "

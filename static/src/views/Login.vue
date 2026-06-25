@@ -179,7 +179,8 @@ async function handleLogin() {
     }
 
     message.success(`欢迎回来，${res.user.display_name}`)
-    router.push('/dashboard')
+    // 根据角色直接跳转，避免 member 用户的页面闪烁
+    router.push(res.user.role === 'member' ? '/usage' : '/dashboard')
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : '登录失败，请重试'
     message.error(errMsg)
@@ -235,7 +236,7 @@ async function handleRegister() {
     const res = await post<TokenResponse>('/auth/register', body)
     setTokens(res.access_token, res.refresh_token)
     message.success(`注册成功，欢迎 ${res.user.display_name}`)
-    router.push('/dashboard')
+    router.push(res.user.role === 'member' ? '/usage' : '/dashboard')
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : '注册失败，请重试'
     message.error(errMsg)

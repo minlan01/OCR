@@ -10,6 +10,7 @@ DELETE /api/v1/scans/{task_id}         - 删除任务（含MinIO清理+Celery撤
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import json
@@ -125,7 +126,8 @@ def _fetch_result_json(task: ScanTask, task_id: uuid.UUID) -> dict:
     if not task.result_path:
         raise HTTPException(status_code=404, detail="Result file not found for this task")
     try:
-        data = minio_client.download_bytes(
+        data = await asyncio.to_thread(
+            minio_client.download_bytes,
             bucket=settings.minio_bucket_result,
             object_key=task.result_path,
         )
@@ -330,6 +332,19 @@ async def _upload_single_file(
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     object_key = f"raw/{today}/{task_id}_{quote(filename)}"
 
+    # 先上传 MinIO，再写 DB — 失败时补偿删除已上传的对象
+    try:
+        await asyncio.to_thread(
+            minio_client.upload_bytes,
+            bucket=settings.minio_bucket_raw,
+            object_key=object_key,
+            data=content,
+            content_type="application/pdf",
+        )
+    except Exception as e:
+        logger.error(f"MinIO upload failed for task {task_id}: {type(e).__name__}")
+        return {"failed": {"filename": filename, "reason": "MinIO upload failed"}}
+
     task = ScanTask(
         id=task_id,
         tenant_id=tenant_id,
@@ -340,22 +355,10 @@ async def _upload_single_file(
         file_size=len(content),
         file_md5=file_md5,
         callback_url=callback_url,
+        original_path=object_key,
         metadata_=meta_dict or {},
     )
     db.add(task)
-
-    try:
-        minio_client.upload_bytes(
-            bucket=settings.minio_bucket_raw,
-            object_key=object_key,
-            data=content,
-            content_type="application/pdf",
-        )
-        task.original_path = object_key
-    except Exception as e:
-        logger.error(f"MinIO upload failed for task {task_id}: {type(e).__name__}")
-        await _mark_task_failed(db, task, "MINIO_UPLOAD_ERROR", "MinIO upload failed")
-        return {"failed": {"filename": filename, "reason": "MinIO upload failed"}}
 
     scan_file = ScanFile(
         task_id=task_id,
@@ -366,7 +369,21 @@ async def _upload_single_file(
     )
     db.add(scan_file)
 
-    await db.flush()
+    try:
+        await db.flush()
+    except Exception as e:
+        # DB 失败 → 补偿删除已上传的 MinIO 对象
+        logger.error(f"DB flush failed for task {task_id}: {e}")
+        try:
+            await asyncio.to_thread(
+                minio_client.delete_object,
+                bucket=settings.minio_bucket_raw,
+                object_key=object_key,
+            )
+        except Exception:
+            logger.error(f"Compensation delete failed for orphan {object_key}")
+        raise
+
     logger.info(f"Scan uploaded: task={task_id}, file={filename}, size={len(content)}")
 
     return ScanUploadResponse(
@@ -860,15 +877,16 @@ async def retry_scan(
 
     # 2. 清理 MinIO 中间产物（保留原始 PDF）
     try:
-        # 只清理 result bucket 中的中间产物，保留 raw bucket 的原始文件
-        objects = minio_client.client.list_objects(
-            settings.minio_bucket_result, prefix=str(task_id), recursive=True
-        )
-        for obj in objects:
-            try:
-                minio_client.delete_object(settings.minio_bucket_result, obj.object_name)
-            except Exception as e:
-                logger.warning(f"Retry: failed to delete MinIO object {obj.object_name}: {e}")
+        def _cleanup_minio_intermediate():
+            objects = minio_client.client.list_objects(
+                settings.minio_bucket_result, prefix=str(task_id), recursive=True
+            )
+            for obj in objects:
+                try:
+                    minio_client.delete_object(settings.minio_bucket_result, obj.object_name)
+                except Exception as e:
+                    logger.warning(f"Retry: failed to delete MinIO object {obj.object_name}: {e}")
+        await asyncio.to_thread(_cleanup_minio_intermediate)
         logger.debug(f"Retry: cleaned MinIO intermediate objects for {task_id}")
     except Exception as e:
         logger.warning(f"Retry: MinIO cleanup skipped for {task_id}: {e}")
@@ -967,21 +985,23 @@ async def delete_scan(
                 b for b in settings.all_minio_buckets
                 if b != settings.minio_bucket_raw
             ]
-            for bucket in buckets_to_clean:
-                try:
-                    objects = minio_client.client.list_objects(
-                        bucket, prefix=str(task_id), recursive=True
-                    )
-                    for obj in objects:
-                        try:
-                            minio_client.delete_object(bucket, obj.object_name)
-                        except Exception as e:
-                            cleanup_errors.append(f"{bucket}/{obj.object_name}: {e}")
-                    logger.debug(f"Cleaned bucket {bucket} for task {task_id}")
-                except Exception as e:
-                    logger.warning(f"Error listing objects in {bucket}: {e}")
+            def _cleanup_minio_keep_raw():
+                for bucket in buckets_to_clean:
+                    try:
+                        objects = minio_client.client.list_objects(
+                            bucket, prefix=str(task_id), recursive=True
+                        )
+                        for obj in objects:
+                            try:
+                                minio_client.delete_object(bucket, obj.object_name)
+                            except Exception as e:
+                                cleanup_errors.append(f"{bucket}/{obj.object_name}: {e}")
+                        logger.debug(f"Cleaned bucket {bucket} for task {task_id}")
+                    except Exception as e:
+                        logger.warning(f"Error listing objects in {bucket}: {e}")
+            await asyncio.to_thread(_cleanup_minio_keep_raw)
         else:
-            minio_client.delete_task_objects(str(task_id))
+            await asyncio.to_thread(minio_client.delete_task_objects, str(task_id))
             logger.debug(f"Cleaned all objects for task {task_id}")
     except Exception as e:
         logger.warning(f"MinIO cleanup warning for task {task_id}: {e}")

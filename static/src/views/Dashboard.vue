@@ -208,6 +208,7 @@ const store = useScanStore()
 const recentTasks = ref<ScanTaskSummary[]>([])
 const recentLoading = ref(false)
 const queueItems = ref<QueueItem[]>([])
+const queueError = ref(false)
 const totalUsers = ref(0)
 const tenantData = ref<TenantListItem[]>([])
 
@@ -266,8 +267,12 @@ async function loadQueue() {
   try {
     const res = await get<{ items: QueueItem[] }>('/admin/queue')
     queueItems.value = res.items || []
+    queueError.value = false
   } catch (e: any) {
-    // queue endpoint may not be reachable
+    if (e?.message !== '登录已过期，请重新登录') {
+      queueError.value = true
+      console.warn('Queue load failed:', e.message || e)
+    }
   }
 }
 
@@ -276,7 +281,9 @@ async function loadTotalUsers() {
   try {
     const res = await get<{ total: number }>('/admin/users', { page: '1', size: '1' })
     totalUsers.value = res.total
-  } catch { /* silent */ }
+  } catch (e: any) {
+    console.warn('Total users load failed:', e.message || e)
+  }
 }
 
 async function loadTenantData() {
@@ -284,7 +291,9 @@ async function loadTenantData() {
   try {
     const res = await get<{ items: TenantListItem[] }>('/admin/tenants', { page: '1', size: '100' })
     tenantData.value = res.items
-  } catch { /* silent */ }
+  } catch (e: any) {
+    console.warn('Tenant data load failed:', e.message || e)
+  }
 }
 
 function statusTagType(status: string): 'default' | 'info' | 'success' | 'warning' | 'error' {

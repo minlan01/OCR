@@ -37,15 +37,15 @@ def _cleanup_temp_files(*paths: str) -> None:
 
 
 def _cleanup_tmp_dir() -> None:
-    """清理 /tmp 下的 OCR 临时目录和工作文件"""
+    """清理 /tmp 下的 ScanStruct 临时目录和工作文件"""
     import glob as _glob
     tmp_dir = "/tmp"
     try:
         # 清理 OCR 工作目录
         for d in _glob.glob(os.path.join(tmp_dir, "ocr_*")):
             _cleanup_temp_files(d)
-        for d in _glob.glob(os.path.join(tmp_dir, "tmp*")):
-            # 只清理超过 1 小时的临时文件/目录（避免清理正在使用的）
+        # 仅清理 ScanStruct 自己创建的临时文件（唯一前缀），不影响其他进程
+        for d in _glob.glob(os.path.join(tmp_dir, "scanstruct_*")):
             try:
                 mtime = os.path.getmtime(d)
                 if (datetime.now().timestamp() - mtime) > 3600:
@@ -196,6 +196,24 @@ def process_evidence_full(self, case_id: str):
         release_case()
 
 
+_evidence_sync_engine = None
+
+def _get_evidence_sync_engine():
+    """模块级缓存的同步 Engine"""
+    global _evidence_sync_engine
+    if _evidence_sync_engine is None:
+        from sqlalchemy import create_engine
+        from config.settings import settings
+        _evidence_sync_engine = create_engine(
+            settings.database_url_sync,
+            pool_size=1,
+            max_overflow=2,
+            pool_pre_ping=True,
+            pool_recycle=3600,
+        )
+    return _evidence_sync_engine
+
+
 def _get_case_tenant_id(case_id: str) -> str:
     """查询案件所属租户 ID（同步，用于并发控制前的配额检查）"""
     try:
@@ -208,14 +226,13 @@ def _get_case_tenant_id(case_id: str) -> str:
             return cached
 
         # 缓存未命中 → 查数据库（同步引擎）
-        from sqlalchemy import create_engine, text
-        eng = create_engine(settings.database_url_sync)
+        from sqlalchemy import text
+        eng = _get_evidence_sync_engine()
         with eng.connect() as conn:
             row = conn.execute(
                 text("SELECT tenant_id FROM evidence_cases WHERE id = :cid"),
                 {"cid": case_id},
             ).fetchone()
-        eng.dispose()
 
         tid = str(row[0]) if row and row[0] else ""
         if tid:
@@ -417,9 +434,9 @@ def export_evidence_bundle(self, case_id: str):
 
                     zip_bytes = await asyncio.to_thread(_zip_files)
 
-                    # 上传到 MinIO
+                    # 上传到 MinIO — 统一使用 result bucket
                     from config.settings import settings as _s
-                    bucket = getattr(_s, "evidence_minio_bucket", "evidence")
+                    bucket = _s.minio_bucket_result
                     bundle_key = f"bundles/{case_id}/{case_name}立案立档包.zip"
                     await asyncio.to_thread(
                         minio_client.upload_bytes,

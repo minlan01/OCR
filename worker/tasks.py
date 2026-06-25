@@ -104,6 +104,24 @@ def _run_pipeline(task_id: str) -> dict:
         release_case()
 
 
+_sync_engine = None
+
+def _get_sync_engine():
+    """模块级缓存的同步 Engine，避免每次调用创建/销毁连接池"""
+    global _sync_engine
+    if _sync_engine is None:
+        from sqlalchemy import create_engine
+        from config.settings import settings
+        _sync_engine = create_engine(
+            settings.database_url_sync,
+            pool_size=1,
+            max_overflow=2,
+            pool_pre_ping=True,
+            pool_recycle=3600,
+        )
+    return _sync_engine
+
+
 def _get_scan_tenant_id(task_id: str) -> str:
     """查询扫描任务所属租户 ID（同步，用于并发控制前的配额检查）"""
     try:
@@ -115,14 +133,13 @@ def _get_scan_tenant_id(task_id: str) -> str:
         if cached is not None:
             return cached
 
-        from sqlalchemy import create_engine, text
-        eng = create_engine(settings.database_url_sync)
+        from sqlalchemy import text
+        eng = _get_sync_engine()
         with eng.connect() as conn:
             row = conn.execute(
                 text("SELECT tenant_id FROM scan_tasks WHERE id = :tid"),
                 {"tid": task_id},
             ).fetchone()
-        eng.dispose()
 
         tid = str(row[0]) if row and row[0] else ""
         if tid:

@@ -186,6 +186,29 @@ export async function get<T>(path: string, params?: Record<string, string>): Pro
   return request<T>(`${BASE}${path}${qs}`)
 }
 
+/** FormData 请求 — 复用 401 自动刷新逻辑 */
+async function requestFormData(url: string, form: FormData): Promise<Response> {
+  const doFetch = () => fetch(url, { method: 'POST', headers: apiKeyOnlyHeaders(), body: form })
+
+  let res = await doFetch()
+
+  // 401 → 尝试刷新 token 后重试
+  if (res.status === 401) {
+    const refreshed = await refreshToken()
+    if (refreshed) {
+      res = await doFetch()
+    } else {
+      clearTokens()
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login'
+      }
+      throw new Error('登录已过期，请重新登录')
+    }
+  }
+
+  return res
+}
+
 export async function post<T>(path: string, body?: unknown): Promise<T> {
   return request<T>(`${BASE}${path}`, {
     method: 'POST',
@@ -248,11 +271,7 @@ export async function uploadPDF(
   if (metadata?.callback_url) form.append('callback_url', metadata.callback_url)
   if (metadata?.metadata) form.append('metadata', JSON.stringify(metadata.metadata))
 
-  const res = await fetch(`${BASE}/scans/upload`, {
-    method: 'POST',
-    headers: apiKeyOnlyHeaders(),
-    body: form,
-  })
+  const res = await requestFormData(`${BASE}/scans/upload`, form)
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
@@ -273,11 +292,7 @@ export async function batchUploadPDF(
   if (metadata?.scanner_id) form.append('scanner_id', metadata.scanner_id)
   if (metadata?.callback_url) form.append('callback_url', metadata.callback_url)
 
-  const res = await fetch(`${BASE}/scans/batch-upload`, {
-    method: 'POST',
-    headers: apiKeyOnlyHeaders(),
-    body: form,
-  })
+  const res = await requestFormData(`${BASE}/scans/batch-upload`, form)
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))

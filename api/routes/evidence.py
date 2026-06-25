@@ -258,7 +258,7 @@ async def create_case(
     return _build_case_out(case)
 
 
-@router.get("/cases", response_model=EvidenceCaseListResponse)
+@router.get("/cases", response_model=EvidenceCaseListSlimResponse)
 @limiter.limit("30/minute")
 async def list_cases(
     request: Request,
@@ -267,7 +267,7 @@ async def list_cases(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
-    """案件列表"""
+    """案件列表 — 返回精简数据（不含 materials/steps/analysis_result 等）"""
     from sqlalchemy.orm import noload
 
     count_stmt = select(func.count(EvidenceCase.id))
@@ -287,8 +287,19 @@ async def list_cases(
     result = await db.execute(stmt)
     cases = result.scalars().all()
 
-    return EvidenceCaseListResponse(
-        items=[_build_case_out(c) for c in cases],
+    return EvidenceCaseListSlimResponse(
+        items=[
+            EvidenceCaseListItem(
+                id=str(c.id),
+                case_name=c.case_name,
+                case_type=c.case_type,
+                is_minor=c.is_minor,
+                status=c.status,
+                created_at=c.created_at,
+                updated_at=c.updated_at,
+            )
+            for c in cases
+        ],
         total=total,
     )
 

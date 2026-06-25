@@ -385,7 +385,7 @@
                 size="small"
                 :min="0"
                 :precision="2"
-                @blur="saveFeeEdit(item)"
+                @blur="exitFeeEdit(item)"
                 @keyup.enter="saveFeeEdit(item)"
               />
               <span v-else style="cursor:pointer" @click="startFeeEdit(item)">
@@ -2034,15 +2034,20 @@ function startFeeEdit(item: any) {
   editAmount.value = item.manual_amount ?? item.amount
 }
 
-async function saveFeeEdit(item: any) {
+/** blur 时仅更新本地数据并退出编辑模式（不触发后端请求），统一用底部"保存修改"按钮 */
+function exitFeeEdit(item: any) {
   editingFeeType.value = null
-  if (!currentCase.value || !compensationData.value) return
-
-  // 更新本地数据（确保存为 number）
+  if (!compensationData.value) return
   const target = compensationData.value.items.find((i: any) => i.fee_type === item.fee_type)
   if (target) {
     target.manual_amount = editAmount.value != null ? Number(editAmount.value) : null
   }
+}
+
+/** Enter 键保存单条（立即触发后端请求） */
+async function saveFeeEdit(item: any) {
+  exitFeeEdit(item)
+  if (!currentCase.value || !compensationData.value) return
 
   // 保存到后端
   try {

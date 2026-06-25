@@ -109,15 +109,11 @@ router.beforeEach(async (to, _from, next) => {
     return
   }
 
-  // 管理后台路由：检查角色权限（使用 auth store，不依赖 localStorage）
+  // 管理后台路由：检查角色权限（force=true 每次重新拉取，避免缓存竞态）
   if (to.meta.requiresAdmin) {
     const authStore = useAuthStore()
-    // 先尝试从 store 获取（已缓存的）
-    let userInfo = authStore.userInfo
-    // 如果 store 还没加载（刚刷新页面），触发加载并等待
-    if (!userInfo && isLoggedIn()) {
-      userInfo = await authStore.loadUserInfo()
-    }
+    // 每次进入 admin 页面都强制拉取最新用户信息
+    const userInfo = await authStore.loadUserInfo(true)
     const role = userInfo?.role || ''
     if (role !== 'super_admin' && role !== 'tenant_admin') {
       next({ path: '/dashboard' })

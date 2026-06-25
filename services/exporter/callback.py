@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 from urllib.parse import urlparse
 
@@ -102,13 +103,22 @@ async def send_callback(callback_url: str, task_data: dict) -> bool:
         logger.error(f"Callback URL rejected: {e}")
         return False
 
-    try:
-        async with httpx.AsyncClient(timeout=settings.callback_timeout_seconds) as client:
-            resp = await client.post(callback_url, json=task_data)
-            resp.raise_for_status()
-            logger.info(f"Callback sent successfully")
-            return True
-    except Exception:
-        # 不在日志中暴露完整 URL，防止敏感参数泄露
-        logger.warning(f"Callback failed (timeout={settings.callback_timeout_seconds}s)")
-        return False
+    retry_delays = settings.callback_retry_delays or []
+    max_attempts = 1 + len(retry_delays)
+
+    for attempt in range(max_attempts):
+        try:
+            async with httpx.AsyncClient(timeout=settings.callback_timeout_seconds) as client:
+                resp = await client.post(callback_url, json=task_data)
+                resp.raise_for_status()
+                logger.info(f"Callback sent successfully (attempt {attempt + 1}/{max_attempts})")
+                return True
+        except Exception:
+            if attempt < max_attempts - 1:
+                delay = retry_delays[attempt]
+                logger.warning(f"Callback attempt {attempt + 1} failed, retrying in {delay}s")
+                await asyncio.sleep(delay)
+            else:
+                logger.warning(f"Callback failed after {max_attempts} attempts")
+                return False
+    return False

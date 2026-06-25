@@ -23,6 +23,8 @@ from api.security import (
     decode_token,
     hash_password,
     verify_password,
+    is_refresh_token_valid,
+    revoke_refresh_token,
 )
 from api.dependencies import get_current_user
 
@@ -248,6 +250,14 @@ async def refresh_token(request: Request, req: RefreshRequest, db: AsyncSession 
             detail="Invalid or expired refresh token",
         )
 
+    # 检查 jti 是否有效（轮转/撤销检查）
+    jti = payload.get("jti")
+    if jti and not is_refresh_token_valid(jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked",
+        )
+
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
@@ -268,6 +278,10 @@ async def refresh_token(request: Request, req: RefreshRequest, db: AsyncSession 
         tenant = tenant_result.scalar_one_or_none()
         if not tenant or tenant.status != "active":
             raise HTTPException(status_code=403, detail="Tenant suspended")
+
+    # 撤销旧 refresh token（轮转）
+    if jti:
+        revoke_refresh_token(jti)
 
     token_tid = str(tenant.id) if tenant else ""
     token_data = {"sub": str(user.id), "tenant_id": token_tid, "role": user.role}
@@ -296,7 +310,9 @@ class ChangePasswordRequest(BaseModel):
 
 
 @router.put("/auth/change-password")
+@_limiter.limit("5/minute")
 async def change_password(
+    request: Request,
     req: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
