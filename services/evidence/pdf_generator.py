@@ -4,14 +4,14 @@ PDF 证据材料导出 — 反向溯源智能选页
 核心逻辑：
 1. 民事起诉状已生成，包含具体医疗内容（入院、诊疗、鉴定等）
 2. 反向分析：从起诉状内容提取关键词 → 匹配病历/鉴定PDF的哪些页包含这些内容
-3. 证据材料PDF只包含6大类，且病历/鉴定/资质只放引用到的页
+3. 证据材料PDF只包含6大类，且病历/资质只放引用到的页，鉴定报告全页放入
 
 6大类：
   一、原告身份证信息（身份证+户口本）
   二、被告信息（医院）
   三、其他身份证明（结婚证、死亡证明书）
   四、对应内容的病历（反向选页）
-  五、对应内容的司法鉴定报告（反向选页）
+  五、对应内容的司法鉴定报告（全页放入，不做反向选页）
   六、对应内容的医疗人员资质证明（反向选页）
 
 不包含：fee_receipt、other_evidence
@@ -53,7 +53,7 @@ OUTPUT_GROUPS = [
     ("defendant",        "二、被告信息（医院）",            False),
     ("other_identity",   "三、其他身份证明（结婚证、死亡证明书）", False),
     ("medical",          "四、对应内容的病历",              True),
-    ("appraisal",        "五、对应内容的司法鉴定报告",      True),
+    ("appraisal",        "五、对应内容的司法鉴定报告",      False),
     ("staff_qual",       "六、对应内容的医疗人员资质证明",  True),
 ]
 
@@ -82,7 +82,7 @@ def _get_output_group(cat_code: str, filename: str) -> tuple[str | None, bool]:
     if cat_code == "medical_record":
         return ("medical", True)
     if cat_code == "appraisal":
-        return ("appraisal", True)
+        return ("appraisal", False)
 
     # 排除 fee_receipt / other_evidence
     return (None, False)
