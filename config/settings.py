@@ -50,7 +50,8 @@ class Settings(BaseSettings):
     allowed_extensions: list[str] = [".pdf", ".mp3", ".wav", ".m4a", ".amr", ".aac"]  # 允许上传的文件扩展名
 
     # ==================== 并发控制 ====================
-    max_concurrent_cases: int = 3  # 同时处理的最大案件/扫描数（防 OOM）
+    max_concurrent_cases: int = 3  # 全局同时处理的最大案件/扫描数（防 OOM）
+    max_concurrent_per_tenant: int = 2  # 每个租户最大并发数（防单租户挤占）
 
     # ==================== 数据库 ====================
     # 无硬编码默认值 — 必须通过 .env 或环境变量提供

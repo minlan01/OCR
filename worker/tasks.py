@@ -75,19 +75,61 @@ def _run_pipeline(task_id: str) -> dict:
     """
     运行完整处理管线（同步入口，内部 asyncio.run）
     使用 Redis 信号量限制并发管线数量，防止 Worker OOM
+    包含全局并发控制 + 租户级配额控制
     """
-    from services.utils.task_concurrency import try_acquire_case, release_case
+    from services.utils.task_concurrency import (
+        try_acquire_case, release_case,
+        try_acquire_tenant, release_tenant,
+    )
 
+    # 全局并发控制
     acquired = try_acquire_case()
     if not acquired:
-        logger.warning(f"Pipeline throttled (system busy): task_id={task_id}")
+        logger.warning(f"Pipeline throttled (global busy): task_id={task_id}")
         raise Exception("System at capacity, please retry shortly")
+
+    # 租户级并发控制
+    tenant_id_str = _get_scan_tenant_id(task_id)
+    if tenant_id_str and not try_acquire_tenant(tenant_id_str):
+        release_case()
+        logger.warning(f"Pipeline throttled (tenant limit): task_id={task_id} tenant={tenant_id_str[:8]}..")
+        raise Exception("Tenant concurrency limit reached, please retry shortly")
 
     try:
         result = asyncio.run(_async_pipeline(task_id))
         return result
     finally:
+        if tenant_id_str:
+            release_tenant(tenant_id_str)
         release_case()
+
+
+def _get_scan_tenant_id(task_id: str) -> str:
+    """查询扫描任务所属租户 ID（同步，用于并发控制前的配额检查）"""
+    try:
+        import redis as _redis
+        from config.settings import settings
+        r = _redis.from_url(settings.redis_url_with_auth, decode_responses=True, socket_timeout=3)
+        cache_key = f"scanstruct:scan_tenant:{task_id}"
+        cached = r.get(cache_key)
+        if cached is not None:
+            return cached
+
+        from sqlalchemy import create_engine, text
+        eng = create_engine(settings.database_url_sync)
+        with eng.connect() as conn:
+            row = conn.execute(
+                text("SELECT tenant_id FROM scan_tasks WHERE id = :tid"),
+                {"tid": task_id},
+            ).fetchone()
+        eng.dispose()
+
+        tid = str(row[0]) if row and row[0] else ""
+        if tid:
+            r.setex(cache_key, 3600, tid)
+        return tid
+    except Exception:
+        return ""
 
 
 async def _async_pipeline(task_id: str) -> dict:

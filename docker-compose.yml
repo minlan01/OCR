@@ -213,6 +213,8 @@ services:
     environment:
       <<: *common-env
       STORAGE_BACKEND: minio
+      MAX_CONCURRENT_CASES: ${MAX_CONCURRENT_CASES:-3}
+      MAX_CONCURRENT_PER_TENANT: ${MAX_CONCURRENT_PER_TENANT:-2}
       BAILIAN_OCR_MAX_CONCURRENT: ${BAILIAN_OCR_MAX_CONCURRENT:-3}
       BAILIAN_TEXT_MAX_CONCURRENT: ${BAILIAN_TEXT_MAX_CONCURRENT:-2}
       LLM_RATE_LIMITER_TEXT: ${LLM_RATE_LIMITER_TEXT:-2}
@@ -252,6 +254,54 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  # 备用 Worker — 当主 Worker 宕机时自动接管队列，消除单点故障
+  # 平时处于等待状态，Celery 的 task_acks_late + task_reject_on_worker_lost 机制
+  # 会将未确认的任务重新投递到这个 Worker
+  worker-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: scanstruct-worker-backup
+    image: ${WORKER_IMAGE:-scanstruct-worker:latest}
+    environment:
+      <<: *common-env
+      STORAGE_BACKEND: minio
+      MAX_CONCURRENT_CASES: ${MAX_CONCURRENT_CASES:-3}
+      MAX_CONCURRENT_PER_TENANT: ${MAX_CONCURRENT_PER_TENANT:-2}
+      BAILIAN_OCR_MAX_CONCURRENT: ${BAILIAN_OCR_MAX_CONCURRENT:-3}
+      BAILIAN_TEXT_MAX_CONCURRENT: ${BAILIAN_TEXT_MAX_CONCURRENT:-2}
+      LOG_DIR: /app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./logs/worker-backup:/app/logs
+    tmpfs:
+      - /tmp:size=1G
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    restart: unless-stopped
+    networks:
+      - scanstruct-net
+    healthcheck:
+      test: ["CMD", "celery", "-A", "worker.celery_app", "inspect", "ping"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    profiles:
+      - ha  # 仅在 docker compose --profile ha up 时启用，默认不启动
 
   minio-init:
     image: minio/mc:latest

@@ -164,19 +164,65 @@ def process_evidence_full(self, case_id: str):
     1. OCR 阶段：多线程并发（max_workers = 2，保守值防止10人并发时CPU过载）
     2. 分类+提取：OCR 完成后立即批量分类+提取（合并 LLM 调用）
     3. 目录生成：全部分类完成后生成
-    4. 并发控制：通过 Redis 信号量限制同时处理的案件数（默认3个）
+    4. 并发控制：全局信号量 + 租户级配额（防止单租户挤占全局资源）
     """
-    from services.utils.task_concurrency import try_acquire_case, release_case
+    from services.utils.task_concurrency import (
+        try_acquire_case, release_case,
+        try_acquire_tenant, release_tenant,
+    )
 
-    # 并发控制：超过上限则排队等待
+    # 全局并发控制：超过上限则排队等待
     if not try_acquire_case():
-        logger.warning(f"[并发控制] case_id={case_id} 系统繁忙，60秒后重试")
+        logger.warning(f"[并发控制] case_id={case_id} 全局繁忙，60秒后重试")
+        raise self.retry(countdown=60)
+
+    # 租户级并发控制：查询案件所属租户后检查配额
+    tenant_id_str = ""
+    try:
+        tenant_id_str = _get_case_tenant_id(case_id)
+    except Exception as e:
+        logger.warning(f"[租户并发] 无法查询 case {case_id} 的租户: {e}")
+
+    if tenant_id_str and not try_acquire_tenant(tenant_id_str):
+        release_case()  # 先释放全局许可
+        logger.warning(f"[租户并发] case_id={case_id} tenant={tenant_id_str[:8]}.. 已达租户上限，60秒后重试")
         raise self.retry(countdown=60)
 
     try:
         return _do_process_evidence_full(self, case_id)
     finally:
+        if tenant_id_str:
+            release_tenant(tenant_id_str)
         release_case()
+
+
+def _get_case_tenant_id(case_id: str) -> str:
+    """查询案件所属租户 ID（同步，用于并发控制前的配额检查）"""
+    try:
+        import redis as _redis
+        from config.settings import settings
+        r = _redis.from_url(settings.redis_url_with_auth, decode_responses=True, socket_timeout=3)
+        cache_key = f"scanstruct:case_tenant:{case_id}"
+        cached = r.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # 缓存未命中 → 查数据库（同步引擎）
+        from sqlalchemy import create_engine, text
+        eng = create_engine(settings.database_url_sync)
+        with eng.connect() as conn:
+            row = conn.execute(
+                text("SELECT tenant_id FROM evidence_cases WHERE id = :cid"),
+                {"cid": case_id},
+            ).fetchone()
+        eng.dispose()
+
+        tid = str(row[0]) if row and row[0] else ""
+        if tid:
+            r.setex(cache_key, 3600, tid)  # 缓存1小时
+        return tid
+    except Exception:
+        return ""  # 查询失败不阻断流程（降级放行）
 
 
 def _do_process_evidence_full(self, case_id: str):
