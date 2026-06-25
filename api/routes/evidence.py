@@ -2139,3 +2139,89 @@ async def export_compensation_calculation(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )
+
+
+@router.post("/cases/{case_id}/export/compensation")
+@limiter.limit("10/minute")
+async def export_compensation_zip(
+    request: Request,
+    case_id: uuid.UUID,
+    body: CompensationUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
+):
+    """导出赔偿费用明细 ZIP 包（10项赔偿各自明细 Excel）
+
+    接收前端当前编辑的金额数据，先保存到 case.compensation_data，
+    然后从 catalog_data 的 fee_receipt 素材中按费用类型分配到对应的 Excel，
+    打包成 ZIP 返回。
+
+    请求体格式同 PUT /cases/{case_id}/compensation：
+        {items: [{fee_type, manual_amount}], params?: {...}, manual_total?: number}
+    """
+    case = await _get_case_or_404(case_id, db, tenant_id)
+
+    # ── 1. 保存金额到 case.compensation_data（复用 update_compensation 逻辑）──
+    comp_data = copy.deepcopy(case.compensation_data or {})
+    items = comp_data.get("items", [])
+    update_map = {u.fee_type: u.manual_amount for u in body.items}
+    for item in items:
+        if item["fee_type"] in update_map:
+            new_amount = update_map[item["fee_type"]]
+            item["manual_amount"] = float(new_amount) if new_amount is not None else None
+
+    # 更新参数
+    if body.params:
+        params = comp_data.get("params", {})
+        for k, v in body.params.model_dump().items():
+            if v is not None:
+                params[k] = str(v) if isinstance(v, Decimal) else v
+        comp_data["params"] = params
+
+    # 重算合计
+    if body.manual_total is not None:
+        comp_data["total_amount"] = float(body.manual_total)
+        comp_data["manual_total"] = float(body.manual_total)
+    else:
+        total = Decimal("0")
+        for item in items:
+            if item.get("fee_type") == "dependent_living":
+                continue
+            amt = item.get("manual_amount") or item.get("amount", 0)
+            total += Decimal(str(amt))
+        comp_data["total_amount"] = float(total)
+
+    case.compensation_data = comp_data
+    await db.flush()
+
+    # ── 2. 生成 ZIP 包 ──
+    catalog_data = case.catalog_data or {}
+    analysis_result = copy.deepcopy(case.analysis_result or {})
+
+    # 传入 compensation_items（前端当前编辑的金额数据）
+    compensation_items = comp_data.get("items", [])
+
+    try:
+        from services.evidence.excel_generator import generate_fee_excel_zip
+        zip_bytes = await asyncio.to_thread(
+            generate_fee_excel_zip,
+            catalog_data,
+            analysis_result,
+            compensation_items,
+        )
+        if not zip_bytes:
+            raise ValueError("Generated ZIP is empty")
+    except Exception as e:
+        logger.error(f"Failed to generate compensation ZIP for case {case_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate compensation ZIP")
+
+    await db.commit()
+
+    safe_filename = quote(f"赔偿费用明细_{case.case_name}.zip")
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}",
+        },
+    )

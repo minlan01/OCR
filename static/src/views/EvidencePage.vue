@@ -2388,8 +2388,19 @@ async function handleExportAppraisalApp() {
 async function handleExportCompensation() {
   if (!currentCase.value) return
   exportingDoc.value = 'compensation'
-  try { await evidenceApi.exportCompensation(currentCase.value.id); message.success('导出成功') }
-  catch (e: unknown) { message.error((e as Error).message) }
+  try {
+    // 将当前编辑的金额数据通过 POST 传给后端，后端保存后生成 ZIP 包返回
+    const items = (compensationData.value?.items || []).map((i: any) => ({
+      fee_type: i.fee_type,
+      manual_amount: i.manual_amount != null ? Number(i.manual_amount) : null,
+    }))
+    const total = compensationTotal.value
+    await evidenceApi.exportCompensationZip(currentCase.value.id, {
+      items,
+      manual_total: Number(total),
+    })
+    message.success('导出成功')
+  } catch (e: unknown) { message.error((e as Error).message) }
   finally { exportingDoc.value = null }
 }
 async function handleExportCatalogPdf() {

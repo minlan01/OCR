@@ -261,6 +261,43 @@ export async function downloadBlob(path: string, filename: string): Promise<void
   URL.revokeObjectURL(url)
 }
 
+/**
+ * 通过 POST 请求下载文件（blob 响应）
+ * 用于需要发送 JSON body 的下载场景（如导出当前编辑数据并下载文件）
+ */
+export async function downloadBlobPost(path: string, body: unknown, filename: string): Promise<void> {
+  const doFetch = () => fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  })
+
+  let res = await doFetch()
+
+  // 401 → 尝试刷新 token 后重试一次
+  if (res.status === 401) {
+    const refreshed = await refreshToken()
+    if (refreshed) {
+      res = await doFetch()
+    }
+  }
+
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}))
+    throw new Error(errBody?.detail || `Download failed: HTTP ${res.status}`)
+  }
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 export async function uploadPDF(
   file: File,
   metadata?: { scanner_id?: string; callback_url?: string; metadata?: object }

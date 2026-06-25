@@ -3,11 +3,13 @@ Excel 费用生成器 — 生成赔偿费用总表和医疗费用汇总表 Excel
 ========================================================
 表1: 赔偿费用清单 — 标准8大赔偿项目 + 计算依据 + 金额
 表2: 医疗费用汇总表 — 按医院分组、逐条明细（住院/门诊、报销/自费）
+新增: generate_fee_excel_zip — 10项赔偿明细 ZIP 包
 """
 from __future__ import annotations
 
 import io
 import uuid
+import zipfile
 from typing import Any
 
 from loguru import logger
@@ -931,3 +933,615 @@ def _get_calculation_detail(fee_type: str, params: dict, plaintiff_name: str = "
         return f"按上一年度职工月平均工资{monthly_salary:.0f}元/月，以六个月总额计算：{monthly_salary:.0f}元/月×6月"
 
     return ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10项赔偿明细 ZIP 包生成
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 10项赔偿明细 ZIP 包中的文件名顺序与 fee_type 映射
+ZIP_FEE_ITEMS_ORDER: list[tuple[str, str]] = [
+    # (文件名中文名, 对应 compensation_data.items 中的 fee_type)
+    ("医疗费", "medical_fee"),
+    ("误工费", "lost_wages"),
+    ("护理费", "nursing_fee"),
+    ("住院伙食补助费", "food_subsidy"),
+    ("营养费", "nutrition_fee"),
+    ("残疾赔偿金", "disability_compensation"),
+    ("死亡赔偿金", "death_compensation"),
+    ("交通住宿费", "transport_fee"),
+    ("鉴定费", "appraisal_fee"),
+    ("精神损害抚慰金", "spiritual_damage"),
+    ("被扶养人生活费", "dependent_living"),
+]
+
+
+def _collect_fee_receipt_items_v2(catalog_data: dict) -> list[dict]:
+    """从 catalog_data.groups 中提取 fee_receipt 分类材料明细（支持新版带 fee_type 字段的结构）。
+
+    返回列表，每项包含：
+      fee_type, hospital_name, title, date, amount, insurance_amount,
+      self_pay_amount, receipt_type, stay_days, receipt_tail, evidence_page
+    """
+    items: list[dict] = []
+
+    for group in catalog_data.get("groups", []):
+        if group.get("category") != "fee_receipt":
+            continue
+
+        for mat_item in group.get("items", []):
+            # 兼容新旧两种数据结构
+            fee_type = mat_item.get("fee_type", "") or ""
+            fees = mat_item.get("fees", {}) or {}
+            identity = mat_item.get("identity", {}) or {}
+            evidence_name = mat_item.get("evidence_name", {}) or {}
+            raw_extracted = mat_item.get("raw_extracted", {}) or {}
+            layer3 = raw_extracted.get("layer_3_treatment", {}) or {}
+            layer4 = raw_extracted.get("layer_4_fees", {}) or (fees or {})
+
+            # 金额
+            amount = mat_item.get("amount") or fees.get("total_amount", 0) or 0
+            if not isinstance(amount, (int, float)):
+                try:
+                    amount = float(str(amount).replace(",", ""))
+                except (ValueError, TypeError):
+                    amount = 0.0
+
+            # 如果 amount 为 0，尝试从 items 汇总
+            if amount <= 0:
+                fee_items_list = layer4.get("items", []) or fees.get("items", []) or []
+                for fi in fee_items_list:
+                    a = fi.get("amount", 0) or 0
+                    if isinstance(a, str):
+                        try:
+                            a = float(a.replace(",", ""))
+                        except (ValueError, TypeError):
+                            a = 0
+                    if isinstance(a, (int, float)) and a > 0:
+                        amount += a
+
+            # 医院名
+            hospital_name = _clean_text(identity.get("hospital_name", ""))
+
+            # 日期
+            date_str = _clean_text(evidence_name.get("date", "") or mat_item.get("date", ""))
+            admission = layer3.get("admission_date", "")
+            discharge = layer3.get("discharge_date", "")
+
+            # 住院/门诊
+            stay_days: Any = ""
+            receipt_type = _clean_text(mat_item.get("fee_subtype", "")) or "门诊"
+            if admission and discharge:
+                receipt_type = "住院"
+                try:
+                    from datetime import datetime as _dt
+                    d1 = _dt.strptime(admission[:10], "%Y-%m-%d")
+                    d2 = _dt.strptime(discharge[:10], "%Y-%m-%d")
+                    stay_days = (d2 - d1).days
+                    if stay_days < 0:
+                        stay_days = ""
+                    date_str = f"{admission[:10]} ~ {discharge[:10]}"
+                except (ValueError, IndexError):
+                    stay_days = ""
+
+            # 报销/自费
+            insurance_amount = mat_item.get("insurance_amount") or fees.get("insurance_amount") or 0
+            if isinstance(insurance_amount, str):
+                try:
+                    insurance_amount = float(insurance_amount.replace(",", ""))
+                except (ValueError, TypeError):
+                    insurance_amount = 0.0
+            self_pay_amount = mat_item.get("self_pay_amount") or fees.get("out_of_pocket") or 0
+            if isinstance(self_pay_amount, str):
+                try:
+                    self_pay_amount = float(self_pay_amount.replace(",", ""))
+                except (ValueError, TypeError):
+                    self_pay_amount = 0.0
+
+            # 票据尾号
+            original_filename = _clean_text(evidence_name.get("original_filename", "")) or mat_item.get("title", "")
+            receipt_tail = _extract_receipt_tail(original_filename)
+
+            # 标题
+            title = _clean_text(evidence_name.get("title", "")) or _clean_text(mat_item.get("title", ""))
+
+            # 证据页码（如存在）
+            evidence_page = mat_item.get("evidence_page", "") or ""
+
+            items.append({
+                "fee_type": fee_type,
+                "hospital_name": hospital_name,
+                "title": title,
+                "date": date_str,
+                "amount": float(amount),
+                "insurance_amount": float(insurance_amount),
+                "self_pay_amount": float(self_pay_amount),
+                "receipt_type": receipt_type,
+                "stay_days": stay_days,
+                "receipt_tail": receipt_tail,
+                "evidence_page": evidence_page,
+            })
+
+    return items
+
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    """安全转换为 float，处理字符串/Decimal/None。"""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(str(value).replace(",", ""))
+    except (ValueError, TypeError):
+        return default
+
+
+def _write_title_row(ws: Any, title: str, col_count: int) -> int:
+    """写入标题行（合并第一行），返回下一可用行号。"""
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=col_count)
+    cell = ws.cell(row=1, column=1, value=title)
+    cell.font = Font(name="微软雅黑", size=14, bold=True)
+    cell.alignment = _CENTER_ALIGN
+    return 2
+
+
+def _write_header_row(ws: Any, headers: list[str], row: int) -> None:
+    """写入表头行。"""
+    for col_idx, header in enumerate(headers, 1):
+        ws.cell(row=row, column=col_idx, value=header)
+    _apply_header_style(ws, row, len(headers))
+
+
+# ── 各类 Excel 生成函数 ──────────────────────────────────────────────────────
+
+def _gen_medical_fee_excel(fee_items: list[dict], comp_item: dict | None, case_name: str = "") -> bytes:
+    """医疗费用汇总表 — 参考医疗费用汇总表（李明凤）.xls 格式。
+
+    表头：序号 | 名称 | 日期 | 金额 | 报销金额 | 个人自费部分 | 类型 | 住院天数 | 票据尾号 | 证据页码
+    数据行：每个费用票据一行
+    最后一行：总计行（合并名称列，汇总金额/报销/自费）
+    空行填充到约 97 行。
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    COL_COUNT = 10
+    headers = ["序号", "名称", "日期", "金额", "报销金额", "个人自费部分", "类型", "住院天数", "票据尾号", "证据页码"]
+
+    # 标题行（合并 A1:J1）
+    _write_title_row(ws, "医疗费用汇总表", COL_COUNT)
+    # 表头（行2）
+    HEADER_ROW = 2
+    _write_header_row(ws, headers, HEADER_ROW)
+
+    row_idx = HEADER_ROW + 1
+    seq = 1
+    total_amount = 0.0
+    total_insurance = 0.0
+    total_self_pay = 0.0
+
+    # 过滤医疗费类项（hospital_fee / outpatient_fee / pharmacy_fee / medical_fee 或空 fee_type 中含医院）
+    medical_keywords = {"hospital_fee", "outpatient_fee", "pharmacy_fee", "medical_fee", "", None}
+    for item in fee_items:
+        ft = item.get("fee_type", "")
+        # 只包含医疗类票据（排除护理用品/住宿/交通等）
+        if ft and ft not in medical_keywords and "医疗" not in ft and "住院" not in ft and "门诊" not in ft and "药" not in ft:
+            continue
+
+        amount = item.get("amount", 0) or 0
+        insurance = item.get("insurance_amount", 0) or 0
+        self_pay = item.get("self_pay_amount", 0) or 0
+
+        total_amount += amount
+        total_insurance += insurance
+        total_self_pay += self_pay
+
+        # 名称：优先用医院名，否则用标题
+        name = item.get("hospital_name", "") or item.get("title", "")
+        ws.cell(row=row_idx, column=1, value=seq)
+        ws.cell(row=row_idx, column=2, value=name)
+        ws.cell(row=row_idx, column=3, value=item.get("date", ""))
+        ws.cell(row=row_idx, column=4, value=amount if amount else "")
+        ws.cell(row=row_idx, column=5, value=insurance if insurance else "")
+        ws.cell(row=row_idx, column=6, value=self_pay if self_pay else "")
+        ws.cell(row=row_idx, column=7, value=item.get("receipt_type", ""))
+        ws.cell(row=row_idx, column=8, value=item.get("stay_days", ""))
+        ws.cell(row=row_idx, column=9, value=item.get("receipt_tail", ""))
+        ws.cell(row=row_idx, column=10, value=item.get("evidence_page", ""))
+        _apply_cell_style(ws, row_idx, COL_COUNT, money_cols={4, 5, 6})
+        row_idx += 1
+        seq += 1
+
+    # 总计行：合并名称列（B 到 C），写"总计"
+    total_row = row_idx
+    ws.merge_cells(start_row=total_row, start_column=2, end_row=total_row, end_column=3)
+    ws.cell(row=total_row, column=1, value="")
+    ws.cell(row=total_row, column=2, value="总计")
+    ws.cell(row=total_row, column=2).font = _BOLD_FONT
+    ws.cell(row=total_row, column=2).alignment = _CENTER_ALIGN
+    ws.cell(row=total_row, column=4, value=total_amount)
+    ws.cell(row=total_row, column=4).font = _BOLD_FONT
+    ws.cell(row=total_row, column=4).number_format = _MONEY_FORMAT
+    ws.cell(row=total_row, column=5, value=total_insurance if total_insurance else "")
+    ws.cell(row=total_row, column=5).font = _BOLD_FONT
+    ws.cell(row=total_row, column=5).number_format = _MONEY_FORMAT
+    ws.cell(row=total_row, column=6, value=total_self_pay if total_self_pay else "")
+    ws.cell(row=total_row, column=6).font = _BOLD_FONT
+    ws.cell(row=total_row, column=6).number_format = _MONEY_FORMAT
+    for col in range(1, COL_COUNT + 1):
+        ws.cell(row=total_row, column=col).border = _THIN_BORDER
+        ws.cell(row=total_row, column=col).fill = _TOTAL_FILL
+    row_idx = total_row + 1
+
+    # 填充空行到约 97 行
+    TARGET_ROWS = 97
+    while row_idx <= TARGET_ROWS:
+        for col in range(1, COL_COUNT + 1):
+            ws.cell(row=row_idx, column=col).border = _THIN_BORDER
+        row_idx += 1
+
+    # 列宽
+    col_widths = [8, 28, 18, 14, 14, 14, 10, 10, 12, 10]
+    for i, width in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def _gen_nursing_supplies_excel(fee_items: list[dict], comp_item: dict | None, case_name: str = "") -> bytes:
+    """医护用品费统计表 — 参考护理用品费统计表（李明凤）.xls 格式。
+
+    表头：序号 | 名称 | 日期 | 金额 | 类型 | 票据尾号
+    合计行："合计" | | | 总金额 | |
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    COL_COUNT = 6
+    headers = ["序号", "名称", "日期", "金额", "类型", "票据尾号"]
+
+    _write_title_row(ws, "医护用品费统计表", COL_COUNT)
+    _write_header_row(ws, headers, 2)
+
+    row_idx = 3
+    seq = 1
+    total = 0.0
+
+    # 筛选护理用品类
+    for item in fee_items:
+        ft = item.get("fee_type", "")
+        if ft != "nursing_supplies" and "护理用品" not in ft and "医护用品" not in ft:
+            continue
+        amount = item.get("amount", 0) or 0
+        total += amount
+        name = item.get("title", "") or item.get("hospital_name", "")
+        ws.cell(row=row_idx, column=1, value=seq)
+        ws.cell(row=row_idx, column=2, value=name)
+        ws.cell(row=row_idx, column=3, value=item.get("date", ""))
+        ws.cell(row=row_idx, column=4, value=amount if amount else "")
+        ws.cell(row=row_idx, column=5, value=item.get("receipt_type", ""))
+        ws.cell(row=row_idx, column=6, value=item.get("receipt_tail", ""))
+        _apply_cell_style(ws, row_idx, COL_COUNT, money_cols={4})
+        row_idx += 1
+        seq += 1
+
+    # 合计行
+    ws.cell(row=row_idx, column=1, value="合计")
+    ws.cell(row=row_idx, column=1).font = _BOLD_FONT
+    ws.cell(row=row_idx, column=1).alignment = _CENTER_ALIGN
+    ws.cell(row=row_idx, column=4, value=total)
+    ws.cell(row=row_idx, column=4).font = _BOLD_FONT
+    ws.cell(row=row_idx, column=4).number_format = _MONEY_FORMAT
+    for col in range(1, COL_COUNT + 1):
+        ws.cell(row=row_idx, column=col).border = _THIN_BORDER
+        ws.cell(row=row_idx, column=col).fill = _TOTAL_FILL
+
+    col_widths = [8, 30, 18, 14, 10, 14]
+    for i, width in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def _gen_accommodation_excel(fee_items: list[dict], comp_item: dict | None, case_name: str = "") -> bytes:
+    """住宿费统计表 — 参考住宿费统计表（李明凤）.xls 格式。
+
+    表头：序号 | 类型 | 住宿人员 | 日期 | 金额 | 备注 | 票据尾号
+    总计行
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    COL_COUNT = 7
+    headers = ["序号", "类型", "住宿人员", "日期", "金额", "备注", "票据尾号"]
+
+    _write_title_row(ws, "住宿费统计表", COL_COUNT)
+    _write_header_row(ws, headers, 2)
+
+    row_idx = 3
+    seq = 1
+    total = 0.0
+
+    for item in fee_items:
+        ft = item.get("fee_type", "")
+        if ft and "住宿" not in ft and ft != "accommodation_fee":
+            continue
+        amount = item.get("amount", 0) or 0
+        total += amount
+        ws.cell(row=row_idx, column=1, value=seq)
+        ws.cell(row=row_idx, column=2, value=item.get("receipt_type", "") or "住宿费")
+        ws.cell(row=row_idx, column=3, value="")
+        ws.cell(row=row_idx, column=4, value=item.get("date", ""))
+        ws.cell(row=row_idx, column=5, value=amount if amount else "")
+        ws.cell(row=row_idx, column=6, value=item.get("title", ""))
+        ws.cell(row=row_idx, column=7, value=item.get("receipt_tail", ""))
+        _apply_cell_style(ws, row_idx, COL_COUNT, money_cols={5})
+        row_idx += 1
+        seq += 1
+
+    # 总计行
+    ws.cell(row=row_idx, column=2, value="总计")
+    ws.cell(row=row_idx, column=2).font = _BOLD_FONT
+    ws.cell(row=row_idx, column=2).alignment = _CENTER_ALIGN
+    ws.cell(row=row_idx, column=5, value=total)
+    ws.cell(row=row_idx, column=5).font = _BOLD_FONT
+    ws.cell(row=row_idx, column=5).number_format = _MONEY_FORMAT
+    for col in range(1, COL_COUNT + 1):
+        ws.cell(row=row_idx, column=col).border = _THIN_BORDER
+        ws.cell(row=row_idx, column=col).fill = _TOTAL_FILL
+
+    col_widths = [8, 12, 14, 18, 14, 20, 14]
+    for i, width in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def _gen_transport_excel(fee_items: list[dict], comp_item: dict | None, case_name: str = "") -> bytes:
+    """交通费统计表。
+
+    表头：序号 | 名称 | 日期 | 金额 | 备注 | 票据尾号
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    COL_COUNT = 6
+    headers = ["序号", "名称", "日期", "金额", "备注", "票据尾号"]
+
+    _write_title_row(ws, "交通费统计表", COL_COUNT)
+    _write_header_row(ws, headers, 2)
+
+    row_idx = 3
+    seq = 1
+    total = 0.0
+
+    for item in fee_items:
+        ft = item.get("fee_type", "")
+        if ft and "交通" not in ft and ft != "transport_fee" and ft != "transportation":
+            continue
+        amount = item.get("amount", 0) or 0
+        total += amount
+        name = item.get("title", "") or item.get("hospital_name", "")
+        ws.cell(row=row_idx, column=1, value=seq)
+        ws.cell(row=row_idx, column=2, value=name)
+        ws.cell(row=row_idx, column=3, value=item.get("date", ""))
+        ws.cell(row=row_idx, column=4, value=amount if amount else "")
+        ws.cell(row=row_idx, column=5, value="")
+        ws.cell(row=row_idx, column=6, value=item.get("receipt_tail", ""))
+        _apply_cell_style(ws, row_idx, COL_COUNT, money_cols={4})
+        row_idx += 1
+        seq += 1
+
+    # 总计行
+    ws.cell(row=row_idx, column=2, value="总计")
+    ws.cell(row=row_idx, column=2).font = _BOLD_FONT
+    ws.cell(row=row_idx, column=2).alignment = _CENTER_ALIGN
+    ws.cell(row=row_idx, column=4, value=total)
+    ws.cell(row=row_idx, column=4).font = _BOLD_FONT
+    ws.cell(row=row_idx, column=4).number_format = _MONEY_FORMAT
+    for col in range(1, COL_COUNT + 1):
+        ws.cell(row=row_idx, column=col).border = _THIN_BORDER
+        ws.cell(row=row_idx, column=col).fill = _TOTAL_FILL
+
+    col_widths = [8, 28, 18, 14, 20, 14]
+    for i, width in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def _gen_simple_fee_excel(title: str, comp_item: dict | None, calc_basis: str = "") -> bytes:
+    """简单格式 Excel（误工费/护理费/住院伙食补助费/营养费/残疾赔偿金/死亡赔偿金/鉴定费/精神损害抚慰金/被扶养人生活费）。
+
+    表头：序号 | 项目 | 金额 | 计算依据
+    数据行 + 合计行
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    COL_COUNT = 4
+    headers = ["序号", "项目", "金额", "计算依据"]
+
+    _write_title_row(ws, title, COL_COUNT)
+    _write_header_row(ws, headers, 2)
+
+    row_idx = 3
+
+    # 从 comp_item 取金额和计算依据
+    amount = 0.0
+    basis = calc_basis
+    if comp_item:
+        amount = _to_float(comp_item.get("manual_amount") or comp_item.get("amount", 0))
+        basis = comp_item.get("calculation_basis", "") or calc_basis
+
+    ws.cell(row=row_idx, column=1, value=1)
+    ws.cell(row=row_idx, column=2, value=title)
+    ws.cell(row=row_idx, column=3, value=amount if amount else "")
+    ws.cell(row=row_idx, column=4, value=basis)
+    _apply_cell_style(ws, row_idx, COL_COUNT, money_cols={3})
+    row_idx += 1
+
+    # 合计行
+    ws.cell(row=row_idx, column=2, value="合计")
+    ws.cell(row=row_idx, column=2).font = _BOLD_FONT
+    ws.cell(row=row_idx, column=2).alignment = _CENTER_ALIGN
+    ws.cell(row=row_idx, column=3, value=amount if amount else "")
+    ws.cell(row=row_idx, column=3).font = _BOLD_FONT
+    ws.cell(row=row_idx, column=3).number_format = _MONEY_FORMAT
+    for col in range(1, COL_COUNT + 1):
+        ws.cell(row=row_idx, column=col).border = _THIN_BORDER
+        ws.cell(row=row_idx, column=col).fill = _TOTAL_FILL
+
+    col_widths = [8, 22, 16, 55]
+    for i, width in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def generate_fee_excel_zip(
+    catalog_data: dict,
+    analysis_result: dict,
+    compensation_items: list[dict] | None,
+) -> bytes:
+    """生成 10 项赔偿明细 Excel ZIP 包。
+
+    Args:
+        catalog_data: 案件清单数据（含 groups, fee_summary）
+        analysis_result: 分析结果
+        compensation_items: 前端传来的当前编辑金额列表 [{fee_type, amount/manual_amount, ...}]
+
+    Returns:
+        ZIP 字节流，包含 10 个 xlsx 文件
+    """
+    case_name = analysis_result.get("case_name", "") or ""
+    case_type = analysis_result.get("case_type", "injury")
+
+    # 构建 fee_type → comp_item 映射
+    comp_map: dict[str, dict] = {}
+    if compensation_items:
+        for item in compensation_items:
+            ft = item.get("fee_type", "")
+            if ft:
+                comp_map[ft] = item
+
+    # 从 catalog_data 提取费用票据
+    fee_items = _collect_fee_receipt_items_v2(catalog_data)
+
+    # 构建 ZIP
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 1. 医疗费
+        medical_bytes = _gen_medical_fee_excel(
+            fee_items, comp_map.get("medical_fee"), case_name
+        )
+        zf.writestr("01_医疗费.xlsx", medical_bytes)
+
+        # 2. 误工费
+        lost_wages_bytes = _gen_simple_fee_excel(
+            "误工费", comp_map.get("lost_wages"), "误工收入 × 误工天数（参照鉴定意见）"
+        )
+        zf.writestr("02_误工费.xlsx", lost_wages_bytes)
+
+        # 3. 护理费 — 包含医护用品统计表
+        nursing_main = _gen_simple_fee_excel(
+            "护理费", comp_map.get("nursing_fee"), "住院期间护理费 = 护理标准 × 住院天数"
+        )
+        zf.writestr("03_护理费.xlsx", nursing_main)
+
+        # 护理用品费统计表（作为护理费的补充明细）
+        nursing_supplies_bytes = _gen_nursing_supplies_excel(
+            fee_items, comp_map.get("nursing_fee"), case_name
+        )
+        zf.writestr("03_护理费_医护用品费统计表.xlsx", nursing_supplies_bytes)
+
+        # 4. 住院伙食补助费
+        food_bytes = _gen_simple_fee_excel(
+            "住院伙食补助费", comp_map.get("food_subsidy"), "住院伙食补助标准 × 住院天数"
+        )
+        zf.writestr("04_住院伙食补助费.xlsx", food_bytes)
+
+        # 5. 营养费
+        nutrition_bytes = _gen_simple_fee_excel(
+            "营养费", comp_map.get("nutrition_fee"), "营养费标准 × 营养期天数（参照鉴定意见）"
+        )
+        zf.writestr("05_营养费.xlsx", nutrition_bytes)
+
+        # 6. 残疾赔偿金 / 死亡赔偿金（根据案件类型只生成一个）
+        if case_type == "death":
+            death_bytes = _gen_simple_fee_excel(
+                "死亡赔偿金", comp_map.get("death_compensation"),
+                "受诉法院所在地上年度城镇居民人均可支配收入 × 20年",
+            )
+            zf.writestr("06_死亡赔偿金.xlsx", death_bytes)
+        else:
+            disability_bytes = _gen_simple_fee_excel(
+                "残疾赔偿金", comp_map.get("disability_compensation"),
+                "受诉法院所在地上年度城镇居民人均可支配收入 × 20年 × 伤残系数",
+            )
+            zf.writestr("06_残疾赔偿金.xlsx", disability_bytes)
+
+        # 7. 交通住宿费 — 包含交通费和住宿费两个统计表
+        transport_bytes = _gen_transport_excel(
+            fee_items, comp_map.get("transport_fee"), case_name
+        )
+        zf.writestr("07_交通费统计表.xlsx", transport_bytes)
+
+        accommodation_bytes = _gen_accommodation_excel(
+            fee_items, comp_map.get("transport_fee"), case_name
+        )
+        zf.writestr("07_住宿费统计表.xlsx", accommodation_bytes)
+
+        # 8. 鉴定费
+        appraisal_bytes = _gen_simple_fee_excel(
+            "鉴定费", comp_map.get("appraisal_fee"), "凭票据实报实销"
+        )
+        zf.writestr("08_鉴定费.xlsx", appraisal_bytes)
+
+        # 9. 精神损害抚慰金
+        spiritual_bytes = _gen_simple_fee_excel(
+            "精神损害抚慰金", comp_map.get("spiritual_damage"),
+            "根据伤残等级/死亡后果酌定",
+        )
+        zf.writestr("09_精神损害抚慰金.xlsx", spiritual_bytes)
+
+        # 10. 被扶养人生活费（如有）
+        dependent_item = comp_map.get("dependent_living")
+        dependent_bytes = _gen_simple_fee_excel(
+            "被扶养人生活费", dependent_item,
+            "受诉法院所在地上年度城镇居民人均消费支出 × 扶养年限",
+        )
+        zf.writestr("10_被扶养人生活费.xlsx", dependent_bytes)
+
+    return zip_buffer.getvalue()

@@ -3,7 +3,7 @@
  * 证据整理模块全部端点封装
  */
 import * as api from './client'
-import { apiKeyOnlyHeaders } from './client'
+import { apiKeyOnlyHeaders, downloadBlobPost } from './client'
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 
@@ -284,6 +284,19 @@ export async function exportAppraisalApp(caseId: string): Promise<void> {
 /** 导出赔偿费用汇总 */
 export async function exportCompensation(caseId: string): Promise<void> {
   await api.downloadBlob(`/evidence/cases/${caseId}/export/compensation`, '赔偿费用清单.xlsx')
+}
+
+/** 导出赔偿费用明细 ZIP 包（POST 请求，携带当前编辑金额） */
+export async function exportCompensationZip(caseId: string, data: {
+  items: CompensationItemUpdate[]
+  params?: CompensationParamsUpdate
+  manual_total?: number | null
+}): Promise<void> {
+  await downloadBlobPost(
+    `/evidence/cases/${caseId}/export/compensation`,
+    data,
+    '赔偿费用明细.zip'
+  )
 }
 
 /** 导出指定类型费用明细 */
