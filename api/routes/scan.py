@@ -105,7 +105,7 @@ def _dispatch_celery(task_id: uuid.UUID) -> str:
         raise RuntimeError(f"Failed to dispatch: {type(e).__name__}") from e
 
 
-def _fetch_result_json(task: ScanTask, task_id: uuid.UUID) -> dict:
+async def _fetch_result_json(task: ScanTask, task_id: uuid.UUID) -> dict:
     """获取已完成任务的结构化结果 JSON
 
     Args:
@@ -765,7 +765,7 @@ async def get_scan_result(
     任务必须处于 completed 状态且结果文件存在。
     """
     task = await _get_task_or_404(task_id, db, tenant_id)
-    result_json = _fetch_result_json(task, task_id)
+    result_json = await _fetch_result_json(task, task_id)
 
     if download:
         # 文件下载模式
@@ -808,7 +808,7 @@ async def download_scan_docx(
         raise HTTPException(status_code=400, detail=f"Unsupported format: {format}. Supported: docx")
 
     task = await _get_task_or_404(task_id, db, tenant_id)
-    result_json = _fetch_result_json(task, task_id)
+    result_json = await _fetch_result_json(task, task_id)
 
     # 生成 Word 文档
     try:

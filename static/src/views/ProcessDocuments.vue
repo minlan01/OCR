@@ -175,7 +175,7 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString('zh-CN')
 }
 
-function getSourceLabel(sourceType: string | null): string {
+function getSourceLabel(sourceType: string | null | undefined): string {
   if (sourceType === 'api_upload') return 'API上传'
   if (sourceType === 'scanner') return '扫描仪'
   return '上传'

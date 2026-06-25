@@ -45,7 +45,7 @@ export function saveCredentials(email: string, _password: string): void {
 /** 清除保存的邮箱+密码 */
 export function clearSavedCredentials(): void {
   localStorage.removeItem(REMEMBER_EMAIL_KEY)
-  localStorage.removeItem(REMEMBER_PASSWORD_KEY)
+  // REMEMBER_PASSWORD_KEY 已移除（不再存储密码）
 }
 
 /** 获取保存的邮箱 */
@@ -341,6 +341,7 @@ export interface ScanTaskSummary {
   created_at: string
   completed_at: string | null
   error_code: string | null
+  source_type?: string
 }
 
 export interface TaskStep {
