@@ -302,6 +302,10 @@ async def _upload_single_file(
     if len(content) > settings.max_upload_size:
         return {"skipped": {"filename": filename, "reason": f"File too large ({len(content) // (1024*1024)} MB). Max: {settings.max_upload_size // (1024*1024)} MB"}}
 
+    # 文件魔数校验（防止扩展名伪装，与 evidence 模块一致）
+    if filename.lower().endswith(".pdf") and not content[:5].startswith(b"%PDF"):
+        return {"skipped": {"filename": filename, "reason": "File content does not match PDF format (magic number check failed)"}}
+
     file_md5 = _compute_md5(content)
 
     # MD5 去重：只匹配非 failed 的同租户任务（failed 文件允许重新上传）

@@ -1530,7 +1530,7 @@ function startProgressPoll(caseId: string) {
           try { analysisResult.value = await evidenceApi.getAnalysis(caseId) } catch { /* ignore */ }
         }
       }
-    } catch {
+    } catch (e: any) {
       stopProgressPoll()
       processing.value = false
     }
@@ -1720,7 +1720,7 @@ function startOcrStatusPoll(materialId: string) {
           message.warning('OCR 重试完成，但状态为：' + mat.ocr_status)
         }
       }
-    } catch {
+    } catch (e: any) {
       // 忽略轮询错误
     }
   }, 2000)
@@ -2288,7 +2288,7 @@ async function handleAnalyze() {
           const errorMsg = res.error_message || '未知原因'
           message.error(`分析失败：${errorMsg}。请检查素材完整性后重试。`)
         }
-      } catch {
+      } catch (e: any) {
         pollErrors++
         if (pollErrors >= maxPollErrors) {
           // 连续失败多次才终止，单次网络抖动不会中断
@@ -2446,7 +2446,7 @@ async function continueCase(caseId: string) {
             const errorMsg = ar.error_message || '未知原因'
             message.error(`分析失败：${errorMsg}`)
           }
-        } catch {
+        } catch (e: any) {
           if (analysisPollId) { clearInterval(analysisPollId); analysisPollId = null }
           analyzing.value = false
         }
@@ -2610,7 +2610,7 @@ onMounted(async () => {
       isContinuedCase.value = true
       showHomePage.value = false
       if (savedStep) currentStep.value = Number(savedStep)
-    } catch {
+    } catch (e: any) {
       // 案件不存在或权限问题 — 清理 sessionStorage
       sessionStorage.removeItem('evidence_current_case_id')
       sessionStorage.removeItem('evidence_current_step')

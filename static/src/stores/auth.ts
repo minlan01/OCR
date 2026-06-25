@@ -35,7 +35,7 @@ export const useAuthStore = defineStore('auth', () => {
         const info = await get<UserInfo>('/auth/me')
         userInfo.value = info
         return info
-      } catch {
+      } catch (e: any) {
         userInfo.value = null
         return null
       } finally {

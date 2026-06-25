@@ -119,7 +119,7 @@ const savingPwd = ref(false)
 async function handleChangePassword() {
   try {
     await pwdFormRef.value?.validate()
-  } catch {
+  } catch (e: any) {
     return
   }
   savingPwd.value = true

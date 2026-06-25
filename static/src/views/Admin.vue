@@ -513,7 +513,7 @@ async function loadTenantOptionsForSelect(): Promise<void> {
   try {
     const res = await listTenants(1, 100)
     tenantSelectOptions.value = res.items.map((t) => ({ label: t.name, value: t.id }))
-  } catch {
+  } catch (e: any) {
     // 静默失败
   }
 }
@@ -546,7 +546,7 @@ function openEditModal(row: UserListItem): void {
 async function submitUserForm(): Promise<void> {
   try {
     await userFormRef.value?.validate()
-  } catch {
+  } catch (e: any) {
     return
   }
 

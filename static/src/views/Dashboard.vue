@@ -266,7 +266,7 @@ async function loadQueue() {
   try {
     const res = await get<{ items: QueueItem[] }>('/admin/queue')
     queueItems.value = res.items || []
-  } catch {
+  } catch (e: any) {
     // queue endpoint may not be reachable
   }
 }

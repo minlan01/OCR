@@ -85,7 +85,7 @@ function formatData(data: Record<string, unknown>): string {
   if (!data || Object.keys(data).length === 0) return ''
   try {
     return JSON.stringify(data, null, 2)
-  } catch {
+  } catch (e: any) {
     return String(data)
   }
 }
@@ -100,7 +100,7 @@ async function handleConfirmResults() {
   for (const [slot, value] of Object.entries(slotEdits)) {
     try {
       updates.push({ slot, manual_edit: JSON.parse(value) })
-    } catch {
+    } catch (e: any) {
       updates.push({ slot, manual_edit: { raw_text: value } })
     }
   }

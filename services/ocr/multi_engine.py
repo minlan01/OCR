@@ -34,7 +34,7 @@ class MultiOCREngine(BaseOCREngine):
         results = engine.recognize(image_path)
     """
 
-    def __init__(self, engines: list[BaseOCREngine]):
+    def __init__(self, engines: list[BaseOCREngine]) -> None:
         self._engines = engines
         self._model_loaded = False
         # 降级统计（用于成本分析）
@@ -142,12 +142,7 @@ class MultiOCREngine(BaseOCREngine):
         image_path: Path,
         primary_engine_name: str,
     ) -> list[dict]:
-        """置信度分档过滤 + 低置信度行二次识别
-
-        1. 对金额/数字行使用更严格阈值 (ocr_confidence_threshold_numeric)
-        2. 对低置信度行 (< ocr_confidence_retry_threshold) 直接丢弃
-        3. 对中置信度行 ([retry_threshold, numeric_threshold)) 用备用引擎重试
-        """
+        """置信度分档过滤 + 低置信度行二次识别"""
         from config.settings import settings
 
         text_threshold = settings.ocr_confidence_threshold

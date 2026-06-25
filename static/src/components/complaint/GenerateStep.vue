@@ -175,7 +175,7 @@ async function saveSlot(slot: SlotDisplay) {
     let parsed: Record<string, unknown>
     try {
       parsed = JSON.parse(state.editText)
-    } catch {
+    } catch (e: any) {
       parsed = { raw_text: state.editText }
     }
 
@@ -245,7 +245,7 @@ onMounted(async () => {
   if (store.currentCase && store.slotResults.length === 0) {
     try {
       await store.fetchResults(store.currentCase.case_id)
-    } catch {
+    } catch (e: any) {
       // results may not be available yet
     }
   }

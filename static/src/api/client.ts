@@ -113,7 +113,7 @@ async function refreshToken(): Promise<boolean> {
     const data: TokenResponse = await res.json()
     setTokens(data.access_token, data.refresh_token)
     return true
-  } catch {
+  } catch (e: any) {
     return false
   }
 }

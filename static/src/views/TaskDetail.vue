@@ -250,7 +250,7 @@ watch(showResult, async (val) => {
     resultLoading.value = true
     try {
       resultData.value = await store.getTaskResult(taskId)
-    } catch {
+    } catch (e: any) {
       resultData.value = { error: '无法加载结果' }
     } finally {
       resultLoading.value = false

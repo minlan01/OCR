@@ -29,7 +29,7 @@ const formatted = computed(() => {
   if (props.data === null || props.data === undefined) return ''
   try {
     return JSON.stringify(props.data, null, 2)
-  } catch {
+  } catch (e: any) {
     return String(props.data)
   }
 })

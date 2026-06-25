@@ -203,7 +203,7 @@ async function handleConfirm() {
       await store.updateResults(store.currentCase.case_id, [
         { slot: 'evidence', manual_edit: parsed },
       ])
-    } catch {
+    } catch (e: any) {
       await store.updateResults(store.currentCase.case_id, [
         { slot: 'evidence', manual_edit: { raw_text: evidenceText.value } },
       ])

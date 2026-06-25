@@ -129,7 +129,7 @@ async function loadTenants(): Promise<void> {
   try {
     const list = await get<TenantNameItem[]>('/auth/tenants')
     tenantOptions.value = list.map((t) => ({ label: t.name, value: t.id }))
-  } catch {
+  } catch (e: any) {
     // 静默失败，不影响注册
   } finally {
     tenantsLoading.value = false
@@ -175,7 +175,7 @@ async function autoLoginRequest() {
     setTokens(res.access_token, res.refresh_token)
     message.success(`欢迎回来，${res.user.display_name}`)
     router.push('/dashboard')
-  } catch {
+  } catch (e: any) {
     // 自动登录失败（密码改了等），静默忽略，留在登录页让用户手动登录
   } finally {
     loading.value = false
@@ -185,7 +185,7 @@ async function autoLoginRequest() {
 async function handleLogin() {
   try {
     await loginFormRef.value?.validate()
-  } catch {
+  } catch (e: any) {
     return
   }
   loading.value = true
@@ -239,7 +239,7 @@ const registerRules = computed<FormRules>(() => ({
 async function handleRegister() {
   try {
     await registerFormRef.value?.validate()
-  } catch {
+  } catch (e: any) {
     return
   }
   loading.value = true
