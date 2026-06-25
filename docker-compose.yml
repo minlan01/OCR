@@ -85,7 +85,7 @@ services:
       -c wal_buffers=8MB
       -c checkpoint_completion_target=0.9
       -c random_page_cost=1.1
-      -c log_min_duration_statement=1000
+      -c log_min_duration_statement=-1
     ports:
       - "${POSTGRES_HOST_PORT:-127.0.0.1:5432}:5432"
     volumes:

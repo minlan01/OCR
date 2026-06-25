@@ -439,13 +439,26 @@ class Settings(BaseSettings):
         ]
 
     def _inject_redis_password(self, url: str) -> str:
-        """为 Redis URL 注入密码（如果已配置且 URL 中尚未包含密码）"""
-        pwd = self.redis_password.get_secret_value() if isinstance(self.redis_password, SecretStr) else self.redis_password
-        if not pwd:
+        """为 Redis URL 注入密码（如果已配置且 URL 中尚未包含密码）
+        支持 redis:// 和 rediss:// (TLS)，正确处理密码中的特殊字符。
+        """
+        from urllib.parse import urlparse, urlunparse, quote
+
+        pwd_raw = self.redis_password.get_secret_value() if isinstance(self.redis_password, SecretStr) else self.redis_password
+        if not pwd_raw:
             return url
-        if "@" in url.split("://", 1)[-1]:
-            return url
-        return url.replace("redis://", f"redis://:{pwd}@")
+
+        parsed = urlparse(url)
+        if parsed.password is not None:
+            return url  # URL 已包含密码
+
+        # URL 编码密码中的特殊字符
+        pwd_encoded = quote(pwd_raw, safe="")
+        netloc = f":{pwd_encoded}@{parsed.hostname}"
+        if parsed.port:
+            netloc += f":{parsed.port}"
+
+        return urlunparse(parsed._replace(netloc=netloc))
 
     @property
     def redis_url_with_auth(self) -> str:

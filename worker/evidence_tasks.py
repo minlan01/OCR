@@ -602,7 +602,7 @@ def _run_ocr_pipeline(case_id: str) -> dict:
     async def _pipeline():
         from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
         from sqlalchemy import select
-        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         _engine = _create_worker_engine()
         _factory = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
@@ -640,7 +640,7 @@ def _run_ocr_pipeline(case_id: str) -> dict:
                 mat_ids = [str(m.id) for m in materials]
                 with ThreadPoolExecutor(max_workers=2) as pool:
                     futures = {pool.submit(_process_one, mid): mid for mid in mat_ids}
-                    for future in futures:
+                    for future in as_completed(futures):
                         try:
                             res = future.result()
                             if res.get("success"):
@@ -881,7 +881,7 @@ def _run_classify_pipeline(case_id: str) -> dict:
         from services.evidence.classifier import classify_material
         from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
         from sqlalchemy import select
-        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         _engine = _create_worker_engine()
         _factory = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
@@ -916,7 +916,7 @@ def _run_classify_pipeline(case_id: str) -> dict:
                 mat_ids = [str(m.id) for m in materials]
                 with ThreadPoolExecutor(max_workers=2) as pool:
                     futures = {pool.submit(_classify_one, mid): mid for mid in mat_ids}
-                    for future in futures:
+                    for future in as_completed(futures):
                         try:
                             res = future.result()
                             if res.get("success"):

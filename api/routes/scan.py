@@ -384,6 +384,16 @@ async def _upload_single_file(
             logger.error(f"Compensation delete failed for orphan {object_key}")
         raise
 
+    # 更新租户存储用量
+    if tenant_id is not None:
+        from sqlalchemy import update as sa_update
+        from db.models_auth import Tenant
+        await db.execute(
+            sa_update(Tenant)
+            .where(Tenant.id == tenant_id)
+            .values(storage_used_mb=Tenant.storage_used_mb + (len(content) / (1024.0 * 1024.0)))
+        )
+
     logger.info(f"Scan uploaded: task={task_id}, file={filename}, size={len(content)}")
 
     return ScanUploadResponse(
@@ -1008,6 +1018,16 @@ async def delete_scan(
         cleanup_errors.append(f"MinIO: {e}")
 
     # === 3. 删除数据库记录 ===
+    # 扣减租户存储用量
+    if task.tenant_id is not None and task.file_size:
+        from sqlalchemy import update as sa_update
+        from db.models_auth import Tenant
+        await db.execute(
+            sa_update(Tenant)
+            .where(Tenant.id == task.tenant_id)
+            .values(storage_used_mb=Tenant.storage_used_mb - (task.file_size / (1024.0 * 1024.0)))
+        )
+
     # 级联删除自动处理 task_steps 和 scan_files
     await db.delete(task)
     await db.flush()

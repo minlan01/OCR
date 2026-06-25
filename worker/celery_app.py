@@ -54,6 +54,13 @@ celery_app.conf.update(
         "process_scan": {"queue": settings.celery_queue_name},
     },
     task_default_queue=settings.celery_queue_name,
+    # ── 定时任务 ──
+    beat_schedule={
+        "cleanup-expired-tasks": {
+            "task": "cleanup_expired_tasks",
+            "schedule": 86400.0,  # 每24小时执行一次
+        },
+    },
 )
 
 

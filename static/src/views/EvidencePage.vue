@@ -45,14 +45,18 @@
       <!-- 已有案件列表 -->
       <n-card title="已有案件">
         <template #header-extra>
-          <n-button type="primary" @click="showCreateForm = true">
-            <template #icon><n-icon><AddOutline /></n-icon></template>
-            创建案件
-          </n-button>
+          <n-space align="center">
+            <n-input v-model:value="caseListSearch" placeholder="搜索案件名称" clearable size="small" style="width: 200px" @update:value="handleCaseListSearch" />
+            <n-select v-model:value="caseListStatusFilter" :options="caseStatusOptions" placeholder="状态" clearable size="small" style="width: 120px" @update:value="handleCaseListSearch" />
+            <n-button type="primary" @click="showCreateForm = true">
+              <template #icon><n-icon><AddOutline /></n-icon></template>
+              创建案件
+            </n-button>
+          </n-space>
         </template>
         <n-data-table
           :columns="caseListColumns"
-          :data="caseList"
+          :data="filteredCaseList"
           :loading="caseListLoading"
           :bordered="false"
           size="small"
@@ -423,7 +427,7 @@
 
       <!-- 参数配置（默认展开） — 按赔偿项目顺序排列 -->
       <n-card v-if="compensationData" title="参数配置" size="small" style="margin-bottom: 16px">
-        <n-grid :cols="3" :x-gap="12" :y-gap="8">
+        <n-grid :cols="1" :x-gap="12" :y-gap="8" responsive="screen" :cols-s="2" :cols-m="3">
           <!-- ① 误工费：月均工资 + 误工天数 -->
           <n-gi>
             <n-form-item label="上年度职工月均工资(元/月)" label-placement="top">
@@ -2440,6 +2444,42 @@ async function handleCaseListPageSizeChange(pageSize: number) {
   await loadCaseList(1, pageSize)
 }
 
+// ─── 案件搜索/筛选 ───
+const caseListSearch = ref('')
+const caseListStatusFilter = ref<string | null>(null)
+const caseStatusOptions = [
+  { label: '处理中', value: 'processing' },
+  { label: '已完成', value: 'completed' },
+  { label: '失败', value: 'failed' },
+  { label: '待处理', value: 'pending' },
+]
+
+let _searchDebounce: ReturnType<typeof setTimeout> | null = null
+function handleCaseListSearch() {
+  if (_searchDebounce) clearTimeout(_searchDebounce)
+  _searchDebounce = setTimeout(() => {
+    applyCaseListFilter()
+  }, 300)
+}
+
+function applyCaseListFilter() {
+  // 前端过滤已加载的案件（后端API暂不支持搜索参数）
+  loadCaseList(1, caseListPageSize.value)
+}
+
+// 计算属性：过滤后的案件列表
+const filteredCaseList = computed(() => {
+  let result = caseList.value
+  if (caseListSearch.value) {
+    const q = caseListSearch.value.toLowerCase()
+    result = result.filter((c: any) => c.case_name?.toLowerCase().includes(q))
+  }
+  if (caseListStatusFilter.value) {
+    result = result.filter((c: any) => c.status === caseListStatusFilter.value)
+  }
+  return result
+})
+
 async function continueCase(caseId: string) {
   // 切换案件前清理所有状态，防止数据泄漏
   _resetAllState()
@@ -2627,6 +2667,8 @@ const caseListColumns = [
 // ─── 生命周期 ─────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
+  // 页面关闭/刷新时提醒未保存的目录修改
+  window.addEventListener('beforeunload', _beforeUnloadHandler)
   await loadCaseList()
   // 尝试从 sessionStorage 恢复未完成的案件状态（若有）
   const savedCaseId = sessionStorage.getItem('evidence_current_case_id')
@@ -2662,7 +2704,15 @@ onUnmounted(() => {
   if (analysisPollId) { clearInterval(analysisPollId); analysisPollId = null }
   if (ocrPollId) { clearInterval(ocrPollId); ocrPollId = null }
   if (autoSaveTimer) { clearTimeout(autoSaveTimer); autoSaveTimer = null }
+  window.removeEventListener('beforeunload', _beforeUnloadHandler)
 })
+
+function _beforeUnloadHandler(e: BeforeUnloadEvent) {
+  if (catalogDirty.value) {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+}
 </script>
 
 <style scoped>

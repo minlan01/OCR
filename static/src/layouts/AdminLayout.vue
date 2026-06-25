@@ -52,6 +52,7 @@
       <!-- 内容区 -->
       <n-layout-content
         style="padding: 24px; overflow-y: auto"
+        class="admin-content"
         :native-scrollbar="false"
       >
         <router-view v-slot="{ Component }">
@@ -93,7 +94,7 @@ import {
   SettingsOutline,
   PersonCircleOutline,
 } from '@vicons/ionicons5'
-import { isLoggedIn, clearTokens, setAutoLogin } from '@/api/client'
+import { isLoggedIn, clearTokens } from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { storeToRefs } from 'pinia'
 
@@ -229,8 +230,7 @@ async function loadUserInfo() {
 }
 
 function handleLogout() {
-  // 主动退出时取消自动登录（保存密码仍保留）
-  setAutoLogin(false)
+  // 主动退出时清理 token
   clearTokens()
   authStore.clear()
   router.push('/login')
@@ -238,3 +238,11 @@ function handleLogout() {
 
 onMounted(loadUserInfo)
 </script>
+
+<style scoped>
+@media (max-width: 768px) {
+  .admin-content {
+    padding: 12px !important;
+  }
+}
+</style>

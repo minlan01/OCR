@@ -55,7 +55,7 @@
               <td>{{ formatDate(task.created_at) }}</td>
               <td>
                 <n-tag size="small" :type="task.error_code === 'api_upload' ? 'info' : 'default'">
-                  {{ getSourceLabel(task.task_id) }}
+                  {{ getSourceLabel(task.source_type) }}
                 </n-tag>
               </td>
             </tr>
@@ -175,12 +175,9 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString('zh-CN')
 }
 
-function formatSize(pageCount: number | null): string {
-  if (pageCount == null) return '—'
-  return pageCount + ' 页'
-}
-
-function getSourceLabel(_taskId: string): string {
+function getSourceLabel(sourceType: string | null): string {
+  if (sourceType === 'api_upload') return 'API上传'
+  if (sourceType === 'scanner') return '扫描仪'
   return '上传'
 }
 

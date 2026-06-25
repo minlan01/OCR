@@ -125,7 +125,7 @@ async function handleChangePassword() {
   savingPwd.value = true
   try {
     await changePassword(pwdForm.old_password, pwdForm.new_password)
-    message.success('密码修改成功')
+    message.success('密码修改成功。如果您的浏览器自动保存了密码，请更新为新密码。')
     pwdForm.old_password = ''
     pwdForm.new_password = ''
     pwdForm.confirm_password = ''

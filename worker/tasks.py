@@ -40,6 +40,52 @@ _preload_modules()
 # Celery 任务定义
 # ============================================================
 
+@celery_app.task(name="cleanup_expired_tasks")
+def cleanup_expired_tasks():
+    """清理超过 retention_days 的已完成/失败任务及其 MinIO 文件"""
+    from datetime import timedelta
+    from sqlalchemy import select, delete as sa_delete
+    from db.models import ScanTask, TaskStep, ScanFile
+    from services.storage.minio_client import minio_client
+    from config.settings import settings
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=settings.retention_days)
+    logger.info(f"Cleanup: removing tasks older than {cutoff.isoformat()}")
+
+    try:
+        eng = _get_sync_engine()
+        with eng.begin() as conn:
+            rows = conn.execute(
+                select(ScanTask.id).where(
+                    ScanTask.created_at < cutoff,
+                    ScanTask.status.in_(["completed", "failed", "cancelled"]),
+                )
+            ).fetchall()
+
+            if not rows:
+                logger.info("Cleanup: no expired tasks found")
+                return {"deleted": 0}
+
+            deleted = 0
+            for (task_id,) in rows:
+                try:
+                    minio_client.delete_task_objects(str(task_id))
+                except Exception as e:
+                    logger.warning(f"Cleanup: MinIO delete failed for {task_id}: {e}")
+                deleted += 1
+
+            # 批量删除 DB 记录（级联会处理 steps/files）
+            conn.execute(
+                sa_delete(ScanTask).where(ScanTask.id.in_([r[0] for r in rows]))
+            )
+
+        logger.info(f"Cleanup: deleted {deleted} expired tasks")
+        return {"deleted": deleted}
+    except Exception as e:
+        logger.error(f"Cleanup failed: {e}")
+        return {"error": str(e)}
+
+
 @celery_app.task(bind=True, name="process_scan", max_retries=3)
 def process_scan(self, task_id: str):
     """
@@ -723,7 +769,10 @@ async def _run_scan_pdf_path(db, task, task_uuid, pdf_local, work_dir, summary, 
         heading_annotated = parse_headings(all_blocks)
 
         # 7b. 清理页眉页脚
-        pages_cleaned = clean_headers_footers(pages_blocks)
+        page_dimensions_scan = []
+        for page_data in ocr_summary.get("pages", []):
+            page_dimensions_scan.append((page_data.get("width", 0), page_data.get("height", 0)))
+        pages_cleaned = clean_headers_footers(pages_blocks, page_dimensions_scan)
         all_blocks_clean = []
         for page in pages_cleaned:
             all_blocks_clean.extend(page)
