@@ -70,14 +70,17 @@ def validate_callback_url(url: str) -> str:
     # 生产环境应配合网络层防火墙（如 iptables/安全组）做出站白名单
     try:
         addr = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        # hostname 是域名而非 IP 地址，允许通过
+        # 注意: DNS rebinding 风险应由网络层防火墙覆盖
+        pass
+    else:
+        # hostname 是 IP 地址，检查是否为私有/保留地址
         for net in _PRIVATE_NETWORKS:
             if addr in net:
                 raise ValueError(
                     f"Callback URL targets private/reserved IP address: {parsed.hostname!r}"
                 )
-    except ValueError:
-        # hostname 不是 IP 地址（是域名），允许通过
-        pass
 
     return url
 

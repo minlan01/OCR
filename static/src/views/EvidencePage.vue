@@ -50,7 +50,22 @@
             创建案件
           </n-button>
         </template>
-        <n-data-table :columns="caseListColumns" :data="caseList" :loading="caseListLoading" :bordered="false" size="small" />
+        <n-data-table
+          :columns="caseListColumns"
+          :data="caseList"
+          :loading="caseListLoading"
+          :bordered="false"
+          size="small"
+          :pagination="{
+            page: caseListPage,
+            pageSize: caseListPageSize,
+            itemCount: caseListTotal,
+            showSizePicker: true,
+            pageSizes: [10, 20, 50],
+          }"
+          @update:page="handleCaseListPageChange"
+          @update:page-size="handleCaseListPageSizeChange"
+        />
       </n-card>
     </template>
 
@@ -2410,6 +2425,14 @@ async function loadCaseList(page = 1, size = 20) {
   } finally {
     caseListLoading.value = false
   }
+}
+
+async function handleCaseListPageChange(page: number) {
+  await loadCaseList(page, caseListPageSize.value)
+}
+
+async function handleCaseListPageSizeChange(pageSize: number) {
+  await loadCaseList(1, pageSize)
 }
 
 async function continueCase(caseId: string) {

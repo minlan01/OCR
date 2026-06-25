@@ -18,8 +18,7 @@
               <n-input v-model:value="loginForm.password" type="password" show-password-on="click" placeholder="请输入密码" @keyup.enter="handleLogin" />
             </n-form-item>
             <div class="login-options">
-              <n-checkbox v-model:checked="rememberPassword">记住密码</n-checkbox>
-              <n-checkbox v-model:checked="autoLogin">自动登录</n-checkbox>
+              <n-checkbox v-model:checked="rememberPassword">记住邮箱</n-checkbox>
             </div>
             <n-button
               type="primary"
@@ -112,7 +111,7 @@ import {
   type FormInst,
   type FormRules,
 } from 'naive-ui'
-import { post, get, setTokens, isLoggedIn, saveCredentials, getSavedEmail, getSavedPassword, hasSavedCredentials, setAutoLogin, isAutoLogin, type TokenResponse, type TenantNameItem } from '@/api/client'
+import { post, get, setTokens, isLoggedIn, saveCredentials, getSavedEmail, getSavedPassword, hasSavedCredentials, type TokenResponse, type TenantNameItem } from '@/api/client'
 
 const router = useRouter()
 const message = useMessage()
@@ -142,9 +141,8 @@ watch(activeTab, (tab) => {
   }
 })
 
-// ─── 记住密码 + 自动登录 ───
+// ─── 记住邮箱 ───
 const rememberPassword = ref(false)
-const autoLogin = ref(false)
 
 // ─── 登录 ───
 const loginFormRef = ref<FormInst | null>(null)
@@ -164,24 +162,6 @@ const loginRules: FormRules = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
-/** 自动登录：复用保存的凭据静默登录 */
-async function autoLoginRequest() {
-  loading.value = true
-  try {
-    const res = await post<TokenResponse>('/auth/login', {
-      email: getSavedEmail(),
-      password: getSavedPassword(),
-    })
-    setTokens(res.access_token, res.refresh_token)
-    message.success(`欢迎回来，${res.user.display_name}`)
-    router.push('/dashboard')
-  } catch (e: any) {
-    // 自动登录失败（密码改了等），静默忽略，留在登录页让用户手动登录
-  } finally {
-    loading.value = false
-  }
-}
-
 async function handleLogin() {
   try {
     await loginFormRef.value?.validate()
@@ -193,13 +173,10 @@ async function handleLogin() {
     const res = await post<TokenResponse>('/auth/login', loginForm)
     setTokens(res.access_token, res.refresh_token)
 
-    // 记住密码：保存/清除凭据
+    // 记住邮箱：保存/清除邮箱（密码不持久化）
     if (rememberPassword.value) {
       saveCredentials(loginForm.email, loginForm.password)
     }
-
-    // 自动登录标记
-    setAutoLogin(autoLogin.value)
 
     message.success(`欢迎回来，${res.user.display_name}`)
     router.push('/dashboard')
@@ -267,18 +244,11 @@ async function handleRegister() {
   }
 }
 
-// 页面加载：回填密码 + 自动登录触发
-onMounted(async () => {
-  // 回填记住的密码
+// 页面加载：回填记住的邮箱
+onMounted(() => {
   if (hasSavedCredentials()) {
     loginForm.email = getSavedEmail()
-    loginForm.password = getSavedPassword()
     rememberPassword.value = true
-  }
-
-  // 自动登录：在登录页自动发起登录请求
-  if (isAutoLogin() && hasSavedCredentials()) {
-    await autoLoginRequest()
   }
 })
 </script>

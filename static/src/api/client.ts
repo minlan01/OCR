@@ -32,11 +32,9 @@ export function isLoggedIn(): boolean {
   return !!getAccessToken()
 }
 
-// ─── 记住密码 / 自动登录 ───
+// ─── 记住邮箱 ───
 
 const REMEMBER_EMAIL_KEY = 'ss_remember_email'
-const REMEMBER_PASSWORD_KEY = 'ss_remember_password'
-const AUTO_LOGIN_KEY = 'ss_auto_login'
 
 /** 保存邮箱到 localStorage（不再保存密码，避免明文泄露风险） */
 export function saveCredentials(email: string, _password: string): void {
@@ -58,20 +56,6 @@ export function getSavedEmail(): string {
 /** 获取保存的密码 — 出于安全考虑不再持久化密码，始终返回空 */
 export function getSavedPassword(): string {
   return ''
-}
-
-/** 设置/清除自动登录标记 */
-export function setAutoLogin(enabled: boolean): void {
-  if (enabled) {
-    localStorage.setItem(AUTO_LOGIN_KEY, 'true')
-  } else {
-    localStorage.removeItem(AUTO_LOGIN_KEY)
-  }
-}
-
-/** 是否启用了自动登录 */
-export function isAutoLogin(): boolean {
-  return localStorage.getItem(AUTO_LOGIN_KEY) === 'true'
 }
 
 /** 是否有保存的凭据（仅检查 email — 密码不再持久化） */
