@@ -130,6 +130,7 @@ const columns: DataTableColumns<ScanTaskSummary> = [
     title: '创建时间',
     key: 'created_at',
     width: 170,
+    sorter: 'default',
     render(row) {
       return new Date(row.created_at).toLocaleString('zh-CN')
     },
@@ -138,6 +139,7 @@ const columns: DataTableColumns<ScanTaskSummary> = [
     title: '完成时间',
     key: 'completed_at',
     width: 170,
+    sorter: 'default',
     render(row) {
       return row.completed_at ? new Date(row.completed_at).toLocaleString('zh-CN') : '—'
     },

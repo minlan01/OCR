@@ -179,8 +179,10 @@ async def _async_pipeline(task_id: str) -> dict:
         )
         _worker_factory = async_sessionmaker(_worker_engine, class_=AsyncSession, expire_on_commit=False)
 
-        async with _worker_factory() as db:
-            from sqlalchemy import select
+        work_dir: Path | None = None
+        try:
+            async with _worker_factory() as db:
+                from sqlalchemy import select
 
             # ---- 加载任务 ----
             stmt = select(ScanTask).where(ScanTask.id == task_uuid)
@@ -365,6 +367,15 @@ async def _async_pipeline(task_id: str) -> dict:
             await db.commit()
 
             return summary
+        finally:
+            # 清理工作目录（无论成功或失败），防磁盘泄漏
+            if work_dir and work_dir.exists():
+                import shutil
+                try:
+                    await asyncio.to_thread(shutil.rmtree, str(work_dir), True)
+                    logger.debug(f"Cleaned work_dir: {work_dir}")
+                except Exception:
+                    pass
 
     # 使用独立的 Event Loop，避免与全局 Session Factory 跨 Loop 绑定
     loop = asyncio.new_event_loop()
