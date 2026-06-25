@@ -121,7 +121,7 @@ class TaskStep(Base):
     )
     step_name: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
-    # TODO: 待后续阶段使用（当前未读写）
+    # 预留字段：步骤产物路径（当前未读写，预留给未来阶段使用）
     output_path: Mapped[str | None] = mapped_column(String(1000), default=None)
     duration_ms: Mapped[int | None] = mapped_column(Integer, default=None)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)

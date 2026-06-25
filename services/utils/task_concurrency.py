@@ -14,8 +14,8 @@ from config.settings import settings
 
 # ─── 常量 ──────────────────────────────────────────────────────────────────
 
-# 4核8G 服务器最多同时处理 3 个案件（可调）
-_MAX_CONCURRENT_CASES: int = 3
+# 最大并发数，可通过 settings 配置覆盖
+_MAX_CONCURRENT_CASES: int = getattr(settings, 'max_concurrent_cases', 3)
 
 # Redis key
 _KEY = "scanstruct:concurrent_case_count"

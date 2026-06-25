@@ -73,7 +73,26 @@ def process_scan(self, task_id: str):
 
 def _run_pipeline(task_id: str) -> dict:
     """
-    运行完整处理管线（MVP 阶段在 Celery worker 进程内同步执行）
+    运行完整处理管线（同步入口，内部 asyncio.run）
+    使用 Redis 信号量限制并发管线数量，防止 Worker OOM
+    """
+    from services.utils.task_concurrency import try_acquire_case, release_case
+
+    acquired = try_acquire_case()
+    if not acquired:
+        logger.warning(f"Pipeline throttled (system busy): task_id={task_id}")
+        raise Exception("System at capacity, please retry shortly")
+
+    try:
+        result = asyncio.run(_async_pipeline(task_id))
+        return result
+    finally:
+        release_case()
+
+
+async def _async_pipeline(task_id: str) -> dict:
+    """
+    异步管线核心:
 
     管线步骤:
       1. download     — 从 MinIO 下载原始 PDF
@@ -88,7 +107,6 @@ def _run_pipeline(task_id: str) -> dict:
       9.  callback    — 业务回调通知
     """
     from db.models import ScanTask, TaskStep
-    from db.session import async_session_factory
     from services.storage.minio_client import minio_client
 
     summary = {
@@ -107,7 +125,19 @@ def _run_pipeline(task_id: str) -> dict:
 
     async def _pipeline():
         task_uuid = uuid.UUID(task_id)
-        async with async_session_factory() as db:
+        # 使用独立的 Worker Engine（NullPool），避免跨 Event Loop 连接泄漏
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+        from sqlalchemy.pool import NullPool
+        from config.settings import settings as _settings
+
+        _worker_engine = create_async_engine(
+            _settings.database_url,
+            poolclass=NullPool,
+            echo=False,
+        )
+        _worker_factory = async_sessionmaker(_worker_engine, class_=AsyncSession, expire_on_commit=False)
+
+        async with _worker_factory() as db:
             from sqlalchemy import select
 
             # ---- 加载任务 ----
@@ -294,21 +324,12 @@ def _run_pipeline(task_id: str) -> dict:
 
             return summary
 
-    # Windows 兼容: asyncio.run() 会在 cleanup 前关闭 loop 导致
-    # asyncpg connection close 因 'Event loop is closed' 失败。
-    # 改用手动管理 lifecycle，确保 SQLAlchemy 连接池在 loop 关闭前清理完毕。
-    from db.session import engine as _db_engine
-
+    # 使用独立的 Event Loop，避免与全局 Session Factory 跨 Loop 绑定
     loop = asyncio.new_event_loop()
     try:
         return loop.run_until_complete(_pipeline())
     finally:
-        # 先释放数据库连接池中的连接（依赖事件循环）
-        try:
-            loop.run_until_complete(_db_engine.dispose())
-        except Exception:
-            pass
-        # 再处理残余的 asyncio 任务
+        # 先处理残余的 asyncio 任务
         try:
             pending = asyncio.all_tasks(loop)
             if pending:

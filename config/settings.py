@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     max_batch_upload_size: int = 5 * 1024 * 1024 * 1024  # 批量上传最大 5 GB（多文件合计）
     allowed_extensions: list[str] = [".pdf", ".mp3", ".wav", ".m4a", ".amr", ".aac"]  # 允许上传的文件扩展名
 
+    # ==================== 并发控制 ====================
+    max_concurrent_cases: int = 3  # 同时处理的最大案件/扫描数（防 OOM）
+
     # ==================== 数据库 ====================
     # 无硬编码默认值 — 必须通过 .env 或环境变量提供
     database_url: str = ""
@@ -68,7 +71,7 @@ class Settings(BaseSettings):
     minio_secret_key: SecretStr = SecretStr("")  # 必须通过 .env 或环境变量提供
     minio_secure: bool = False
     minio_bucket_raw: str = "scan-raw"
-    # TODO: 待后续阶段使用（当前仅 minio_bucket_raw 和 minio_bucket_result 被生产代码引用）
+    # 预留：当前仅 minio_bucket_raw 和 minio_bucket_result 被生产代码引用
     minio_bucket_processed: str = "scan-processed"
     minio_bucket_ocr: str = "scan-ocr"
     minio_bucket_layout: str = "scan-layout"

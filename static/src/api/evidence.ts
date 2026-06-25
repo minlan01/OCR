@@ -395,8 +395,16 @@ export interface CompensationResponse {
   case_id: string
   items: CompensationItemResponse[]
   total_amount: number
+  manual_total?: number | null
   params: CompensationParamsResponse
   calculated_at?: string
+  /** 后端可能返回嵌套的 compensation_data（兼容旧格式） */
+  compensation_data?: {
+    items: CompensationItemResponse[]
+    total_amount: number
+    manual_total?: number | null
+    params?: CompensationParamsResponse
+  }
 }
 
 /** 赔偿参数更新 */
@@ -432,17 +440,17 @@ export interface CompensationUpdateRequest {
 }
 
 /** 自动计算赔偿 */
-export async function calculateCompensation(caseId: string, params?: CompensationParamsUpdate): Promise<any> {
+export async function calculateCompensation(caseId: string, params?: CompensationParamsUpdate): Promise<CompensationResponse> {
   return api.post(`/evidence/cases/${caseId}/compensation/calculate`, { params })
 }
 
 /** 获取赔偿计算结果 */
-export async function getCompensation(caseId: string): Promise<any> {
+export async function getCompensation(caseId: string): Promise<CompensationResponse> {
   return api.get(`/evidence/cases/${caseId}/compensation`)
 }
 
 /** 保存赔偿调整 */
-export async function updateCompensation(caseId: string, data: CompensationUpdateRequest): Promise<any> {
+export async function updateCompensation(caseId: string, data: CompensationUpdateRequest): Promise<CompensationResponse> {
   return api.put(`/evidence/cases/${caseId}/compensation`, data)
 }
 

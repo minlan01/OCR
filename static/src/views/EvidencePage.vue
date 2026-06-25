@@ -2178,7 +2178,7 @@ async function loadCompensation() {
       if (data.manual_total != null) data.manual_total = Number(data.manual_total)
       compensationData.value = data
       if (data.params) {
-        const parsed = parseNumericParams(res.compensation_data.params)
+        const parsed = parseNumericParams(data.params || {})
         // 向后兼容：旧 case 数据可能用 nursing_monthly_salary，折算为年薪
         if (parsed.nursing_annual_salary === undefined || parsed.nursing_annual_salary === null) {
           if (parsed.nursing_monthly_salary != null) {

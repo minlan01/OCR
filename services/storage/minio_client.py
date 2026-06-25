@@ -196,7 +196,7 @@ class MinioClient:
                     f"({size:,} bytes, {elapsed:.1f}s, attempt {attempt + 1})"
                 )
                 return size
-            except (S3Error, Exception) as e:
+            except Exception as e:
                 last_error = e
                 if attempt < self.MAX_RETRIES:
                     delay = self.RETRY_DELAYS[attempt] if attempt < len(self.RETRY_DELAYS) else 4.0
