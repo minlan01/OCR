@@ -119,19 +119,29 @@ class LLMRateLimiter:
 
         while time.monotonic() < deadline:
             try:
-                # 原子操作：INCR + 检查上限（异步）
-                current = await self.redis.incr(key)
-                if current == 1:
-                    # 第一个许可，设置 TTL 防泄漏
-                    await self.redis.expire(key, PERMIT_TTL)
-
-                if current <= limit:
+                # 原子操作：用 Lua 脚本实现 INCR + TTL 设置 + 上限检查（防止竞态）
+                # Lua 脚本保证三步原子执行，避免 INCR 和 EXPIRE 分开导致计数器泄漏
+                lua_script = """
+                local key = KEYS[1]
+                local limit = tonumber(ARGV[1])
+                local ttl = tonumber(ARGV[2])
+                local current = redis.call('INCR', key)
+                if current == 1 then
+                    redis.call('EXPIRE', key, ttl)
+                end
+                if current <= limit then
+                    return current
+                else
+                    redis.call('DECR', key)
+                    return -1
+                end
+                """
+                current = await self.redis.eval(lua_script, 1, key, limit, PERMIT_TTL)
+                if isinstance(current, int) and current >= 1:
                     logger.debug(f"LLM semaphore acquired: {model_type} ({current}/{limit})")
                     return True
                 else:
-                    # 超出上限，回退
-                    await self.redis.decr(key)
-                    # 等待一小段时间再重试
+                    # 超出上限（Lua 返回 -1），等待重试
                     await asyncio.sleep(min(1.0, deadline - time.monotonic()))
             except Exception as e:
                 logger.warning(f"LLM semaphore acquire error: {e}")
@@ -157,9 +167,17 @@ class LLMRateLimiter:
         """记录一次 429 错误（用于自适应降级，异步）"""
         counter_key = self._counter_key(model_type)
         try:
-            count = await self.redis.incr(counter_key)
-            if count == 1:
-                await self.redis.expire(counter_key, DEGRADATION_WINDOW)
+            # 原子操作：INCR + EXPIRE（用 Lua 防竞态）
+            lua_script = """
+            local key = KEYS[1]
+            local ttl = tonumber(ARGV[1])
+            local count = redis.call('INCR', key)
+            if count == 1 then
+                redis.call('EXPIRE', key, ttl)
+            end
+            return count
+            """
+            count = await self.redis.eval(lua_script, 1, counter_key, DEGRADATION_WINDOW)
             logger.info(f"LLM 429 recorded: {model_type} (count: {count}/{DEGRADATION_THRESHOLD})")
         except Exception as e:
             logger.warning(f"LLM 429 record error: {e}")

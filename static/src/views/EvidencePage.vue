@@ -2041,7 +2041,7 @@ async function saveFeeEdit(item: any) {
   }
 }
 
-function resetFeeEdit(item: any) {
+async function resetFeeEdit(item: any) {
   const target = compensationData.value?.items?.find((i: any) => i.fee_type === item.fee_type)
   if (target) {
     target.manual_amount = null
@@ -2051,7 +2051,11 @@ function resetFeeEdit(item: any) {
         fee_type: i.fee_type,
         manual_amount: i.manual_amount != null ? Number(i.manual_amount) : null,
       }))
-      evidenceApi.updateCompensation(currentCase.value.id, { items: updateItems })
+      try {
+        await evidenceApi.updateCompensation(currentCase.value.id, { items: updateItems })
+      } catch (e: any) {
+        message.error('赔偿金额保存失败: ' + (e?.message || e))
+      }
     }
   }
 }

@@ -10,7 +10,7 @@
             <n-grid :cols="4" :x-gap="16" :y-gap="16" responsive="screen">
               <n-grid-item>
                 <StatCard
-                  label="总用户"
+                  label="活跃用户"
                   :value="usageData.usage.active_users"
                   :icon="PeopleOutline"
                   color="#2080f0"

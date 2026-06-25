@@ -167,6 +167,21 @@
         </n-spin>
       </n-card>
     </template>
+
+    <!-- 非 admin 用户看到的引导内容 -->
+    <template v-else>
+      <n-card title="欢迎使用 ScanStruct" size="medium">
+        <n-space vertical>
+          <n-text>您当前的身份是普通成员，以下是您可以使用的功能：</n-text>
+          <n-space>
+            <n-button type="primary" @click="$router.push('/usage')">查看用量</n-button>
+            <n-button @click="$router.push('/upload')">上传文件</n-button>
+            <n-button @click="$router.push('/tasks')">任务列表</n-button>
+          </n-space>
+          <n-text depth="3">如需管理权限，请联系系统管理员。</n-text>
+        </n-space>
+      </n-card>
+    </template>
   </div>
 </template>
 
@@ -174,6 +189,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, h } from 'vue'
 import {
   NGrid, NGridItem, NCard, NTag, NTable, NButton, NSpin, NEmpty, NDataTable,
+  NSpace, NText,
 } from 'naive-ui'
 import {
   DocumentsOutline,
