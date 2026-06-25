@@ -1503,7 +1503,7 @@ function startProgressPoll(caseId: string) {
         materials.value = fresh.materials || []
         // 同步更新 currentCase 状态
         if (currentCase.value) currentCase.value.status = fresh.status
-      } catch { /* 静默 */ }
+      } catch (e: any) { console.warn('操作失败:', e?.message || e) }
 
       const doneStatuses = ['catalog_ready', 'analysis_done', 'completed', 'failed']
       if (doneStatuses.includes(p.status)) {
@@ -1515,7 +1515,7 @@ function startProgressPoll(caseId: string) {
           try {
             const fresh = await evidenceApi.getCase(caseId)
             materials.value = fresh.materials || []
-          } catch { /* 静默 */ }
+          } catch (e: any) { console.warn('操作失败:', e?.message || e) }
         } else if (p.status === 'catalog_ready') {
           message.success('OCR识别与分类完成，已生成证据目录')
           currentStep.value = STEP.COMPENSATION
@@ -1788,7 +1788,7 @@ async function handleBatchDelete() {
       try {
         const fresh = await evidenceApi.getCase(currentCase.value!.id)
         materials.value = fresh.materials || []
-      } catch { /* 静默 */ }
+      } catch (e: any) { console.warn('操作失败:', e?.message || e) }
       selectedMaterialIds.value = new Set()
       batchDeleting.value = false
       if (failCount === 0) {
@@ -2198,7 +2198,7 @@ async function loadCompensation() {
         Object.assign(compParams, parsed)
       }
     }
-  } catch { /* 静默 */ }
+  } catch (e: any) { console.warn('操作失败:', e?.message || e) }
 }
 
 // 智能分析（新入口函数）
@@ -2389,11 +2389,23 @@ async function handleExportBundle() {
 
 // ─── 案件列表操作 ─────────────────────────────────────────────────────────────
 
-async function loadCaseList() {
+const caseListPage = ref(1)
+const caseListTotal = ref(0)
+const caseListPageSize = ref(20)
+
+async function loadCaseList(page = 1, size = 20) {
   caseListLoading.value = true
-  try { const res = await evidenceApi.listCases(1, 50); caseList.value = res.items }
-  catch { /* 静默 */ }
-  finally { caseListLoading.value = false }
+  try {
+    const res = await evidenceApi.listCases(page, size)
+    caseList.value = res.items
+    caseListPage.value = page
+    caseListPageSize.value = size
+    caseListTotal.value = res.total || res.items.length
+  } catch (e: any) {
+    console.error('加载案件列表失败:', e.message || e)
+  } finally {
+    caseListLoading.value = false
+  }
 }
 
 async function continueCase(caseId: string) {

@@ -51,7 +51,7 @@
               <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
                 {{ task.filename }}
               </td>
-              <td>{{ task.page_count }} 页</td>
+              <td>{{ task.page_count != null ? task.page_count + ' 页' : '—' }}</td>
               <td>{{ formatDate(task.created_at) }}</td>
               <td>
                 <n-tag size="small" :type="task.error_code === 'api_upload' ? 'info' : 'default'">

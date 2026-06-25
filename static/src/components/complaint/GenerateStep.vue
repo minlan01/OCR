@@ -70,6 +70,12 @@
         </n-spin>
       </template>
 
+      <template v-if="genError">
+        <n-alert type="error" title="生成失败" closable @close="genError = ''">
+          {{ genError }}
+        </n-alert>
+      </template>
+
       <template v-if="store.isDocReady">
         <n-alert type="success" title="起诉状已生成">
           民事起诉状文档已生成完毕，可以下载。
@@ -104,6 +110,7 @@ import { useComplaintStore } from '@/stores/complaint'
 
 const store = useComplaintStore()
 const generating = ref(false)
+const genError = ref('')
 const manualTotalFee = ref<number | null>(null)
 
 const SLOT_LABELS: Record<string, string> = {
@@ -186,17 +193,21 @@ async function saveSlot(slot: SlotDisplay) {
 async function handleGenerate() {
   if (!store.currentCase) return
   generating.value = true
+  genError.value = ''
   try {
     const feeParam = manualTotalFee.value != null ? manualTotalFee.value : undefined
     await store.generateDoc(store.currentCase.case_id, feeParam)
     // 轮询超时 5 分钟，防止定时器永久运行
     const MAX_POLL_MS = 5 * 60 * 1000
     const startTime = Date.now()
+    let timedOut = false
     const pollInterval = setInterval(async () => {
       // 超时保护
       if (Date.now() - startTime > MAX_POLL_MS) {
         clearInterval(pollInterval)
+        timedOut = true
         generating.value = false
+        genError.value = '生成超时（超过 5 分钟），请稍后重试或检查任务状态'
         return
       }
       // 组件卸载或案件丢失时停止轮询
@@ -209,9 +220,13 @@ async function handleGenerate() {
       if (store.isDocReady || store.currentCase?.status === 'failed') {
         clearInterval(pollInterval)
         generating.value = false
+        if (store.currentCase?.status === 'failed') {
+          genError.value = '文档生成失败，请检查案件信息后重试'
+        }
       }
     }, 3000)
   } catch (e: any) {
+    genError.value = e.message || '生成请求失败'
     console.error('Generate failed:', e.message)
     generating.value = false
   }

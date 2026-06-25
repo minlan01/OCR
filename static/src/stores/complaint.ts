@@ -130,6 +130,10 @@ export const useComplaintStore = defineStore('complaint', () => {
     const key = import.meta.env.VITE_API_KEY
     const h: Record<string, string> = {}
     if (key) h['X-API-Key'] = key
+    // JWT 用户也需要 Authorization header
+    const { apiKeyOnlyHeaders } = await import('@/api/client')
+    const jwtHeaders = apiKeyOnlyHeaders()
+    Object.assign(h, jwtHeaders)
 
     const res = await fetch(`/api/v1/complaint/cases/${caseId}/upload`, {
       method: 'POST',

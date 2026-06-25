@@ -62,6 +62,13 @@
         </n-spin>
       </template>
 
+      <template v-if="ocrError">
+        <n-divider style="margin: 4px 0" />
+        <n-alert type="error" title="识别失败" closable @close="ocrError = ''">
+          <n-text>{{ ocrError }}</n-text>
+        </n-alert>
+      </template>
+
       <template v-if="ocrDone">
         <n-divider style="margin: 4px 0" />
         <n-alert type="success" title="证据材料清单识别完成">
@@ -102,6 +109,7 @@ const pendingFiles = ref<File[]>([])
 const creating = ref(false)
 const ocrRunning = ref(false)
 const ocrDone = ref(false)
+const ocrError = ref('')
 const evidenceText = ref('')
 
 function onFileChange(options: { fileList: UploadFileInfo[] }) {
@@ -138,6 +146,7 @@ async function handleCreate() {
     try {
       await store.startOcr(caseId)
     } catch (e: any) {
+      ocrError.value = `启动 OCR 失败: ${e.message || e}`
       console.error('Start OCR failed:', e.message)
       return
     }
@@ -145,19 +154,26 @@ async function handleCreate() {
     ocrRunning.value = true
     store.startPolling(caseId, 3000)
 
-    await new Promise<void>((resolve, reject) => {
-      const MAX_WAIT_MS = 5 * 60 * 1000  // 5 分钟超时
-      const startTime = Date.now()
-      const check = setInterval(() => {
-        if (store.isOcrComplete) {
-          clearInterval(check)
-          resolve()
-        } else if (Date.now() - startTime > MAX_WAIT_MS) {
-          clearInterval(check)
-          reject(new Error('OCR 处理超时'))
-        }
-      }, 2000)
-    })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const MAX_WAIT_MS = 5 * 60 * 1000  // 5 分钟超时
+        const startTime = Date.now()
+        const check = setInterval(() => {
+          if (store.isOcrComplete) {
+            clearInterval(check)
+            resolve()
+          } else if (Date.now() - startTime > MAX_WAIT_MS) {
+            clearInterval(check)
+            reject(new Error('OCR 处理超时'))
+          }
+        }, 2000)
+      })
+    } catch (e: any) {
+      ocrError.value = e.message || 'OCR 处理失败'
+      ocrRunning.value = false
+      store.stopPolling()
+      return
+    }
 
     store.stopPolling()
     ocrRunning.value = false

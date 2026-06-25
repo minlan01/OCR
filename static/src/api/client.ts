@@ -74,9 +74,9 @@ export function isAutoLogin(): boolean {
   return localStorage.getItem(AUTO_LOGIN_KEY) === 'true'
 }
 
-/** 是否有保存的凭据 */
+/** 是否有保存的凭据（仅检查 email — 密码不再持久化） */
 export function hasSavedCredentials(): boolean {
-  return !!localStorage.getItem(REMEMBER_EMAIL_KEY) && !!localStorage.getItem(REMEMBER_PASSWORD_KEY)
+  return !!localStorage.getItem(REMEMBER_EMAIL_KEY)
 }
 
 // ─── Auth API ───
@@ -223,9 +223,20 @@ export async function put<T>(path: string, body?: unknown): Promise<T> {
 /**
  * 下载文件（blob 响应，非 JSON）
  * 用于下载 Word 文档等二进制文件
+ * 支持 401 自动刷新 token + 重试
  */
 export async function downloadBlob(path: string, filename: string): Promise<void> {
-  const res = await fetch(`${BASE}${path}`, { headers: apiKeyOnlyHeaders() })
+  const doFetch = () => fetch(`${BASE}${path}`, { headers: apiKeyOnlyHeaders() })
+
+  let res = await doFetch()
+
+  // 401 → 尝试刷新 token 后重试一次
+  if (res.status === 401) {
+    const refreshed = await refreshToken()
+    if (refreshed) {
+      res = await doFetch()
+    }
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))

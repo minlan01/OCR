@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { isLoggedIn } from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import AdminLayout from '@/layouts/AdminLayout.vue'
 
 const router = createRouter({
@@ -89,7 +90,7 @@ const router = createRouter({
 })
 
 // ─── 路由守卫：认证检查 ───
-router.beforeEach((to, _from, next) => {
+router.beforeEach(async (to, _from, next) => {
   const isPublic = to.meta.public === true
 
   if (isPublic) {
@@ -108,20 +109,19 @@ router.beforeEach((to, _from, next) => {
     return
   }
 
-  // 管理后台路由：检查角色权限
+  // 管理后台路由：检查角色权限（使用 auth store，不依赖 localStorage）
   if (to.meta.requiresAdmin) {
-    const userInfoStr = localStorage.getItem('ss_user_info')
-    if (userInfoStr) {
-      try {
-        const userInfo = JSON.parse(userInfoStr)
-        const role = userInfo.role || ''
-        if (role !== 'super_admin' && role !== 'tenant_admin') {
-          next({ path: '/dashboard' })
-          return
-        }
-      } catch {
-        // 解析失败，放行让后端拒绝
-      }
+    const authStore = useAuthStore()
+    // 先尝试从 store 获取（已缓存的）
+    let userInfo = authStore.userInfo
+    // 如果 store 还没加载（刚刷新页面），触发加载并等待
+    if (!userInfo && isLoggedIn()) {
+      userInfo = await authStore.loadUserInfo()
+    }
+    const role = userInfo?.role || ''
+    if (role !== 'super_admin' && role !== 'tenant_admin') {
+      next({ path: '/dashboard' })
+      return
     }
   }
 
