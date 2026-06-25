@@ -4,17 +4,18 @@ PDF 证据材料导出 — 反向溯源智能选页
 核心逻辑：
 1. 民事起诉状已生成，包含具体医疗内容（入院、诊疗、鉴定等）
 2. 反向分析：从起诉状内容提取关键词 → 匹配病历/鉴定PDF的哪些页包含这些内容
-3. 证据材料PDF只包含6大类，且病历/资质只放引用到的页，鉴定报告全页放入
+3. 证据材料PDF只包含7大类，且病历/资质只放引用到的页，鉴定报告全页放入
 
-6大类：
+7大类：
   一、原告身份证信息（身份证+户口本）
   二、被告信息（医院）
   三、其他身份证明（结婚证、死亡证明书）
   四、对应内容的病历（反向选页）
   五、对应内容的司法鉴定报告（全页放入，不做反向选页）
   六、对应内容的医疗人员资质证明（反向选页）
+  七、医疗费用及相关票据（按 OCR 日期升序排列）
 
-不包含：fee_receipt、other_evidence
+不包含：other_evidence（fee_receipt 已纳入第七类，按日期排序）
 """
 from __future__ import annotations
 
@@ -46,7 +47,7 @@ DOCUMENT_CATEGORIES = {
     "appraisal",
 }
 
-# ========== 输出分组定义（6大类） ==========
+# ========== 输出分组定义（7大类） ==========
 # 每个分组的标签和是否需要智能选页
 OUTPUT_GROUPS = [
     ("plaintiff_id",     "一、原告身份证信息",              False),
@@ -55,14 +56,15 @@ OUTPUT_GROUPS = [
     ("medical",          "四、对应内容的病历",              True),
     ("appraisal",        "五、对应内容的司法鉴定报告",      False),
     ("staff_qual",       "六、对应内容的医疗人员资质证明",  True),
+    ("fee_receipt",      "七、医疗费用及相关票据",          False),
 ]
 
 
 def _get_output_group(cat_code: str, filename: str) -> tuple[str | None, bool]:
-    """根据原始分类和文件名，映射到6大输出分组
+    """根据原始分类和文件名，映射到7大输出分组
 
     Returns:
-        (group_id, smart_select) — group_id=None 表示排除（fee_receipt/other_evidence）
+        (group_id, smart_select) — group_id=None 表示排除（other_evidence）
     """
     fname = filename or ""
 
@@ -84,8 +86,41 @@ def _get_output_group(cat_code: str, filename: str) -> tuple[str | None, bool]:
     if cat_code == "appraisal":
         return ("appraisal", False)
 
-    # 排除 fee_receipt / other_evidence
+    # 费用票据纳入第七类
+    if cat_code == "fee_receipt":
+        return ("fee_receipt", False)
+
+    # 排除 other_evidence
     return (None, False)
+
+
+def _extract_date_from_ocr(ocr_text: str) -> str:
+    """从 OCR 文本中提取第一个日期，返回 YYYY-MM-DD 格式用于排序。
+
+    支持的日期格式：
+      - 2025-08-18 / 2025-8-18
+      - 2025/08/18 / 2025/8/18
+      - 2025年08月18日 / 2025年8月18 / 2025年10月21
+
+    Args:
+        ocr_text: OCR 识别出的全文
+
+    Returns:
+        标准化日期字符串（YYYY-MM-DD），无匹配返回空字符串
+    """
+    if not ocr_text:
+        return ""
+    import re
+
+    patterns = [
+        r"(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})",
+    ]
+    for pat in patterns:
+        m = re.search(pat, ocr_text)
+        if m:
+            y, mo, d = m.groups()
+            return f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+    return ""
 
 
 def _ensure_chinese_font() -> str:
@@ -952,7 +987,7 @@ def generate_catalog_pdf_inline(
        - 通道2: 数据库OCR文本 + 字符位置估算（扫描件PDF）
     3. 只包含匹配到的页（无匹配则保留首末页）
     4. 身份证/户口本/结婚证/死亡证明等全部放入
-    5. 6大分组输出，排除 fee_receipt/other_evidence
+    5. 7大分组输出，排除 other_evidence（fee_receipt 按日期排序纳入第七类）
     """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm
@@ -972,7 +1007,7 @@ def generate_catalog_pdf_inline(
     key_phrases = _extract_key_phrases(analysis_result)
     logger.info(f"Key phrases for reverse matching: {len(key_phrases)} phrases")
 
-    # ========== 步骤1: 遍历 catalog_data，映射到6大输出分组 ==========
+    # ========== 步骤1: 遍历 catalog_data，映射到7大输出分组 ==========
     # group_images: { group_id: [(jpeg_bytes, w, h, title, original_filename, cat_code), ...] }
     group_images: dict[str, list[tuple[bytes, int, int, str, str, str]]] = {}
     group_order: list[str] = [g[0] for g in OUTPUT_GROUPS]  # 固定顺序
@@ -980,6 +1015,33 @@ def generate_catalog_pdf_inline(
     for group in catalog_data.get("groups", []):
         cat_code = group.get("category", "")
         items = group.get("items", [])
+
+        # ========== fee_receipt 分组：按 OCR 日期升序排序 ==========
+        # 有日期的按时间升序，无日期的排最后（保持原相对顺序）
+        if cat_code == "fee_receipt" and len(items) > 1:
+            # 稳定排序：先按是否有日期分区，有日期的按日期升序，无日期的保持原序
+            dated_items: list[tuple[str, int, dict]] = []  # (date_str, orig_index, item)
+            undated_items: list[tuple[int, dict]] = []      # (orig_index, item)
+
+            for idx, item in enumerate(items):
+                mat_id = item.get("material_id", "")
+                ocr_txt = ocr_texts.get(mat_id, "") or ""
+                date_str = _extract_date_from_ocr(ocr_txt)
+                if date_str:
+                    dated_items.append((date_str, idx, item))
+                else:
+                    undated_items.append((idx, item))
+
+            # 有日期的按日期升序排序（稳定）
+            dated_items.sort(key=lambda x: x[0])
+            # 重建 items 列表：有日期的 + 无日期的（保持原序）
+            items = [item for (_, _, item) in dated_items] + \
+                    [item for (_, item) in undated_items]
+
+            logger.info(
+                f"  fee_receipt sorted: {len(dated_items)} dated + "
+                f"{len(undated_items)} undated items"
+            )
 
         for item in items:
             material_id = item.get("material_id", "")
@@ -998,7 +1060,7 @@ def generate_catalog_pdf_inline(
             output_group_id, smart_select = _get_output_group(cat_code, original_filename)
             if output_group_id is None:
                 logger.debug(f"  Excluded: {original_filename} ({cat_code})")
-                continue  # 排除 fee_receipt / other_evidence
+                continue  # 排除 other_evidence
 
             try:
                 # 决定旋转策略
@@ -1137,7 +1199,7 @@ def generate_catalog_pdf_inline(
         c.save()
         return output.getvalue()
 
-    # ========== 步骤2: 生成 PDF — 按6大分组输出 ==========
+    # ========== 步骤2: 生成 PDF — 按7大分组输出 ==========
     output = io.BytesIO()
     c = cv.Canvas(output, pagesize=A4)
     c.setTitle(f"证据材料_{case_name or ''}")
