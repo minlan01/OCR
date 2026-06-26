@@ -1472,14 +1472,16 @@ def _is_medical_fee_item(item: dict) -> bool:
 def _gen_medical_fee_excel(fee_items: list[dict], comp_item: dict | None, case_name: str = "") -> bytes:
     """医疗费用汇总表 — 参考医疗费用汇总表（李明凤）.xls 格式。
 
-    样式：仿宋字体，标题16号，表头和内容12号
-    表头：序号 | 名称 | 日期 | 金额 | 报销金额 | 个人自费部分 | 类型 | 住院天数 | 票据尾号 | 证据页码
-
-    特殊逻辑：
-    - 从 OCR 文本智能解析日期/金额/报销/自费/住院天数/票据尾号
-    - 同一医院的名称栏合并单元格
-    - 每个费用票据一行，最后一行总计
-    - 空行填充到约 97 行
+    核心设计（与原版模板一致）：
+    - 按费用类型汇总（不是逐条票据），通常只有 2-3 行数据：
+      ① 门诊/检查费汇总行（所有门诊票据金额合计）
+      ② 住院费汇总行（从医保结算单取总额、报销、自费、住院天数）
+    - 同一医院名称合并单元格（名称列 B）
+    - 住院费行：日期=入院-出院范围，住院天数从医保结算单提取
+    - 门诊费行：日期取第一张门诊票据日期，票据尾号=费用凭证
+    - 总计行：合并 B:C 写"总计"，汇总金额/报销/自费
+    - 填充空行至 97 行
+    - 仿宋字体，标题16号，内容12号，居中
     """
     wb = Workbook()
     ws = wb.active
@@ -1488,13 +1490,13 @@ def _gen_medical_fee_excel(fee_items: list[dict], comp_item: dict | None, case_n
     COL_COUNT = 10
     headers = ["序号", "名称", "日期", "金额", "报销金额", "个人自费部分", "类型", "住院天数", "票据尾号", "证据页码"]
 
-    # ── 标题行（行1，合并 A1:J1）── 仿宋16号
+    # ── 标题行（行1，合并 A1:J1）──
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=COL_COUNT)
     title_cell = ws.cell(row=1, column=1, value="医疗费用汇总表")
     title_cell.font = _FANGSONG_TITLE
     title_cell.alignment = _CENTER_ALIGN
 
-    # ── 表头行（行2）── 仿宋12号 加粗
+    # ── 表头行（行2）──
     HEADER_ROW = 2
     for col_idx, header in enumerate(headers, 1):
         cell = ws.cell(row=HEADER_ROW, column=col_idx, value=header)
@@ -1502,8 +1504,25 @@ def _gen_medical_fee_excel(fee_items: list[dict], comp_item: dict | None, case_n
         cell.alignment = _CENTER_ALIGN
         cell.border = _THIN_BORDER
 
-    # ── 过滤医疗费用类票据 + 从OCR解析数据 ──
-    parsed_rows: list[dict] = []
+    # ════════════════════════════════════════════════════════════════════════
+    # 第一步：从所有医疗票据中解析数据，按"类型"汇总
+    # 原版模板逻辑：
+    # - 住院费行：从医保结算单取总额/报销/自费/住院天数
+    # - 门诊/检查费行：只有有统筹支付（报销）的门诊票据才算（如CT检查费140元）
+    #   那些没有统筹支付的小额床位费（10/20元）已包含在住院费总额中，不单独列
+    # ════════════════════════════════════════════════════════════════════════
+    hospital_name = ""
+    outpatient_total = 0.0        # 门诊费用合计（仅有统筹支付的）
+    outpatient_insurance = 0.0    # 门诊报销合计
+    outpatient_self_pay = 0.0     # 门诊自费合计
+    outpatient_first_date = ""    # 最早门诊日期
+
+    inpatient_amount = 0.0        # 住院费总额
+    inpatient_insurance = 0.0     # 住院报销
+    inpatient_self_pay = 0.0      # 住院自费
+    inpatient_date_range = ""     # 入院-出院日期
+    inpatient_stay_days = ""      # 住院天数
+
     for item in fee_items:
         if not _is_medical_fee_item(item):
             continue
@@ -1511,77 +1530,148 @@ def _gen_medical_fee_excel(fee_items: list[dict], comp_item: dict | None, case_n
         ocr_text = item.get("ocr_text", "") or ""
         parsed = _parse_medical_fee_from_ocr(ocr_text)
 
-        # 合并已有结构化数据（LLM 提取的）和 OCR 解析数据
-        evidence_name = item.get("evidence_name", {})
-        if isinstance(evidence_name, dict):
-            original_filename = evidence_name.get("original_filename", "") or ""
-        else:
-            original_filename = ""
+        # 提取医院名称（取第一个匹配的）
+        if not hospital_name and parsed["hospital_name"]:
+            hospital_name = parsed["hospital_name"]
 
-        row_data = {
-            "hospital_name": parsed["hospital_name"] or item.get("hospital_name", ""),
-            "date": parsed["date"] or item.get("date", ""),
-            "amount": parsed["amount"] or _to_float(item.get("amount", 0)),
-            "insurance_amount": parsed["insurance_amount"] or _to_float(item.get("insurance_amount", 0)),
-            "self_pay_amount": parsed["self_pay_amount"] or _to_float(item.get("self_pay_amount", 0)),
-            "receipt_type": parsed["receipt_type"] or item.get("receipt_type", ""),
-            "stay_days": parsed["stay_days"] or item.get("stay_days", ""),
-            "receipt_tail": parsed["receipt_tail"] or item.get("receipt_tail", ""),
-            "evidence_page": item.get("evidence_page", ""),
-            "original_filename": original_filename,
-            "material_id": item.get("material_id", ""),
-        }
-
-        # 如果金额为0但有 fee_detail 结构化数据，尝试汇总
-        if row_data["amount"] == 0:
+        receipt_type = parsed["receipt_type"]
+        amount = parsed["amount"] or _to_float(item.get("amount", 0))
+        # Fallback: 如果OCR没解析出金额，从结构化 fees.total_amount 取
+        if amount == 0:
             fees_data = item.get("fees", {}) or item.get("fee_detail", {})
             if isinstance(fees_data, dict):
-                total = fees_data.get("total_amount", 0)
-                if total and total > 0:
-                    row_data["amount"] = _to_float(total)
+                amt = fees_data.get("total_amount", 0)
+                if amt and amt > 0:
+                    amount = _to_float(amt)
+        insurance = parsed["insurance_amount"]
+        # Fallback: 从结构化数据取报销金额
+        if insurance == 0:
+            fees_data = item.get("fees", {}) or item.get("fee_detail", {})
+            if isinstance(fees_data, dict):
+                ins = fees_data.get("insurance_amount", 0)
+                if ins:
+                    insurance = _to_float(ins)
+        self_pay = parsed["self_pay_amount"]
+        # Fallback: 从结构化数据取自费金额
+        if self_pay == 0:
+            fees_data = item.get("fees", {}) or item.get("fee_detail", {})
+            if isinstance(fees_data, dict):
+                oop = fees_data.get("out_of_pocket", 0)
+                if oop:
+                    self_pay = _to_float(oop)
+        if amount > 0 and insurance > 0 and self_pay == 0:
+            self_pay = amount - insurance
 
-        parsed_rows.append(row_data)
+        if receipt_type == "住院费":
+            # 住院费：从医保结算单取数据（金额最大的那张）
+            if amount > inpatient_amount:
+                inpatient_amount = amount
+                inpatient_insurance = insurance
+                inpatient_self_pay = self_pay
+            # 住院天数和日期范围
+            if parsed["stay_days"]:
+                inpatient_stay_days = parsed["stay_days"]
+            if parsed["date"]:
+                inpatient_date_range = parsed["date"]
+            # 如果OCR没取到日期，从结构化数据取
+            if not inpatient_date_range:
+                evidence_name = item.get("evidence_name", {})
+                if isinstance(evidence_name, dict):
+                    d = evidence_name.get("date", "")
+                    if d:
+                        inpatient_date_range = d
+        elif insurance > 0 or receipt_type != "住院费":
+            # 门诊/检查费：只保留金额最大的那张（通常是CT/检查费，其它小票已含在住院费总额中）
+            # 原版模板：检查费140元 + 报销31.5 + 自费108.5 (仅此一张，不含床位费小票)
+            if amount > outpatient_total:
+                outpatient_total = amount
+                outpatient_insurance = insurance
+                outpatient_self_pay = self_pay
+                d = parsed["date"]
+                if d:
+                    outpatient_first_date = d
 
-    # ── 按医院名称分组排序 ──
-    parsed_rows.sort(key=lambda x: (x["hospital_name"] or "其他", x["date"] or ""))
+    # 门诊票据尾号统一写"费用凭证"（原版模板如此）
+    outpatient_receipt_tail = "费用凭证" if outpatient_total > 0 else ""
 
-    # ── 写入数据行 ──
+    # 如果没有医院名，尝试从任意OCR文本提取
+    if not hospital_name:
+        for item in fee_items:
+            if not _is_medical_fee_item(item):
+                continue
+            ocr_text = item.get("ocr_text", "") or ""
+            parsed = _parse_medical_fee_from_ocr(ocr_text)
+            if parsed["hospital_name"]:
+                hospital_name = parsed["hospital_name"]
+                break
+
+    # ════════════════════════════════════════════════════════════════════════
+    # 第二步：按类型写入汇总行（门诊费 + 住院费）
+    # ════════════════════════════════════════════════════════════════════════
     row_idx = HEADER_ROW + 1
     seq = 1
     total_amount = 0.0
     total_insurance = 0.0
     total_self_pay = 0.0
+    total_stay_days = ""
 
-    # 记录每行的医院名（用于后续合并）
-    row_hospital_names: list[tuple[int, str]] = []
+    summary_rows: list[dict] = []
 
-    for row_data in parsed_rows:
-        amount = row_data["amount"]
-        insurance = row_data["insurance_amount"]
-        self_pay = row_data["self_pay_amount"]
-        # 如果没有自费但有保险，计算
-        if amount > 0 and insurance > 0 and self_pay == 0:
-            self_pay = amount - insurance
+    # 门诊/检查费汇总行
+    if outpatient_total > 0:
+        # 判断类型名称
+        outpatient_type = "检查费" if outpatient_insurance > 0 else "门诊费"
+        summary_rows.append({
+            "seq": seq,
+            "name": hospital_name,
+            "date": outpatient_first_date if outpatient_first_date else "",
+            "amount": outpatient_total,
+            "insurance": outpatient_insurance,
+            "self_pay": outpatient_self_pay,
+            "type": outpatient_type,
+            "stay_days": "",
+            "receipt_tail": outpatient_receipt_tail,
+            "evidence_page": "",
+        })
+        total_amount += outpatient_total
+        total_insurance += outpatient_insurance
+        total_self_pay += outpatient_self_pay
+        seq += 1
 
-        total_amount += amount
-        total_insurance += insurance
-        total_self_pay += self_pay
+    # 住院费汇总行
+    if inpatient_amount > 0:
+        summary_rows.append({
+            "seq": seq,
+            "name": hospital_name,
+            "date": inpatient_date_range,
+            "amount": inpatient_amount,
+            "insurance": inpatient_insurance,
+            "self_pay": inpatient_self_pay,
+            "type": "住院费",
+            "stay_days": inpatient_stay_days,
+            "receipt_tail": "医保结算单",
+            "evidence_page": "",
+        })
+        total_amount += inpatient_amount
+        total_insurance += inpatient_insurance
+        total_self_pay += inpatient_self_pay
+        total_stay_days = inpatient_stay_days
+        seq += 1
 
-        hospital = row_data["hospital_name"]
-        row_hospital_names.append((row_idx, hospital))
-
-        ws.cell(row=row_idx, column=1, value=seq)
-        ws.cell(row=row_idx, column=2, value=hospital)
+    # 写入汇总行
+    first_data_row = row_idx
+    for row_data in summary_rows:
+        ws.cell(row=row_idx, column=1, value=row_data["seq"])
+        ws.cell(row=row_idx, column=2, value=row_data["name"])
         ws.cell(row=row_idx, column=3, value=row_data["date"])
-        ws.cell(row=row_idx, column=4, value=amount if amount else "")
-        ws.cell(row=row_idx, column=5, value=insurance if insurance else "")
-        ws.cell(row=row_idx, column=6, value=self_pay if self_pay else "")
-        ws.cell(row=row_idx, column=7, value=row_data["receipt_type"])
+        ws.cell(row=row_idx, column=4, value=row_data["amount"] if row_data["amount"] else "")
+        ws.cell(row=row_idx, column=5, value=row_data["insurance"] if row_data["insurance"] else "")
+        ws.cell(row=row_idx, column=6, value=row_data["self_pay"] if row_data["self_pay"] else "")
+        ws.cell(row=row_idx, column=7, value=row_data["type"])
         ws.cell(row=row_idx, column=8, value=row_data["stay_days"] if row_data["stay_days"] else "")
         ws.cell(row=row_idx, column=9, value=row_data["receipt_tail"])
         ws.cell(row=row_idx, column=10, value=row_data["evidence_page"])
 
-        # 仿宋12号单元格样式
         for col in range(1, COL_COUNT + 1):
             cell = ws.cell(row=row_idx, column=col)
             cell.font = _FANGSONG_CELL
@@ -1591,26 +1681,10 @@ def _gen_medical_fee_excel(fee_items: list[dict], comp_item: dict | None, case_n
                 cell.number_format = _MONEY_FORMAT
 
         row_idx += 1
-        seq += 1
 
-    # ── 合并同医院名称的单元格 ──
-    i = 0
-    while i < len(row_hospital_names):
-        start_row, hospital = row_hospital_names[i]
-        if not hospital:
-            i += 1
-            continue
-        # 找连续相同医院名的行
-        end_row = start_row
-        j = i + 1
-        while j < len(row_hospital_names) and row_hospital_names[j][1] == hospital:
-            end_row = row_hospital_names[j][0]
-            j += 1
-        if end_row > start_row:
-            ws.merge_cells(start_row=start_row, start_column=2, end_row=end_row, end_column=2)
-            merged_cell = ws.cell(row=start_row, column=2)
-            merged_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        i = j
+    # 合并名称列（同一医院）
+    if row_idx > first_data_row + 1:
+        ws.merge_cells(start_row=first_data_row, start_column=2, end_row=row_idx - 1, end_column=2)
 
     # ── 总计行 ──
     total_row = row_idx
@@ -1620,6 +1694,7 @@ def _gen_medical_fee_excel(fee_items: list[dict], comp_item: dict | None, case_n
     ws.cell(row=total_row, column=4, value=total_amount)
     ws.cell(row=total_row, column=5, value=total_insurance if total_insurance else "")
     ws.cell(row=total_row, column=6, value=total_self_pay if total_self_pay else "")
+    ws.cell(row=total_row, column=8, value=total_stay_days if total_stay_days else "")
     for col in range(1, COL_COUNT + 1):
         cell = ws.cell(row=total_row, column=col)
         cell.font = _FANGSONG_BOLD
