@@ -75,12 +75,18 @@ def _upload_to_minio(case_id: str, excel_bytes: bytes, filename: str) -> str:
     return minio_key
 
 
-# ─── 样式定义 ────────────────────────────────────────────────────────────────
+# ─── 样式定义（统一仿宋字体） ─────────────────────────────────────────────
 
-_HEADER_FONT = Font(name="微软雅黑", size=11, bold=True, color="FFFFFF")
+_FANGSONG_TITLE = Font(name="仿宋", size=16, bold=True)
+_FANGSONG_HEADER = Font(name="仿宋", size=12, bold=True)
+_FANGSONG_CELL = Font(name="仿宋", size=12)
+_FANGSONG_BOLD = Font(name="仿宋", size=12, bold=True)
+
+# 保留旧常量名做向后兼容（引用旧赔偿费用清单等）
+_HEADER_FONT = Font(name="仿宋", size=12, bold=True, color="FFFFFF")
 _HEADER_FILL = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-_CELL_FONT = Font(name="微软雅黑", size=10)
-_BOLD_FONT = Font(name="微软雅黑", size=10, bold=True)
+_CELL_FONT = _FANGSONG_CELL
+_BOLD_FONT = _FANGSONG_BOLD
 _MONEY_FORMAT = '#,##0.00'
 _THIN_BORDER = Border(
     left=Side(style="thin"),
@@ -89,33 +95,31 @@ _THIN_BORDER = Border(
     bottom=Side(style="thin"),
 )
 _CENTER_ALIGN = Alignment(horizontal="center", vertical="center")
-_LEFT_ALIGN = Alignment(horizontal="left", vertical="center", wrap_text=True)
-_RIGHT_ALIGN = Alignment(horizontal="right", vertical="center")
+_LEFT_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+_RIGHT_ALIGN = Alignment(horizontal="center", vertical="center")
 _SUBTITLE_FILL = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="solid")
 _SUBTOTAL_FILL = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
 _TOTAL_FILL = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
 
 
 def _apply_header_style(ws, row: int, col_count: int) -> None:
-    """应用表头样式"""
+    """应用表头样式 — 仿宋12号加粗，居中"""
     for col in range(1, col_count + 1):
         cell = ws.cell(row=row, column=col)
-        cell.font = _HEADER_FONT
-        cell.fill = _HEADER_FILL
+        cell.font = _FANGSONG_HEADER
         cell.alignment = _CENTER_ALIGN
         cell.border = _THIN_BORDER
 
 
 def _apply_cell_style(ws, row: int, col_count: int, money_cols: set[int] | None = None) -> None:
-    """应用单元格样式"""
+    """应用单元格样式 — 仿宋12号，上下左右居中"""
     for col in range(1, col_count + 1):
         cell = ws.cell(row=row, column=col)
-        cell.font = _CELL_FONT
+        cell.font = _FANGSONG_CELL
         cell.border = _THIN_BORDER
-        cell.alignment = _LEFT_ALIGN
+        cell.alignment = _CENTER_ALIGN
         if money_cols and col in money_cols:
             cell.number_format = _MONEY_FORMAT
-            cell.alignment = _CENTER_ALIGN
 
 
 def _apply_row_border(ws, row: int, col_count: int) -> None:
@@ -241,7 +245,7 @@ def generate_compensation_inline_data(catalog_data: dict, analysis_result: dict)
     # ── 标题行 ──
     ws.merge_cells("A1:D1")
     title_cell = ws.cell(row=1, column=1, value=f"{case_name} — 赔偿费用清单")
-    title_cell.font = Font(name="微软雅黑", size=14, bold=True)
+    title_cell.font = _FANGSONG_TITLE
     title_cell.alignment = _CENTER_ALIGN
 
     # 空行（行2）
@@ -350,7 +354,7 @@ def generate_fee_details_inline_data(catalog_data: dict, analysis_result: dict) 
         ws = wb.active
         ws.title = "医疗费用汇总表"
         ws.merge_cells("A1:J1")
-        ws.cell(row=1, column=1, value="医疗费用汇总表（无费用票据数据）").font = Font(name="微软雅黑", size=14, bold=True)
+        ws.cell(row=1, column=1, value="医疗费用汇总表（无费用票据数据）").font = _FANGSONG_TITLE
         output = io.BytesIO()
         wb.save(output)
         results["医疗费用汇总表"] = output.getvalue()
@@ -373,7 +377,7 @@ def generate_fee_details_inline_data(catalog_data: dict, analysis_result: dict) 
     # ── 标题行 ──
     ws.merge_cells("A1:J1")
     title_cell = ws.cell(row=1, column=1, value=f"{case_name} — 医疗费用汇总表")
-    title_cell.font = Font(name="微软雅黑", size=14, bold=True)
+    title_cell.font = _FANGSONG_TITLE
     title_cell.alignment = _CENTER_ALIGN
 
     # ── 表头（行3）──
@@ -461,15 +465,15 @@ def generate_fee_details_inline_data(catalog_data: dict, analysis_result: dict) 
 
     # ── 总合计行 ──
     ws.cell(row=row_idx, column=3, value="总  计")
-    ws.cell(row=row_idx, column=3).font = Font(name="微软雅黑", size=11, bold=True)
+    ws.cell(row=row_idx, column=3).font = _FANGSONG_BOLD
     ws.cell(row=row_idx, column=5, value=grand_total)
-    ws.cell(row=row_idx, column=5).font = Font(name="微软雅黑", size=11, bold=True)
+    ws.cell(row=row_idx, column=5).font = _FANGSONG_BOLD
     ws.cell(row=row_idx, column=5).number_format = _MONEY_FORMAT
     ws.cell(row=row_idx, column=6, value=grand_insurance if grand_insurance else "")
-    ws.cell(row=row_idx, column=6).font = Font(name="微软雅黑", size=11, bold=True)
+    ws.cell(row=row_idx, column=6).font = _FANGSONG_BOLD
     ws.cell(row=row_idx, column=6).number_format = _MONEY_FORMAT
     ws.cell(row=row_idx, column=7, value=grand_out_of_pocket if grand_out_of_pocket else "")
-    ws.cell(row=row_idx, column=7).font = Font(name="微软雅黑", size=11, bold=True)
+    ws.cell(row=row_idx, column=7).font = _FANGSONG_BOLD
     ws.cell(row=row_idx, column=7).number_format = _MONEY_FORMAT
     for col in range(1, len(headers) + 1):
         ws.cell(row=row_idx, column=col).border = _THIN_BORDER
@@ -1082,28 +1086,26 @@ def _to_float(value: Any, default: float = 0.0) -> float:
 
 
 def _write_title_row(ws: Any, title: str, col_count: int) -> int:
-    """写入标题行（合并第一行），返回下一可用行号。"""
+    """写入标题行（合并第一行），仿宋16号加粗居中，返回下一可用行号。"""
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=col_count)
     cell = ws.cell(row=1, column=1, value=title)
-    cell.font = Font(name="微软雅黑", size=14, bold=True)
+    cell.font = _FANGSONG_TITLE
     cell.alignment = _CENTER_ALIGN
     return 2
 
 
 def _write_header_row(ws: Any, headers: list[str], row: int) -> None:
-    """写入表头行。"""
+    """写入表头行 — 仿宋12号加粗，居中对齐。"""
     for col_idx, header in enumerate(headers, 1):
-        ws.cell(row=row, column=col_idx, value=header)
-    _apply_header_style(ws, row, len(headers))
+        cell = ws.cell(row=row, column=col_idx, value=header)
+        cell.font = _FANGSONG_HEADER
+        cell.alignment = _CENTER_ALIGN
+        cell.border = _THIN_BORDER
 
 
 # ── 各类 Excel 生成函数 ──────────────────────────────────────────────────────
 
-# ── 仿宋字体常量（医疗费用汇总表专用） ──
-_FANGSONG_TITLE = Font(name="仿宋", size=14, bold=True)
-_FANGSONG_HEADER = Font(name="仿宋", size=12, bold=True)
-_FANGSONG_CELL = Font(name="仿宋", size=12)
-_FANGSONG_BOLD = Font(name="仿宋", size=12, bold=True)
+# （仿宋字体常量已统一移至文件头部样式定义区）
 
 
 def _parse_medical_fee_from_ocr(ocr_text: str) -> dict:
@@ -1325,7 +1327,7 @@ def _is_medical_fee_item(item: dict) -> bool:
 def _gen_medical_fee_excel(fee_items: list[dict], comp_item: dict | None, case_name: str = "") -> bytes:
     """医疗费用汇总表 — 参考医疗费用汇总表（李明凤）.xls 格式。
 
-    样式：仿宋字体，标题14号，表头和内容12号
+    样式：仿宋字体，标题16号，表头和内容12号
     表头：序号 | 名称 | 日期 | 金额 | 报销金额 | 个人自费部分 | 类型 | 住院天数 | 票据尾号 | 证据页码
 
     特殊逻辑：
@@ -1341,7 +1343,7 @@ def _gen_medical_fee_excel(fee_items: list[dict], comp_item: dict | None, case_n
     COL_COUNT = 10
     headers = ["序号", "名称", "日期", "金额", "报销金额", "个人自费部分", "类型", "住院天数", "票据尾号", "证据页码"]
 
-    # ── 标题行（行1，合并 A1:J1）── 仿宋14号
+    # ── 标题行（行1，合并 A1:J1）── 仿宋16号
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=COL_COUNT)
     title_cell = ws.cell(row=1, column=1, value="医疗费用汇总表")
     title_cell.font = _FANGSONG_TITLE
