@@ -1331,39 +1331,77 @@ def _parse_medical_fee_from_ocr(ocr_text: str) -> dict:
                 if m_in and m_out:
                     result["date"] = f"{m_in.group(1).replace('-','/')}-{m_out.group(1).replace('-','/')}"
 
-    # ── 金额（合计金额） ──
-    # 合计金额：140元  或  合计：271195.00元  或  合计金额：20元
-    m = re.search(r'合计(?:金额)?[：:]\s*([\d.]+)\s*元?', text)
-    if m:
-        try:
-            result["amount"] = float(m.group(1))
-        except ValueError:
-            pass
-    if result["amount"] == 0:
-        # 医疗费总额：257611.02
-        m = re.search(r'医疗费总额[：:]\s*([\d,.]+)', text)
-        if m:
-            try:
-                result["amount"] = float(m.group(1).replace(',', ''))
-            except ValueError:
-                pass
+    def _match_amount_after_label(text: str, labels: list[str]) -> float:
+        """在text中查找任一label，匹配其前后数值（支持同行冒号、值跨行在上、值跨行在下）。
 
-    # ── 报销金额（统筹支付） ──
-    m = re.search(r'统筹支付[：:]\s*([\d.]+)', text)
-    if m:
-        try:
-            result["insurance_amount"] = float(m.group(1))
-        except ValueError:
-            pass
+        医保结算单OCR中字段名与数值常跨行分布，且值可能在label上方或下方。
+        例如:
+            "257611.02\\n医疗费总额"      → 值在label上方
+            "基金支付总额\\n217344.01"     → 值在label下方
+            "合计金额：140元"              → 同行冒号
+        """
+        for label in labels:
+            esc = re.escape(label)
+            # 1) 同行：label：值 / label:值
+            m = re.search(esc + r'[：:]\s*([\d,]+\.\d+|[\d,]+)', text)
+            if m:
+                return _to_float(m.group(1))
+            # 2) 跨行值在下：label\n值
+            m = re.search(esc + r'\s*\n\s*([\d,]+\.\d+|[\d,]+)', text)
+            if m:
+                return _to_float(m.group(1))
+            # 3) 跨行值在上：值\nlabel
+            m = re.search(r'([\d,]+\.\d+|[\d,]+)\s*\n\s*' + esc, text)
+            if m:
+                return _to_float(m.group(1))
+        return 0.0
+
+    # ── 金额（合计金额 / 医疗费总额）──
+    # 1) 门诊小票：合计金额：140元  或  合计：271195.00元
+    amt = _match_amount_after_label(text, ["合计金额", "合计"])
+    if amt > 0:
+        result["amount"] = amt
+    # 2) 医保结算单：医疗费总额（可能跨行；优先取这个）
+    amt_total = _match_amount_after_label(text, ["医疗费总额", "医疗费总预"])
+    if amt_total > 0:
+        # 结算单的总额始终优先（小票的"合计"可能会被误匹配为其它字段的合计）
+        # 但只有当 OCR 文本含"结算单"或"医保"标识时才覆盖
+        if "结算单" in text[:200] or "医疗保障" in text[:200]:
+            result["amount"] = amt_total
+        elif result["amount"] == 0:
+            result["amount"] = amt_total
+    # 3) 全自费金额（极少用，作为最后fallback，仅当上面都失败）
+    if result["amount"] == 0:
+        amt_self = _match_amount_after_label(text, ["全自费金额", "全自费金别"])
+        if amt_self > 0:
+            result["amount"] = amt_self
+
+    # ── 报销金额（统筹支付 / 基金支付总额） ──
+    ins = _match_amount_after_label(text, [
+        "统筹支付",        # 门诊小票
+        "基金支付总额",    # 医保结算单（主字段）
+        "医保支付总额",    # OCR变体
+    ])
+    if ins > 0:
+        result["insurance_amount"] = ins
 
     # ── 个人自费 ──
-    # 支付方式：现金：108.5  或  扫码付：108.5  或  个人现金支出：10267.01
-    m = re.search(r'(?:扫码付|现金|个人现金支出)[：:]\s*([\d.]+)', text)
-    if m:
-        try:
-            result["self_pay_amount"] = float(m.group(1))
-        except ValueError:
-            pass
+    # 1) 门诊小票字段
+    self_pay = _match_amount_after_label(text, [
+        "扫码付", "现金",
+    ])
+    # 2) 医保结算单字段："个人负担金额"包含现金+账户共济等，对齐原版口径(40267.01)
+    if self_pay == 0:
+        self_pay = _match_amount_after_label(text, [
+            "个人负担金额",      # 医保结算单主字段
+            "个人负担企额",      # OCR变体
+        ])
+    # 3) 兜底：个人现金支出（注意：医保结算单里"个人账户支出"也含"个人"和"支出"
+    #    字样，因此必须用完整字段名，不能模糊匹配）
+    if self_pay == 0:
+        self_pay = _match_amount_after_label(text, ["个人现金支出"])
+    if self_pay > 0:
+        result["self_pay_amount"] = self_pay
     # 如果有报销金额但没有自费，自费=金额-报销
     if result["amount"] > 0 and result["insurance_amount"] > 0 and result["self_pay_amount"] == 0:
         result["self_pay_amount"] = result["amount"] - result["insurance_amount"]
@@ -1563,8 +1601,20 @@ def _gen_medical_fee_excel(fee_items: list[dict], comp_item: dict | None, case_n
             self_pay = amount - insurance
 
         if receipt_type == "住院费":
-            # 住院费：从医保结算单取数据（金额最大的那张）
-            if amount > inpatient_amount:
+            # 住院费：从医保结算单取数据
+            # 选择策略：优先取"有报销金额"的那张（字段完整、含结算信息）
+            # 其次取"金额最大"的那张
+            should_pick = False
+            if insurance > 0 and inpatient_insurance == 0:
+                # 当前这张有报销，之前那张没有 → 取当前这张
+                should_pick = True
+            elif insurance > 0 and amount > inpatient_amount:
+                # 当前这张有报销且金额更大 → 取当前这张
+                should_pick = True
+            elif inpatient_amount == 0:
+                # 之前一张金额为0（未取到） → 取当前这张
+                should_pick = True
+            if should_pick:
                 inpatient_amount = amount
                 inpatient_insurance = insurance
                 inpatient_self_pay = self_pay
