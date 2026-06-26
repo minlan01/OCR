@@ -475,6 +475,13 @@ def generate_compensation_inline_data(catalog_data: dict, analysis_result: dict)
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
 
+    # ── 追加各项费用明细表（每个有票据数据的费用项一个 sheet）──
+    # 失败不影响主清单生成。
+    try:
+        _append_fee_detail_sheets(wb, catalog_data)
+    except Exception as e:
+        logger.warning(f"Failed to append fee detail sheets: {type(e).__name__}: {e}")
+
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
@@ -1228,6 +1235,177 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return float(str(value).replace(",", ""))
     except (ValueError, TypeError):
         return default
+
+
+# ── 各项费用明细表（追加到赔偿费用清单工作簿）─────────────────────────────────
+# fee_type → 显示名（来自 ZIP_FEE_ITEMS_ORDER）
+_FEE_TYPE_DISPLAY = {ft: name for name, ft in ZIP_FEE_ITEMS_ORDER}
+
+
+def _safe_sheet_title(base: str, used: set[str]) -> str:
+    """生成合法且唯一的工作表名（Excel 限制：<=31 字符，不含 []:*?/\\）。"""
+    name = re.sub(r"[\[\]:\*\?/\\]", "", base).strip() or "明细"
+    name = name[:31]
+    candidate = name
+    i = 2
+    while candidate in used:
+        suffix = f"_{i}"
+        candidate = name[: 31 - len(suffix)] + suffix
+        i += 1
+    used.add(candidate)
+    return candidate
+
+
+def _write_fee_detail_ws(ws: Any, sheet_title: str, items: list[dict]) -> None:
+    """在给定工作表写入某一费用项的明细表（按医院分组 + 小计 + 总计）。
+
+    items 为 _collect_fee_receipt_items_v2 返回的明细
+    （含 amount / insurance_amount / self_pay_amount 等字段）。
+    """
+    headers = [
+        "序号", "医院名称", "名称/项目", "日期", "金额（元）",
+        "报销金额", "个人自费", "类型", "住院天数", "票据尾号",
+    ]
+    col_count = len(headers)
+
+    # 标题行
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=col_count)
+    title_cell = ws.cell(row=1, column=1, value=sheet_title)
+    title_cell.font = _FANGSONG_TITLE
+    title_cell.alignment = _CENTER_ALIGN
+
+    # 表头行
+    header_row = 3
+    for col_idx, header in enumerate(headers, 1):
+        ws.cell(row=header_row, column=col_idx, value=header)
+    _apply_header_style(ws, header_row, col_count)
+
+    # 按医院分组
+    hospital_groups: dict[str, list[dict]] = {}
+    for it in items:
+        hosp = it.get("hospital_name") or "未知医院"
+        hospital_groups.setdefault(hosp, []).append(it)
+
+    row_idx = header_row + 1
+    seq = 1
+    grand_total = grand_insurance = grand_self = 0.0
+
+    for hosp, its in hospital_groups.items():
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=col_count)
+        hc = ws.cell(row=row_idx, column=1, value=f"▶ {hosp}")
+        hc.font = _BOLD_FONT
+        hc.fill = _SUBTITLE_FILL
+        hc.alignment = _LEFT_ALIGN
+        for c in range(1, col_count + 1):
+            ws.cell(row=row_idx, column=c).border = _THIN_BORDER
+            ws.cell(row=row_idx, column=c).fill = _SUBTITLE_FILL
+        row_idx += 1
+
+        sub_total = sub_insurance = sub_self = 0.0
+        for it in its:
+            amount = _to_float(it.get("amount"))
+            insurance = _to_float(it.get("insurance_amount"))
+            self_pay = _to_float(it.get("self_pay_amount"))
+            sub_total += amount
+            sub_insurance += insurance
+            sub_self += self_pay
+            ws.cell(row=row_idx, column=1, value=seq)
+            ws.cell(row=row_idx, column=2, value="")
+            ws.cell(row=row_idx, column=3, value=it.get("title", ""))
+            ws.cell(row=row_idx, column=4, value=it.get("date", ""))
+            ws.cell(row=row_idx, column=5, value=amount if amount else "")
+            ws.cell(row=row_idx, column=6, value=insurance if insurance else "")
+            ws.cell(row=row_idx, column=7, value=self_pay if self_pay else "")
+            ws.cell(row=row_idx, column=8, value=it.get("receipt_type", ""))
+            ws.cell(row=row_idx, column=9, value=it.get("stay_days", ""))
+            ws.cell(row=row_idx, column=10, value=it.get("receipt_tail", ""))
+            _apply_cell_style(ws, row_idx, col_count, money_cols={5, 6, 7})
+            row_idx += 1
+            seq += 1
+
+        grand_total += sub_total
+        grand_insurance += sub_insurance
+        grand_self += sub_self
+
+        ws.cell(row=row_idx, column=3, value=f"{hosp} 小计")
+        ws.cell(row=row_idx, column=3).font = _BOLD_FONT
+        ws.cell(row=row_idx, column=5, value=sub_total)
+        ws.cell(row=row_idx, column=5).font = _BOLD_FONT
+        ws.cell(row=row_idx, column=5).number_format = _MONEY_FORMAT
+        if sub_insurance:
+            ws.cell(row=row_idx, column=6, value=sub_insurance)
+            ws.cell(row=row_idx, column=6).font = _BOLD_FONT
+            ws.cell(row=row_idx, column=6).number_format = _MONEY_FORMAT
+        if sub_self:
+            ws.cell(row=row_idx, column=7, value=sub_self)
+            ws.cell(row=row_idx, column=7).font = _BOLD_FONT
+            ws.cell(row=row_idx, column=7).number_format = _MONEY_FORMAT
+        for c in range(1, col_count + 1):
+            ws.cell(row=row_idx, column=c).border = _THIN_BORDER
+            ws.cell(row=row_idx, column=c).fill = _SUBTOTAL_FILL
+        row_idx += 1
+
+    # 总计行
+    ws.cell(row=row_idx, column=3, value="总  计")
+    ws.cell(row=row_idx, column=3).font = _FANGSONG_BOLD
+    ws.cell(row=row_idx, column=5, value=grand_total)
+    ws.cell(row=row_idx, column=5).font = _FANGSONG_BOLD
+    ws.cell(row=row_idx, column=5).number_format = _MONEY_FORMAT
+    if grand_insurance:
+        ws.cell(row=row_idx, column=6, value=grand_insurance)
+        ws.cell(row=row_idx, column=6).font = _FANGSONG_BOLD
+        ws.cell(row=row_idx, column=6).number_format = _MONEY_FORMAT
+    if grand_self:
+        ws.cell(row=row_idx, column=7, value=grand_self)
+        ws.cell(row=row_idx, column=7).font = _FANGSONG_BOLD
+        ws.cell(row=row_idx, column=7).number_format = _MONEY_FORMAT
+    for c in range(1, col_count + 1):
+        ws.cell(row=row_idx, column=c).border = _THIN_BORDER
+        ws.cell(row=row_idx, column=c).fill = _TOTAL_FILL
+
+    col_widths = [8, 22, 28, 18, 16, 14, 14, 10, 10, 12]
+    for i, width in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+
+
+def _append_fee_detail_sheets(wb: Workbook, catalog_data: dict) -> None:
+    """为赔偿费用清单工作簿追加各项费用明细表。
+
+    每个有票据明细数据的费用项（按 fee_type 分组）追加一个明细工作表；
+    无 fee_type 标注的票据归入"费用明细"。
+    """
+    items = _collect_fee_receipt_items_v2(catalog_data)
+    if not items:
+        return
+
+    by_type: dict[str, list[dict]] = {}
+    for it in items:
+        ft = it.get("fee_type") or ""
+        by_type.setdefault(ft, []).append(it)
+
+    # 输出顺序：先按标准赔偿项顺序，再其余 fee_type，最后无 fee_type
+    ordered_types: list[str] = []
+    for _name, ft in ZIP_FEE_ITEMS_ORDER:
+        if ft in by_type and ft not in ordered_types:
+            ordered_types.append(ft)
+    for ft in by_type:
+        if ft and ft not in ordered_types:
+            ordered_types.append(ft)
+    if "" in by_type:
+        ordered_types.append("")
+
+    used_titles: set[str] = {ws.title for ws in wb.worksheets}
+    for ft in ordered_types:
+        group_items = by_type.get(ft) or []
+        if not group_items:
+            continue
+        display = _FEE_TYPE_DISPLAY.get(ft, "") if ft else ""
+        full_title = f"{display}明细" if display else "费用明细"
+        sheet_title = _safe_sheet_title(full_title, used_titles)
+        ws = wb.create_sheet(title=sheet_title)
+        _write_fee_detail_ws(ws, full_title, group_items)
 
 
 def _write_title_row(ws: Any, title: str, col_count: int) -> int:
