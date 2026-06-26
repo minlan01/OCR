@@ -39,6 +39,9 @@ class MultiOCREngine(BaseOCREngine):
         self._model_loaded = False
         # 降级统计（用于成本分析）
         self._stats: dict[str, int] = {}  # 引擎名 -> 成功次数
+        # GLM 兜底计数（每案件限3张控成本）
+        self._glm_fallback_count = 0
+        self._glm_fallback_limit = 3
 
     @property
     def is_ready(self) -> bool:
@@ -125,6 +128,11 @@ class MultiOCREngine(BaseOCREngine):
 
         # -- Step 2: local-screen + cloud-refine --
         primary_result = self._cloud_refine_if_needed(
+            primary_result, image_path, primary_engine_name
+        )
+
+        # -- Step 2.5: GLM-4V fallback for ultra-low confidence --
+        primary_result = self._glm_fallback_if_needed(
             primary_result, image_path, primary_engine_name
         )
 
@@ -232,6 +240,82 @@ class MultiOCREngine(BaseOCREngine):
                 high_conf.append(item)
 
         return high_conf
+
+    def _glm_fallback_if_needed(
+        self,
+        primary_result: list[dict],
+        image_path: Path,
+        primary_engine_name: str,
+    ) -> list[dict]:
+        """GLM-4V 超低置信度兜底
+
+        当页面平均置信度 < 0.3 时，直接用 GLM-4V 视觉模型兜底识别。
+        每案件限 3 张以控制 API 成本。
+
+        策略:
+        - 主引擎结果平均置信度 < 0.3 (极低质量)
+        - 且尚未超过 GLM 兜底次数上限 (3次/案件)
+        - 则用 GLM-4V 重新识别整页，覆盖结果
+        """
+        # 计算平均置信度
+        if not primary_result:
+            avg_conf = 0.0
+        else:
+            avg_conf = sum(r.get("confidence", 0) for r in primary_result) / len(primary_result)
+
+        # 只对极低质量页面触发 (avg < 0.3)
+        if avg_conf >= 0.3:
+            return primary_result
+
+        # 检查 GLM 兜底次数上限
+        if self._glm_fallback_count >= self._glm_fallback_limit:
+            logger.debug(
+                f"MultiOCR: GLM fallback limit reached "
+                f"({self._glm_fallback_count}/{self._glm_fallback_limit}), "
+                f"skip [{image_path.name}]"
+            )
+            return primary_result
+
+        # 找 GLM 引擎
+        glm_engine = None
+        for engine in self._engines:
+            name = str(engine).lower()
+            if "glm" in name and engine.is_ready:
+                glm_engine = engine
+                break
+
+        if glm_engine is None:
+            logger.debug(f"MultiOCR: no GLM engine available for fallback")
+            return primary_result
+
+        # 调用 GLM-4V
+        try:
+            logger.info(
+                f"MultiOCR: GLM-4V fallback triggered for [{image_path.name}] "
+                f"(avg_conf={avg_conf:.3f}, {self._glm_fallback_count+1}/{self._glm_fallback_limit})"
+            )
+            glm_result = glm_engine.recognize(image_path)
+            if glm_result:
+                # 标记来源
+                for item in glm_result:
+                    item["source"] = "glm_vlm_fallback"
+                self._glm_fallback_count += 1
+                self._stats["glm_vlm_fallback"] = self._stats.get("glm_vlm_fallback", 0) + 1
+                logger.info(
+                    f"MultiOCR: GLM-4V fallback success [{image_path.name}] "
+                    f"-> {len(glm_result)} blocks"
+                )
+                return glm_result
+            else:
+                logger.warning(f"MultiOCR: GLM-4V fallback returned empty [{image_path.name}]")
+                return primary_result
+        except Exception as e:
+            logger.error(f"MultiOCR: GLM-4V fallback failed [{image_path.name}]: {e}")
+            return primary_result
+
+    def reset_glm_fallback_count(self) -> None:
+        """重置 GLM 兜底计数（新案件开始时调用）"""
+        self._glm_fallback_count = 0
 
     def _cloud_refine_if_needed(
         self,

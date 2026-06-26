@@ -38,6 +38,7 @@ class ImageEnhancer:
         clahe_clip: float = 2.0,
         sharpen: bool = True,
         morph_clean: bool = True,
+        preserve_table_lines: bool = True,
     ):
         """
         初始化增强器
@@ -58,6 +59,7 @@ class ImageEnhancer:
         self.clahe_clip = clahe_clip
         self.sharpen = sharpen
         self.morph_clean = morph_clean
+        self.preserve_table_lines = preserve_table_lines
 
     def enhance(self, image_path: Path, output_path: Path) -> Path:
         """
@@ -113,12 +115,25 @@ class ImageEnhancer:
 
         # 6. OTSU二值化 + 形态学去噪点
         if self.binary:
+            # 表格线保护：OTSU前先提取水平/垂直线段mask，二值化后叠加回去
+            # 避免结算单/票据的表格细线被形态学开运算抹掉，导致字段名与数值连通域错位
+            table_line_mask = None
+            if self.preserve_table_lines:
+                table_line_mask = self._extract_table_lines(gray)
+                if table_line_mask is not None:
+                    logger.debug(f"Table lines preserved: {np.count_nonzero(table_line_mask)} px")
+
             _, gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             logger.debug("Binarized (OTSU)")
             if self.morph_clean:
                 kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 1))
                 gray = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel)
                 logger.debug("Morphological clean (open)")
+
+            # 叠加回表格线
+            if table_line_mask is not None:
+                gray = cv2.bitwise_and(gray, gray, mask=cv2.bitwise_not(table_line_mask))
+                logger.debug("Table lines restored after binarization")
 
         # 7. USM锐化（二值化图不需要锐化）
         if self.sharpen and not self.binary:
@@ -218,13 +233,63 @@ class ImageEnhancer:
 
         return img[y:y+h, x:x+w]
 
+    def _extract_table_lines(self, gray: np.ndarray) -> "np.ndarray | None":
+        """
+        提取表格水平/垂直线段mask
+
+        使用形态学开运算检测表格线：
+        - 水平线: 水平方向长矩形kernel (40x1)
+        - 垂直线: 垂直方向长矩形kernel (1x40)
+
+        医保结算单等票据的表格细线在OTSU二值化+形态学开运算时容易被当噪点抹掉，
+        导致字段名与数值的连通域被切开、跨行错位。
+        本方法在OTSU前提取线段mask，OTSU后叠加回去保护表格结构。
+
+        Args:
+            gray: 灰度图
+
+        Returns:
+            表格线mask（与输入同尺寸），如果没检测到线返回None
+        """
+        import cv2
+
+        h, w = gray.shape
+        # 图太小不检测（性能优化）
+        if h < 100 or w < 100:
+            return None
+
+        # 反向二值化（文字和线为白，背景为黑）
+        _, inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+        # 检测水平线
+        h_kernel_len = max(20, w // 20)
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (h_kernel_len, 1))
+        h_lines = cv2.morphologyEx(inv, cv2.MORPH_OPEN, h_kernel)
+
+        # 检测垂直线
+        v_kernel_len = max(20, h // 20)
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, v_kernel_len))
+        v_lines = cv2.morphologyEx(inv, cv2.MORPH_OPEN, v_kernel)
+
+        # 合并
+        table_mask = cv2.add(h_lines, v_lines)
+
+        # 如果检测到的线段像素太少（<0.1%），认为不是表格图
+        line_pixels = np.count_nonzero(table_mask)
+        total_pixels = h * w
+        if line_pixels < total_pixels * 0.001:
+            return None
+
+        return table_mask
+
 
 class Deskewer:
     """
     倾斜校正器
 
     通过最小外接矩形检测文本倾斜角度，旋转校正图片。
-    倾斜小于 0.3° 时跳过处理以避免质量损失。
+    倾斜小于 2° 时跳过处理以避免质量损失和不必要的耗时。
+    （原阈值0.3°过严，导致几乎每张图都做warpAffine；2°以上的倾斜才会肉眼可见影响OCR）
     """
 
     def deskew(self, image_path: Path, output_path: Path) -> Path:
@@ -236,7 +301,7 @@ class Deskewer:
             output_path: 输出图片路径
 
         Returns:
-            校正后的图片路径（倾斜 < 0.3° 时返回原图）
+            校正后的图片路径（倾斜 < 2° 时返回原图）
         """
         import cv2
 
@@ -260,8 +325,8 @@ class Deskewer:
         if angle < -45:
             angle = 90 + angle
 
-        if abs(angle) < 0.3:
-            # 倾斜小于 0.3 度，不处理
+        if abs(angle) < 2.0:
+            # 倾斜小于 2 度，不处理
             cv2.imwrite(str(output_path), img)
             return output_path
 
