@@ -230,103 +230,248 @@ def generate_all_fee_details(case_id: str) -> dict[str, str]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def generate_compensation_inline_data(catalog_data: dict, analysis_result: dict) -> bytes | None:
-    """赔偿费用清单 Excel（标准法律文书格式）
+    """赔偿费用清单 Excel — 参考赔偿费用清单（李明凤）.xls 格式
 
-    表头：序号 | 赔偿项目 | 计算依据 | 金额（元）
-    标准 8 大赔偿项目，从 fee_summary 匹配金额，未匹配项目显示为 0
+    格式特点（精确匹配参考模板）：
+    - 标题行（行1）：合并 A1:D1，"赔偿费用清单"，仿宋16号
+    - 表头行（行2）：序号 | 项目 | 计算依据 | 金额（元），仿宋12号
+    - 数据行：7大标准赔偿项目（医疗费/护理费/住院伙食补助费/营养费/交通住宿费/鉴定费/精神损害抚慰金）
+    - 计算依据为详细法律计算说明（含住院天数、标准、公式）
+    - 护理费支持多行计算依据（合并序号列和项目列）
+    - 总计行：合并A:B写"总计"，合计金额
+    - 备注行：合并A:D，鉴定前备注说明
+    - 全部仿宋12号，上下左右居中
     """
     wb = Workbook()
     ws = wb.active
     ws.title = "赔偿费用清单"
 
-    case_name = analysis_result.get("case_name", "案件")
+    case_name = analysis_result.get("case_name", "")
     case_type = analysis_result.get("case_type", "injury")
 
-    # ── 标题行 ──
-    ws.merge_cells("A1:D1")
-    title_cell = ws.cell(row=1, column=1, value=f"{case_name} — 赔偿费用清单")
+    # ── 提取住院天数信息 ──
+    admission_date = ""
+    discharge_date = ""
+    stay_days = 0
+    treatment = analysis_result.get("treatment", {}) or {}
+    admission_date = treatment.get("admission_date", "") or ""
+    discharge_date = treatment.get("discharge_date", "") or ""
+
+    # 从 catalog_data 的 treatment 数据中找住院天数
+    if not stay_days:
+        for group in catalog_data.get("groups", []):
+            for item in group.get("items", []):
+                t = item.get("treatment", {}) or {}
+                ad = t.get("admission_date", "")
+                dd = t.get("discharge_date", "")
+                if ad and dd:
+                    try:
+                        from datetime import datetime as _dt
+                        d1 = _dt.strptime(ad[:10], "%Y-%m-%d")
+                        d2 = _dt.strptime(dd[:10], "%Y-%m-%d")
+                        stay_days = (d2 - d1).days
+                        admission_date = ad[:10]
+                        discharge_date = dd[:10]
+                        break
+                    except (ValueError, IndexError):
+                        pass
+            if stay_days:
+                break
+
+    # 从 fee_summary 获取金额
+    fee_summary = catalog_data.get("fee_summary", {})
+
+    # ── 提取各赔偿项金额 ──
+    medical_amount = _match_fee_amount(fee_summary, ["医疗费", "医药费", "门诊费", "住院医疗"]) or 0
+    nursing_amount = _match_fee_amount(fee_summary, ["护理费"]) or 0
+    nursing_supplies = _match_fee_amount(fee_summary, ["护理用品", "医护用品"]) or 0
+    food_amount = _match_fee_amount(fee_summary, ["住院伙食补助费", "伙食补助费", "住院伙食费"]) or 0
+    nutrition_amount = _match_fee_amount(fee_summary, ["营养费"]) or 0
+    transport_amount = _match_fee_amount(fee_summary, ["交通费", "住宿费", "交通住宿"]) or 0
+    appraisal_amount = _match_fee_amount(fee_summary, ["鉴定费"]) or 0
+    spiritual_amount = _match_fee_amount(fee_summary, ["精神损害抚慰金", "精神抚慰金", "精神损害"]) or 0
+
+    # 从 compensation_data 中取手动编辑的金额（优先）
+    comp_items = analysis_result.get("compensation_items", [])
+    if comp_items:
+        comp_map = {item.get("fee_type", ""): item for item in comp_items}
+        for ft, default in [
+            ("medical_fee", medical_amount), ("nursing_fee", nursing_amount),
+            ("food_subsidy", food_amount), ("nutrition_fee", nutrition_amount),
+            ("transport_fee", transport_amount), ("appraisal_fee", appraisal_amount),
+            ("spiritual_damage", spiritual_amount),
+        ]:
+            item = comp_map.get(ft)
+            if item:
+                ma = item.get("manual_amount")
+                if ma is not None:
+                    if ft == "medical_fee":
+                        medical_amount = _to_float(ma)
+                    elif ft == "nursing_fee":
+                        nursing_amount = _to_float(ma)
+                    elif ft == "food_subsidy":
+                        food_amount = _to_float(ma)
+                    elif ft == "nutrition_fee":
+                        nutrition_amount = _to_float(ma)
+                    elif ft == "transport_fee":
+                        transport_amount = _to_float(ma)
+                    elif ft == "appraisal_fee":
+                        appraisal_amount = _to_float(ma)
+                    elif ft == "spiritual_damage":
+                        spiritual_amount = _to_float(ma)
+
+    COL_COUNT = 4
+
+    # ── 行1：标题行（合并 A1:D1）──
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=COL_COUNT)
+    title_cell = ws.cell(row=1, column=1, value="赔偿费用清单")
     title_cell.font = _FANGSONG_TITLE
     title_cell.alignment = _CENTER_ALIGN
 
-    # 空行（行2）
-    # ── 表头（行3）──
-    headers = ["序号", "赔偿项目", "计算依据", "金额（元）"]
-    HEADER_ROW = 3
+    # ── 行2：表头行 ──
+    headers = ["序号", "项目", "计算依据", "金额（元）"]
+    HEADER_ROW = 2
     for col_idx, header in enumerate(headers, 1):
-        ws.cell(row=HEADER_ROW, column=col_idx, value=header)
-    _apply_header_style(ws, HEADER_ROW, len(headers))
+        cell = ws.cell(row=HEADER_ROW, column=col_idx, value=header)
+        cell.font = _FANGSONG_HEADER
+        cell.alignment = _CENTER_ALIGN
+        cell.border = _THIN_BORDER
 
     # ── 数据行 ──
-    fee_summary = catalog_data.get("fee_summary", {})
-    matched_keys = set()  # 记录已匹配的 fee_summary key
     row_idx = HEADER_ROW + 1
     seq = 1
     total_amount = 0.0
 
-    for display_name, calc_basis, keywords in _STANDARD_COMPENSATION_ITEMS:
-        # 跳过与案件类型不匹配的项目
-        if case_type == "injury" and display_name == "死亡赔偿金":
-            continue
-        if case_type == "injury" and display_name == "丧葬费":
-            continue
-        if case_type == "death" and display_name == "残疾赔偿金":
-            continue
-
-        amount = _match_fee_amount(fee_summary, keywords)
-
-        # 记录已匹配的 fee_summary key
-        for keyword in keywords:
-            for fee_type in fee_summary:
-                if (keyword in fee_type or fee_type in keyword) and isinstance(fee_summary.get(fee_type), (int, float)):
-                    matched_keys.add(fee_type)
-
-        # 即使金额为 0 也列出标准项目（法律文书完整性要求）
-        if amount > 0:
+    def _write_item(item_seq, name, basis, amount, is_multi_row=False):
+        """写一行赔偿项目。如果 is_multi_row=True，后续行会合并序号列和项目列。"""
+        nonlocal row_idx, total_amount
+        start_row = row_idx
+        ws.cell(row=row_idx, column=1, value=item_seq)
+        ws.cell(row=row_idx, column=2, value=name)
+        ws.cell(row=row_idx, column=3, value=basis)
+        ws.cell(row=row_idx, column=4, value=amount if amount else "")
+        for col in range(1, COL_COUNT + 1):
+            cell = ws.cell(row=row_idx, column=col)
+            cell.font = _FANGSONG_CELL
+            cell.border = _THIN_BORDER
+            cell.alignment = _CENTER_ALIGN
+            if col == 4 and amount and isinstance(amount, (int, float)):
+                cell.number_format = _MONEY_FORMAT
+        if amount and isinstance(amount, (int, float)) and amount > 0:
             total_amount += amount
-
-        ws.cell(row=row_idx, column=1, value=seq)
-        ws.cell(row=row_idx, column=2, value=display_name)
-        ws.cell(row=row_idx, column=3, value=calc_basis)
-        ws.cell(row=row_idx, column=4, value=amount)
-        _apply_cell_style(ws, row_idx, len(headers), money_cols={4})
         row_idx += 1
-        seq += 1
 
-    # 补充 fee_summary 中未匹配到的项目（非标准项目）
-    for fee_type, amount in fee_summary.items():
-        if fee_type in matched_keys:
-            continue
-        if not isinstance(amount, (int, float)) or amount <= 0:
-            continue
-        total_amount += amount
-        ws.cell(row=row_idx, column=1, value=seq)
-        ws.cell(row=row_idx, column=2, value=fee_type)
-        ws.cell(row=row_idx, column=3, value="凭票据")
-        ws.cell(row=row_idx, column=4, value=amount)
-        _apply_cell_style(ws, row_idx, len(headers), money_cols={4})
+    def _write_continuation(text):
+        """写计算依据续行（合并序号列和项目列，只有计算依据有值）。"""
+        nonlocal row_idx
+        ws.cell(row=row_idx, column=3, value=text)
+        for col in range(1, COL_COUNT + 1):
+            cell = ws.cell(row=row_idx, column=col)
+            cell.font = _FANGSONG_CELL
+            cell.border = _THIN_BORDER
+            cell.alignment = _CENTER_ALIGN
         row_idx += 1
-        seq += 1
 
-    # ── 合计行 ──
-    ws.cell(row=row_idx, column=2, value="合  计")
-    ws.cell(row=row_idx, column=2).font = _BOLD_FONT
-    ws.cell(row=row_idx, column=2).alignment = _CENTER_ALIGN
+    def _merge_seq_project(start_row_idx, end_row_idx):
+        """合并序号列(A)和项目列(B)的指定行范围。"""
+        if end_row_idx > start_row_idx:
+            ws.merge_cells(start_row=start_row_idx, start_column=1, end_row=end_row_idx, end_column=1)
+            ws.merge_cells(start_row=start_row_idx, start_column=2, end_row=end_row_idx, end_column=2)
+
+    # 1. 医疗费
+    medical_basis = ""
+    if medical_amount > 0:
+        medical_basis = f"原告方因此次事件支付的前期医疗费暂计{medical_amount:.2f}元"
+    _write_item(seq, "医疗费", medical_basis, medical_amount)
+    seq += 1
+
+    # 2. 护理费（可能有多行计算依据）
+    nursing_start = row_idx
+    if nursing_amount > 0 or nursing_supplies > 0:
+        nursing_basis_1 = ""
+        if nursing_supplies > 0:
+            nursing_basis_1 = f"原告方因此次事件支付的医护用品费用{nursing_supplies:.2f}元"
+        nursing_total = nursing_amount + nursing_supplies
+        _write_item(seq, "护理费", nursing_basis_1, nursing_total)
+
+        # 第二行：住院护理费计算公式
+        if stay_days > 0:
+            formula = (
+                f"原告{analysis_result.get('patient_name', '')}共住院治疗{stay_days}天"
+                f"（{admission_date}至{discharge_date}），其护理费按云南省上一年度"
+                f"居民服务、修理和其他服务业非私营单位在岗职工年平均工资52940元/年计算："
+                f"52940元/年÷365天×{stay_days}天"
+            )
+            _write_continuation(formula)
+            _merge_seq_project(nursing_start, row_idx - 1)
+    else:
+        _write_item(seq, "护理费", "", 0)
+    seq += 1
+
+    # 3. 住院伙食补助费
+    food_basis = ""
+    if stay_days > 0:
+        food_basis = (
+            f"原告{analysis_result.get('patient_name', '')}共住院治疗{stay_days}天"
+            f"（{admission_date}至{discharge_date}），按云南省标准100元/天计算："
+            f"100元/天×{stay_days}天"
+        )
+    _write_item(seq, "住院伙食补助费", food_basis, food_amount)
+    seq += 1
+
+    # 4. 营养费
+    nutrition_basis = ""
+    if stay_days > 0:
+        nutrition_basis = (
+            f"原告{analysis_result.get('patient_name', '')}共住院治疗{stay_days}天"
+            f"（{admission_date}至{discharge_date}），按50元/天计算："
+            f"50元/天×{stay_days}天"
+        )
+    _write_item(seq, "营养费", nutrition_basis, nutrition_amount)
+    seq += 1
+
+    # 5. 交通住宿费
+    _write_item(seq, "交通住宿费", "", transport_amount)
+    seq += 1
+
+    # 6. 鉴定费
+    appraisal_basis = "尚未鉴定，暂不计算" if appraisal_amount == 0 else "凭票据实报实销"
+    _write_item(seq, "鉴定费", appraisal_basis, appraisal_amount)
+    seq += 1
+
+    # 7. 精神损害抚慰金
+    _write_item(seq, "精神损害抚慰金", "", spiritual_amount)
+    seq += 1
+
+    # ── 总计行 ──
+    ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=2)
+    ws.cell(row=row_idx, column=1, value="总计")
+    ws.cell(row=row_idx, column=1).font = _FANGSONG_BOLD
+    ws.cell(row=row_idx, column=1).alignment = _CENTER_ALIGN
     ws.cell(row=row_idx, column=4, value=total_amount)
-    ws.cell(row=row_idx, column=4).font = _BOLD_FONT
+    ws.cell(row=row_idx, column=4).font = _FANGSONG_BOLD
     ws.cell(row=row_idx, column=4).number_format = _MONEY_FORMAT
     ws.cell(row=row_idx, column=4).alignment = _CENTER_ALIGN
-    # 合计行特殊底色
-    for col in range(1, len(headers) + 1):
+    for col in range(1, COL_COUNT + 1):
         ws.cell(row=row_idx, column=col).border = _THIN_BORDER
         ws.cell(row=row_idx, column=col).fill = _TOTAL_FILL
+    row_idx += 1
+
+    # ── 备注行 ──
+    ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=COL_COUNT)
+    note_cell = ws.cell(row=row_idx, column=1,
+                        value="备注：因本案尚未鉴定，故上述各项赔偿费用及残疾赔偿金等费用待鉴定后再行补充变更。")
+    note_cell.font = _FANGSONG_CELL
+    note_cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    for col in range(1, COL_COUNT + 1):
+        ws.cell(row=row_idx, column=col).border = _THIN_BORDER
+    row_idx += 1
 
     # ── 列宽 ──
-    col_widths = [8, 22, 55, 18]
+    col_widths = [8, 18, 60, 16]
     for i, width in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = width
 
-    # ── 打印设置 ──
-    ws.sheet_properties.pageSetUpPr = None  # 使用默认
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
 
