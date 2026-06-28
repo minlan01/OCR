@@ -20,7 +20,7 @@ DEFAULT_PARAMS: Dict[str, Any] = {
     "monthly_salary": Decimal("8500"),        # 上年度职工月平均工资(元/月)
     "nursing_annual_salary": Decimal("102000"), # 护理费平均工资(元/年) — 按年标准计算日护理费
     "daily_food_subsidy": Decimal("100"),     # 住院伙食补助日标准(元/天)
-    "daily_nutrition": Decimal("30"),         # 营养费日标准(元/天)
+    "daily_nutrition": Decimal("50"),         # 营养费日标准(元/天)
     "compensation_years": 0,                  # 赔偿年限(年) — 默认0，需手动填写
     "disability_coefficient": Decimal("0"),   # 伤残系数 — 默认0，需手动填写
     "hospital_days": 0,                       # 住院天数

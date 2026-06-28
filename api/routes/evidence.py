@@ -107,13 +107,15 @@ def _build_step_out(s: EvidenceStep) -> StepResponse:
     )
 
 
-def _build_case_out(case: EvidenceCase) -> EvidenceCaseResponse:
+def _build_case_out(case: EvidenceCase, tenant_name: str | None = None) -> EvidenceCaseResponse:
     return EvidenceCaseResponse(
         id=str(case.id),
         case_name=case.case_name,
         case_type=case.case_type,
         is_minor=case.is_minor,
         status=case.status,
+        tenant_id=str(case.tenant_id) if case.tenant_id else None,
+        tenant_name=tenant_name,
         plaintiff_info=case.plaintiff_info,
         defendant_info=case.defendant_info,
         catalog_data=case.catalog_data,
@@ -254,6 +256,7 @@ async def create_case(
     db.add(case)
     await db.flush()
     await db.refresh(case)
+    await db.commit()
     logger.info(f"Evidence case created: {case.id} type={body.case_type} minor={body.is_minor} tenant={tenant_id}")
     return _build_case_out(case)
 
@@ -269,6 +272,7 @@ async def list_cases(
 ):
     """案件列表 — 返回精简数据（不含 materials/steps/analysis_result 等）"""
     from sqlalchemy.orm import noload
+    from db.models_auth import Tenant
 
     count_stmt = select(func.count(EvidenceCase.id))
     if tenant_id is not None:
@@ -276,7 +280,8 @@ async def list_cases(
     total = (await db.execute(count_stmt)).scalar()
 
     stmt = (
-        select(EvidenceCase)
+        select(EvidenceCase, Tenant.name)
+        .outerjoin(Tenant, EvidenceCase.tenant_id == Tenant.id)
         .options(noload(EvidenceCase.materials), noload(EvidenceCase.steps))
         .order_by(desc(EvidenceCase.created_at))
         .offset((page - 1) * size)
@@ -285,7 +290,7 @@ async def list_cases(
     if tenant_id is not None:
         stmt = stmt.where(EvidenceCase.tenant_id == tenant_id)
     result = await db.execute(stmt)
-    cases = result.scalars().all()
+    rows = result.all()
 
     return EvidenceCaseListSlimResponse(
         items=[
@@ -295,10 +300,12 @@ async def list_cases(
                 case_type=c.case_type,
                 is_minor=c.is_minor,
                 status=c.status,
+                tenant_id=str(c.tenant_id) if c.tenant_id else None,
+                tenant_name=tname,
                 created_at=c.created_at,
                 updated_at=c.updated_at,
             )
-            for c in cases
+            for c, tname in rows
         ],
         total=total,
     )
@@ -326,8 +333,26 @@ async def update_case(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
-    """更新案件基本信息（名称/类型/是否未成年人/律师信息/被告联系电话）"""
-    case = await _get_case_or_404(case_id, db, tenant_id)
+    """更新案件基本信息（名称/类型/是否未成年人/律师信息/被告联系电话/分配租户）"""
+    from api.dependencies import get_current_user
+    from db.models_auth import Tenant, User
+
+    # 判断当前用户是否为超管
+    is_super_admin = False
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            # 复用 dependencies 的用户解析逻辑
+            db_user = await get_current_user(request, db)
+            if isinstance(db_user, User) and db_user.role == "super_admin":
+                is_super_admin = True
+        except Exception:
+            pass
+
+    # 超管可以跨租户操作；普通用户只能操作本租户案件
+    effective_tenant_id = None if is_super_admin else tenant_id
+    case = await _get_case_or_404(case_id, db, effective_tenant_id)
+
     if body.case_name is not None:
         case.case_name = body.case_name
     if body.case_type is not None:
@@ -335,16 +360,37 @@ async def update_case(
     if body.is_minor is not None:
         case.is_minor = body.is_minor
     if body.lawyer_info is not None:
-        # 最多2个律师
         case.lawyer_info = body.lawyer_info[:2]
     if body.defendant_phone is not None:
         def_info = case.defendant_info or {}
         def_info["phone"] = body.defendant_phone
         case.defendant_info = def_info
+
+    # 超管分配案件到租户
+    if body.tenant_id is not None and is_super_admin:
+        new_tid = uuid.UUID(body.tenant_id)
+        # 验证租户存在
+        tenant = (await db.execute(
+            select(Tenant).where(Tenant.id == new_tid)
+        )).scalar_one_or_none()
+        if tenant is None:
+            raise HTTPException(status_code=400, detail="指定的租户不存在")
+        case.tenant_id = new_tid
+    elif body.tenant_id is not None and not is_super_admin:
+        raise HTTPException(status_code=403, detail="仅超级管理员可分配案件租户")
+
     case.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(case)
-    return _build_case_out(case)
+
+    # 查询租户名用于响应
+    tenant_name = None
+    if case.tenant_id:
+        t = (await db.execute(
+            select(Tenant.name).where(Tenant.id == case.tenant_id)
+        )).scalar_one_or_none()
+        tenant_name = t
+    return _build_case_out(case, tenant_name)
 
 
 @router.post("/cases/{case_id}/cancel", response_model=MessageResponse)
@@ -503,147 +549,147 @@ async def upload_materials(
                     detail=f"文件过大: {file.filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
                 )
 
-        file_type = _detect_file_type(file.filename or "")
-        # 文件类型白名单校验（含音频）
-        ALLOWED_TYPES = {"pdf", "image", "docx", "xlsx", "audio"}
-        if file_type not in ALLOWED_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"不支持的文件类型: {file.filename}（仅支持 PDF/图片/Word/Excel/音频）",
-            )
+            file_type = _detect_file_type(file.filename or "")
+            # 文件类型白名单校验（含音频）
+            ALLOWED_TYPES = {"pdf", "image", "docx", "xlsx", "audio"}
+            if file_type not in ALLOWED_TYPES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"不支持的文件类型: {file.filename}（仅支持 PDF/图片/Word/Excel/音频）",
+                )
 
-        # 扩展名校验（使用 settings.allowed_extensions）
-        ext = Path(file.filename or "").suffix.lower()
-        if ext not in settings.allowed_extensions and file_type not in ("image", "docx", "xlsx", "audio"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"不支持的文件扩展名: {ext}（允许: {', '.join(settings.allowed_extensions)}）",
-            )
+            # 扩展名校验（使用 settings.allowed_extensions）
+            ext = Path(file.filename or "").suffix.lower()
+            if ext not in settings.allowed_extensions and file_type not in ("image", "docx", "xlsx", "audio"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"不支持的文件扩展名: {ext}（允许: {', '.join(settings.allowed_extensions)}）",
+                )
 
-        # 文件魔数校验（防止扩展名伪装攻击）
-        magic_head = await file.read(8)
-        await file.seek(0)
-        MAGIC_NUMBERS = {
-            "pdf": [b"%PDF"],
-            "docx": [b"PK\x03\x04"],  # zip 格式
-            "xlsx": [b"PK\x03\x04"],
-            "image_jpg": [b"\xff\xd8\xff"],
-            "image_png": [b"\x89PNG\r\n\x1a\n"],
-            "image_gif": [b"GIF87a", b"GIF89a"],
-            "image_bmp": [b"BM"],
-            "image_webp": [b"RIFF"],
-            "image_tiff": [b"II*\x00", b"MM\x00*"],
-        }
-        magic_ok = False
-        if file_type == "pdf":
-            magic_ok = any(magic_head.startswith(m) for m in MAGIC_NUMBERS["pdf"])
-        elif file_type in ("docx", "xlsx"):
-            magic_ok = any(magic_head.startswith(m) for m in MAGIC_NUMBERS["docx"])
-        elif file_type == "image":
-            for key in ("image_jpg", "image_png", "image_gif", "image_bmp", "image_webp", "image_tiff"):
-                if any(magic_head.startswith(m) for m in MAGIC_NUMBERS[key]):
-                    magic_ok = True
-                    break
-        elif file_type == "audio":
-            # 音频格式多样，仅做扩展名校验
-            magic_ok = True
-        if not magic_ok:
-            raise HTTPException(
-                status_code=400,
-                detail=f"文件内容与扩展名不符（可能被篡改）: {file.filename}",
-            )
+            # 文件魔数校验（防止扩展名伪装攻击）
+            magic_head = await file.read(8)
+            await file.seek(0)
+            MAGIC_NUMBERS = {
+                "pdf": [b"%PDF"],
+                "docx": [b"PK\x03\x04"],  # zip 格式
+                "xlsx": [b"PK\x03\x04"],
+                "image_jpg": [b"\xff\xd8\xff"],
+                "image_png": [b"\x89PNG\r\n\x1a\n"],
+                "image_gif": [b"GIF87a", b"GIF89a"],
+                "image_bmp": [b"BM"],
+                "image_webp": [b"RIFF"],
+                "image_tiff": [b"II*\x00", b"MM\x00*"],
+            }
+            magic_ok = False
+            if file_type == "pdf":
+                magic_ok = any(magic_head.startswith(m) for m in MAGIC_NUMBERS["pdf"])
+            elif file_type in ("docx", "xlsx"):
+                magic_ok = any(magic_head.startswith(m) for m in MAGIC_NUMBERS["docx"])
+            elif file_type == "image":
+                for key in ("image_jpg", "image_png", "image_gif", "image_bmp", "image_webp", "image_tiff"):
+                    if any(magic_head.startswith(m) for m in MAGIC_NUMBERS[key]):
+                        magic_ok = True
+                        break
+            elif file_type == "audio":
+                # 音频格式多样，仅做扩展名校验
+                magic_ok = True
+            if not magic_ok:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"文件内容与扩展名不符（可能被篡改）: {file.filename}",
+                )
 
-        original_filename = file.filename or "upload"
-        minio_key = f"evidence/{case_id}/{uuid.uuid4()}_{quote(original_filename)}"
-        content_type = file.content_type or "application/octet-stream"
+            original_filename = file.filename or "upload"
+            minio_key = f"evidence/{case_id}/{uuid.uuid4()}_{quote(original_filename)}"
+            content_type = file.content_type or "application/octet-stream"
 
-        # 根据文件大小选择上传方式
-        file_size_actual: int
-        try:
-            if file.size and file.size >= MULTIPART_THRESHOLD:
-                # 大文件：流式上传（内存恒定 = 一个分片大小）
-                # 先保存到临时文件，再 fput_object
-                import tempfile
-                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-                    tmp_path = tmp.name
-                    while True:
-                        chunk = await file.read(50 * 1024 * 1024)  # 50MB chunks
-                        if not chunk:
-                            break
-                        tmp.write(chunk)
-                    file_size_actual = tmp.tell()
+            # 根据文件大小选择上传方式
+            file_size_actual: int
+            try:
+                if file.size and file.size >= MULTIPART_THRESHOLD:
+                    # 大文件：流式上传（内存恒定 = 一个分片大小）
+                    # 先保存到临时文件，再 fput_object
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                        tmp_path = tmp.name
+                        while True:
+                            chunk = await file.read(50 * 1024 * 1024)  # 50MB chunks
+                            if not chunk:
+                                break
+                            tmp.write(chunk)
+                        file_size_actual = tmp.tell()
 
-                if file_size_actual > settings.max_upload_size:
-                    import os
-                    os.unlink(tmp_path)
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
-                    )
+                    if file_size_actual > settings.max_upload_size:
+                        import os
+                        os.unlink(tmp_path)
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
+                        )
 
-                try:
-                    minio_client.upload_file(
+                    try:
+                        minio_client.upload_file(
+                            bucket=EVIDENCE_MINIO_BUCKET,
+                            object_key=minio_key,
+                            file_path=tmp_path,
+                            content_type=content_type,
+                        )
+                    finally:
+                        import os
+                        os.unlink(tmp_path)
+                elif file_type == "audio":
+                    # 音频文件：读取到内存（通常不大），流式上传
+                    content = await file.read()
+                    file_size_actual = len(content)
+                    if file_size_actual > settings.max_upload_size:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
+                        )
+                    minio_client.upload_bytes(
                         bucket=EVIDENCE_MINIO_BUCKET,
                         object_key=minio_key,
-                        file_path=tmp_path,
+                        data=content,
                         content_type=content_type,
                     )
-                finally:
-                    import os
-                    os.unlink(tmp_path)
-            elif file_type == "audio":
-                # 音频文件：读取到内存（通常不大），流式上传
-                content = await file.read()
-                file_size_actual = len(content)
-                if file_size_actual > settings.max_upload_size:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
+                else:
+                    # 小文件：原有方式
+                    content = await file.read()
+                    file_size_actual = len(content)
+                    if file_size_actual > settings.max_upload_size:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
+                        )
+                    minio_client.upload_bytes(
+                        bucket=EVIDENCE_MINIO_BUCKET,
+                        object_key=minio_key,
+                        data=content,
+                        content_type=content_type,
                     )
-                minio_client.upload_bytes(
-                    bucket=EVIDENCE_MINIO_BUCKET,
-                    object_key=minio_key,
-                    data=content,
-                    content_type=content_type,
-                )
-            else:
-                # 小文件：原有方式
-                content = await file.read()
-                file_size_actual = len(content)
-                if file_size_actual > settings.max_upload_size:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
-                    )
-                minio_client.upload_bytes(
-                    bucket=EVIDENCE_MINIO_BUCKET,
-                    object_key=minio_key,
-                    data=content,
-                    content_type=content_type,
-                )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"MinIO upload failed for evidence case {case_id}: {type(e).__name__}: {e}")
-            raise HTTPException(status_code=500, detail="File storage failed")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"MinIO upload failed for evidence case {case_id}: {type(e).__name__}: {e}")
+                raise HTTPException(status_code=500, detail="File storage failed")
 
-        # 音频文件 OCR 状态标记为 not_applicable
-        ocr_status = "not_applicable" if file_type == "audio" else "pending"
+            # 音频文件 OCR 状态标记为 not_applicable
+            ocr_status = "not_applicable" if file_type == "audio" else "pending"
 
-        material = EvidenceMaterial(
-            evidence_case_id=case_id,
-            original_filename=original_filename,
-            file_type=file_type,
-            minio_bucket=EVIDENCE_MINIO_BUCKET,
-            minio_key=minio_key,
-            file_size=file_size_actual,
-            ocr_status=ocr_status,
-        )
-        db.add(material)
-        await db.flush()
-        await db.refresh(material)
-        uploaded.append(material)
-        uploaded_minio_keys.append(minio_key)  # 标记为已成功（供回滚清理）
+            material = EvidenceMaterial(
+                evidence_case_id=case_id,
+                original_filename=original_filename,
+                file_type=file_type,
+                minio_bucket=EVIDENCE_MINIO_BUCKET,
+                minio_key=minio_key,
+                file_size=file_size_actual,
+                ocr_status=ocr_status,
+            )
+            db.add(material)
+            await db.flush()
+            await db.refresh(material)
+            uploaded.append(material)
+            uploaded_minio_keys.append(minio_key)  # 标记为已成功（供回滚清理）
 
     except Exception:
         # 批量上传中途失败：清理已上传的 MinIO 孤儿对象，避免存储泄漏
@@ -659,6 +705,7 @@ async def upload_materials(
         raise  # 重新抛出原异常
 
     logger.info(f"Uploaded {len(uploaded)} files to evidence case {case_id}")
+    await db.commit()
     return [_build_material_out(m) for m in uploaded]
 
 
@@ -867,6 +914,7 @@ async def update_catalog(
             material.catalog_index = item_update.sort_order
 
     await db.flush()
+    await db.commit()
     return MessageResponse(message="Catalog updated")
 
 
@@ -905,6 +953,7 @@ async def update_material(
         material.manual_edit = body.manual_edit
 
     await db.flush()
+    await db.commit()
     await db.refresh(material)
     return _build_material_out(material)
 
@@ -954,7 +1003,7 @@ async def delete_material(
         logger.warning(f"Failed to delete MinIO object for material {material_id}: {e}")
 
     await db.delete(material)
-    await db.flush()
+    await db.commit()
     logger.info(f"Deleted material {material_id} from case {case_id}")
     return MessageResponse(message="Material deleted")
 
@@ -989,8 +1038,9 @@ async def retry_material_ocr(
     material.category_confidence = None
     material.extracted_data = {}
     await db.flush()
+    await db.commit()
 
-    # 触发异步处理任务
+    # 触发异步处理任务（commit 后再派发，确保 worker 读到最新状态）
     from worker.evidence_tasks import process_single_material_ocr
     task = process_single_material_ocr.delay(str(material_id))
 
@@ -1146,6 +1196,7 @@ async def select_material_pages(
 
     material.selected_pages = selected_pages
     await db.flush()
+    await db.commit()
 
     return {
         "material_id": str(material_id),
@@ -1417,6 +1468,9 @@ async def start_analysis(
 
     # 重新分析时，清理旧的导出文件（基于旧分析结果生成的文档已过期）
     _cleanup_all_exports(case)
+
+    # 显式提交（清理步骤 + 导出清理），确保 Celery worker 读到最新状态
+    await db.commit()
 
     try:
         task = analyze_evidence.delay(str(case_id))

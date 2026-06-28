@@ -54,6 +54,8 @@ export interface EvidenceCase {
   is_minor: boolean
   status: string
   complaint_case_id: string | null
+  tenant_id: string | null
+  tenant_name: string | null
   plaintiff_info: Record<string, unknown>
   defendant_info: Record<string, unknown>
   catalog_data: Record<string, unknown>
@@ -77,6 +79,8 @@ export interface EvidenceCaseListItem {
   case_type: string
   is_minor: boolean
   status: string
+  tenant_id: string | null
+  tenant_name: string | null
   created_at: string
   updated_at: string
 }
@@ -161,6 +165,7 @@ export async function updateCase(caseId: string, data: {
   is_minor?: boolean
   lawyer_info?: { name: string; phone: string }[]
   defendant_phone?: string
+  tenant_id?: string
 }): Promise<EvidenceCase> {
   return api.put<EvidenceCase>(`/evidence/cases/${caseId}`, data)
 }

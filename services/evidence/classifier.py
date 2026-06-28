@@ -290,20 +290,32 @@ def classify_by_filename(filename: str, case_type: str = "injury") -> tuple[str,
 def classify_with_filename_fallback(
     text: str, filename: str, case_type: str = "injury"
 ) -> tuple[str, float]:
-    """组合分类：OCR文本优先，文件名兜底
+    """组合分类：文件名优先（费用类），OCR内容兜底
 
-    当OCR文本分类置信度低(<0.5)或文本为空时，回退到文件名分类。
+    分类策略（2026-06-27 修订）：
+    1. 文件名匹配到费用类（fee_receipt） → 直接采用，置信度 0.9
+       理由：费用/发票/结算/清单类文件，文件名是用户命名的高精度信号
+    2. 否则 OCR 文本分类（置信度 >= 0.5 采用）
+    3. OCR 不确定时 → 文件名兜底
     """
-    # OCR文本分类
+    # ── Step 1: 文件名优先 — 费用类 ──
+    if filename:
+        fn_category, fn_confidence = classify_by_filename(filename, case_type)
+        if fn_category == "fee_receipt":
+            logger.info(
+                f"Filename priority (fee_receipt): '{filename}' -> fee_receipt(0.9)"
+            )
+            return ("fee_receipt", 0.9)
+
+    # ── Step 2: OCR 文本分类 ──
     category, confidence = ("other_evidence", 0.0)
     if text and text.strip():
         category, confidence = classify_text(text, case_type)
         if confidence >= 0.5:
             return (category, confidence)
 
-    # 文件名回退
+    # ── Step 3: 文件名兜底（非费用类） ──
     if filename:
-        fn_category, fn_confidence = classify_by_filename(filename, case_type)
         if fn_confidence > confidence:
             logger.info(
                 f"Filename fallback: {category}({confidence}) -> {fn_category}({fn_confidence}) "

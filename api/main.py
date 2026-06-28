@@ -17,7 +17,7 @@ from slowapi.errors import RateLimitExceeded
 
 from config.settings import settings
 from config.logging import setup_logging
-from api.routes import health, scan, admin, template, evidence, auth
+from api.routes import health, scan, admin, template, evidence, auth, step0
 from api.middleware import AuthMiddleware, RequestSizeLimitMiddleware
 from api.rate_limit import limiter
 
@@ -105,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
     app.include_router(template.router, prefix="/api/v1", tags=["Templates"])
     app.include_router(evidence.router, prefix="/api/v1", tags=["Evidence"])
+    app.include_router(step0.router, prefix="/api/v1", tags=["Step0"])
 
     # 挂载 Admin SPA 静态文件（开发模式下可选）
     static_dir = Path(__file__).resolve().parent.parent / "static" / "dist"

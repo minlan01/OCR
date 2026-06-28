@@ -61,8 +61,8 @@ def fetch_material_files(case_id: str) -> list[dict]:
             "docker", "exec", "scanstruct-postgres",
             "psql", "-U", "scanstruct", "-d", "scanstruct",
             "-t", "-c",
-            f"SELECT id, original_filename, storage_path, doc_type "
-            f"FROM evidence_materials WHERE case_id = '{case_id}' "
+            f"SELECT id, original_filename, minio_bucket, minio_key, auto_category "
+            f"FROM evidence_materials WHERE evidence_case_id = '{case_id}' "
             f"ORDER BY created_at;",
         ],
         capture_output=True, text=True, encoding="utf-8",
@@ -75,23 +75,26 @@ def fetch_material_files(case_id: str) -> list[dict]:
         if not line:
             continue
         parts = line.split("|")
-        if len(parts) >= 4:
+        if len(parts) >= 5:
             items.append({
                 "id": parts[0].strip(),
                 "filename": parts[1].strip(),
-                "storage_path": parts[2].strip(),
-                "doc_type": parts[3].strip(),
+                "bucket": parts[2].strip(),
+                "minio_key": parts[3].strip(),
+                "category": parts[4].strip(),
             })
     return items
 
 
-def download_from_minio(storage_path: str, dest: Path) -> bool:
+def download_from_minio(bucket: str, minio_key: str, dest: Path) -> bool:
     """从 MinIO 下载文件到本地临时目录"""
     try:
+        # 使用 mc 从 minio 拷贝
+        src = f"{bucket}/{minio_key}" if bucket else minio_key
         result = subprocess.run(
             [
                 "docker", "exec", "scanstruct-minio", "mc", "cp",
-                storage_path, f"/tmp/{dest.name}",
+                src, f"/tmp/{dest.name}",
             ],
             capture_output=True, text=True, encoding="utf-8",
             timeout=30,
@@ -202,11 +205,12 @@ def diagnose_case(case_id: str) -> None:
             tmpdir = Path(tmpdir)
             for mat in materials[:20]:  # 限制20张避免太久
                 fname = mat["filename"]
-                storage = mat["storage_path"]
-                if not storage:
+                bucket = mat.get("bucket", "")
+                minio_key = mat.get("minio_key", "")
+                if not minio_key:
                     continue
                 dest = tmpdir / fname
-                if download_from_minio(storage, dest):
+                if download_from_minio(bucket, minio_key, dest):
                     results, avg_conf, chars = run_rapidocr_on_image(dest)
                     rapidocr_results[fname] = {
                         "results": results,
@@ -321,12 +325,12 @@ def diagnose_case(case_id: str) -> None:
         if not low_rapidocr and not field_miss:
             f.write("（无低质图，所有素材 OCR 质量正常）\n")
 
-    print(f"\n✓ CSV 报告: {csv_path}")
-    print(f"✓ 低质图清单: {low_quality_path}")
-    print(f"\n建议:")
-    print(f"  1. 打开 CSV 查看置信度分布和字段命中情况")
-    print(f"  2. 打开低质图清单定位具体问题")
-    print(f"  3. 如果字段未命中，检查 services/evidence/excel_generator.py 正则")
+    print(f"\n[OK] CSV report: {csv_path}")
+    print(f"[OK] Low quality list: {low_quality_path}")
+    print(f"\nSuggestions:")
+    print(f"  1. Open CSV to check confidence distribution and field hits")
+    print(f"  2. Open low quality list to locate specific issues")
+    print(f"  3. If fields not hit, check services/evidence/excel_generator.py regex")
 
 
 def main():

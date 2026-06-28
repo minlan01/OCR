@@ -71,6 +71,9 @@ COPY --chown=scanstruct:scanstruct . .
 # 用 Docker 内构建的前端产物覆盖（或创建）static/dist
 COPY --from=frontend-builder /build/static/dist /app/static/dist
 
+# 强制重新编译 Python 文件（避免 .pyc 缓存导致代码变更不生效）
+RUN python -c "import compileall; compileall.compile_dir('/app/api', force=True)"
+
 RUN mkdir -p /app/scan_input /app/scan_error /app/scan_archive /app/logs \
     && chown -R scanstruct:scanstruct /app
 

@@ -67,7 +67,10 @@ class EvidenceCase(Base):
     export_bundle_path: Mapped[str | None] = mapped_column(String(1000), default=None)
     export_files: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     lawyer_info: Mapped[dict] = mapped_column(JSONB, nullable=False, default=list, comment="律师信息，格式: [{name, phone}, ...]")
-    metadata_: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, name="metadata")
+    metadata_: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, name="metadata",
+        comment="JSONB 扩展字段。步骤0 新增: step0_status(not_started|in_progress|completed|skipped), step0_completed_at(ISO时间), step0_total_raw(数字)",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("NOW()")
     )
@@ -138,7 +141,10 @@ class EvidenceMaterial(Base):
         JSONB, nullable=False, default=list,
         comment="用户选择的待处理页码列表（1-based），空列表=处理全部页面"
     )
-    metadata_: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, name="metadata")
+    metadata_: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, name="metadata",
+        comment="JSONB 扩展字段。步骤0 产出物新增: source(step0_preprocess), step0_fee_category(fee_xxx), step0_raw_key, step0_archived_key, step0_page_number(PDF拆分页码), step0_parent_material_id(母material id), step0_corrected(bool), step0_needs_review(bool)",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("NOW()")
     )

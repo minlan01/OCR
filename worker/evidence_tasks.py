@@ -523,17 +523,16 @@ def process_single_material_ocr(self, material_id: str):
                     minio_client.download_bytes, bucket, material.minio_key
                 )
 
-                # 执行 OCR（使用工厂函数获取当前配置的引擎）
-                ocr_engine = get_ocr_engine()
+                # 执行 OCR — 使用 ocr_service 的统一入口（支持 PDF/图片/Word/Excel）
+                from services.complaint.ocr_service import ocr_upload
                 ocr_result = await asyncio.to_thread(
-                    ocr_engine.recognize_bytes,
+                    ocr_upload,
                     file_bytes,
                     material.original_filename or "unknown",
-                    material.file_type or "image",
                 )
 
                 # 更新 OCR 结果
-                ocr_text = ocr_result.get("text", "")
+                ocr_text = ocr_result.get("full_text", "") or ocr_result.get("text", "")
                 material.ocr_status = "completed"
                 material.ocr_text = ocr_text
                 material.ocr_result = ocr_result

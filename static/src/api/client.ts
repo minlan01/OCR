@@ -731,3 +731,62 @@ export async function changePassword(oldPassword: string, newPassword: string): 
 export async function updateProfile(displayName: string): Promise<UserInfo> {
   return put<UserInfo>('/auth/profile', { display_name: displayName })
 }
+
+// ─── OCR 监控 API ───
+
+export interface OcrMaterialStat {
+  material_id: string
+  filename: string | null
+  file_type: string
+  effective_category: string | null
+  ocr_status: string
+  source_type: string | null
+  block_count: number
+  avg_confidence: number | null
+  min_confidence: number | null
+  low_conf_count: number
+  char_count: number
+  has_blocks: boolean
+}
+
+export interface OcrCaseStat {
+  case_id: string
+  case_name: string
+  case_type: string
+  is_minor: boolean
+  tenant_id: string | null
+  tenant_name: string | null
+  material_count: number
+  ocr_completed: number
+  ocr_failed: number
+  avg_confidence: number | null
+  low_quality_count: number
+  materials: OcrMaterialStat[]
+}
+
+export interface OcrMonitorResponse {
+  scope: string
+  total_cases: number
+  total_materials: number
+  materials_with_ocr: number
+  ocr_completed: number
+  ocr_failed: number
+  ocr_pending: number
+  avg_confidence: number | null
+  low_quality_count: number
+  high_quality_count: number
+  quality_distribution: {
+    high: number
+    medium: number
+    low: number
+    no_data: number
+  }
+  source_type_stats: Record<string, number>
+  field_hit_rates: Record<string, number>
+  cases: OcrCaseStat[]
+  generated_at: string
+}
+
+export async function getOcrMonitorStats(): Promise<OcrMonitorResponse> {
+  return get<OcrMonitorResponse>('/admin/ocr-monitor')
+}
