@@ -60,7 +60,6 @@
           :loading="caseListLoading"
           :bordered="false"
           size="small"
-          :scroll-x="isSuperAdmin ? 1100 : 800"
           :pagination="{
             page: caseListPage,
             pageSize: caseListPageSize,
@@ -76,22 +75,13 @@
 
     <!-- ═══ 案件内工作区（步骤条 + 步骤内容） ═══ -->
     <template v-if="!showHomePage">
-    <!-- 五步流程 — 使用 @update:current 监听步骤点击（n-step 不支持 @click） -->
-    <n-steps :current="currentStep + 1" @update:current="handleStepClick" style="margin-bottom: 24px">
-      <n-step title="原始素材预处理" />
+    <!-- 四步流程 — 使用 @update:current 监听步骤点击（n-step 不支持 @click） -->
+    <n-steps :current="currentStep" @update:current="handleStepClick" style="margin-bottom: 24px">
       <n-step title="上传素材" />
       <n-step title="赔偿金额计算" />
       <n-step title="证据目录" />
       <n-step title="分析与导出" />
     </n-steps>
-
-    <!-- Step 0: 原始素材预处理 -->
-    <Step0Preprocess
-      v-if="currentStep === STEP.PREPROCESS"
-      :case-id="currentCaseId"
-      @next-step="navigateToStep(STEP.UPLOAD)"
-      @step0-completed="onStep0Completed"
-    />
 
     <!-- Step 1: 上传素材 -->
     <n-card v-if="currentStep === STEP.UPLOAD" title="上传原始素材">
@@ -366,8 +356,77 @@
         </n-collapse-item>
       </n-collapse>
 
-      <!-- 参数配置 — 按赔偿项目顺序排列（始终显示） -->
-      <n-card title="参数配置" size="small" style="margin-bottom: 16px">
+      <!-- 操作按钮 -->
+      <n-space style="margin-bottom: 16px">
+        <n-button type="primary" :loading="calculatingCompensation" @click="handleCalculateCompensation">
+          自动计算赔偿
+        </n-button>
+        <n-button @click="handleExportCompensation">
+          导出 Excel
+        </n-button>
+      </n-space>
+
+      <!-- 赔偿费用清单表格 -->
+      <n-table v-if="compensationData" :bordered="true" :single-line="false" size="small" style="margin-bottom: 16px">
+        <thead>
+          <tr>
+            <th style="width:40px">序号</th>
+            <th>赔偿项目</th>
+            <th style="width:150px">金额(元)</th>
+            <th>计算依据</th>
+            <th>来源素材</th>
+            <th style="width:60px">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(item, idx) in compensationData.items" :key="item.fee_type">
+            <td>{{ Number(idx) + 1 }}</td>
+            <td>{{ item.fee_name }}</td>
+            <td>
+              <n-input-number
+                v-if="editingFeeType === item.fee_type"
+                v-model:value="editAmount"
+                size="small"
+                :min="0"
+                :precision="2"
+                @blur="exitFeeEdit(item)"
+                @keyup.enter="saveFeeEdit(item)"
+              />
+              <span v-else style="cursor:pointer" @click="startFeeEdit(item)">
+                {{ formatMoney(item.manual_amount ?? item.amount) }}
+                <n-icon size="14" style="vertical-align:middle;color:#999"><CreateOutline /></n-icon>
+              </span>
+            </td>
+            <td style="font-size:12px;color:#666">{{ item.calculation_basis }}</td>
+            <td style="font-size:12px">
+              <span v-for="s in item.sources" :key="s.material_id">{{ s.filename }}; </span>
+              <span v-if="!item.sources?.length" style="color:#999">-</span>
+            </td>
+            <td>
+              <n-button v-if="item.manual_amount !== null" size="tiny" quaternary type="warning"
+                @click="resetFeeEdit(item)">重置</n-button>
+            </td>
+          </tr>
+          <tr style="font-weight:bold;background:#f5f5f5">
+            <td colspan="2">合计</td>
+            <td>{{ formatMoney(compensationTotal) }}</td>
+            <td colspan="2"></td>
+            <td>
+              <n-button
+                size="tiny"
+                type="primary"
+                :loading="savingCompChanges"
+                @click="saveAllCompensationEdits"
+              >
+                保存修改
+              </n-button>
+            </td>
+          </tr>
+        </tbody>
+      </n-table>
+
+      <!-- 参数配置（默认展开） — 按赔偿项目顺序排列 -->
+      <n-card v-if="compensationData" title="参数配置" size="small" style="margin-bottom: 16px">
         <n-grid :cols="1" :x-gap="12" :y-gap="8" responsive="screen" :cols-s="2" :cols-m="3">
           <!-- ① 误工费：月均工资 + 误工天数 -->
           <n-gi>
@@ -444,81 +503,7 @@
         </template>
       </n-card>
 
-      <!-- 赔偿费用清单表格（计算后显示） -->
-      <n-table v-if="compensationData && compensationData.items?.length" :bordered="true" :single-line="false" size="small" style="margin-bottom: 16px">
-        <thead>
-          <tr>
-            <th style="width:40px">序号</th>
-            <th>赔偿项目</th>
-            <th style="width:150px">金额(元)</th>
-            <th>计算依据</th>
-            <th>来源素材</th>
-            <th style="width:60px">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(item, idx) in compensationData.items" :key="item.fee_type">
-            <td>{{ Number(idx) + 1 }}</td>
-            <td>{{ item.fee_name }}</td>
-            <td>
-              <n-input-number
-                v-if="editingFeeType === item.fee_type"
-                v-model:value="editAmount"
-                size="small"
-                :min="0"
-                :precision="2"
-                @blur="exitFeeEdit(item)"
-                @keyup.enter="saveFeeEdit(item)"
-              />
-              <span v-else style="cursor:pointer" @click="startFeeEdit(item)">
-                {{ formatMoney(item.manual_amount ?? item.amount) }}
-                <n-icon size="14" style="vertical-align:middle;color:#999"><CreateOutline /></n-icon>
-              </span>
-            </td>
-            <td style="font-size:12px;color:#666">{{ item.calculation_basis }}</td>
-            <td style="font-size:12px">
-              <span v-for="s in item.sources" :key="s.material_id">{{ s.filename }}; </span>
-              <span v-if="!item.sources?.length" style="color:#999">-</span>
-            </td>
-            <td>
-              <n-button v-if="item.manual_amount !== null" size="tiny" quaternary type="warning"
-                @click="resetFeeEdit(item)">重置</n-button>
-            </td>
-          </tr>
-          <tr style="font-weight:bold;background:#f5f5f5">
-            <td colspan="2">合计</td>
-            <td>{{ formatMoney(compensationTotal) }}</td>
-            <td colspan="2"></td>
-            <td>
-              <n-button
-                size="tiny"
-                type="primary"
-                :loading="savingCompChanges"
-                @click="saveAllCompensationEdits"
-              >
-                保存修改
-              </n-button>
-            </td>
-          </tr>
-        </tbody>
-      </n-table>
-
-      <!-- 操作按钮（底部） -->
-      <n-space justify="center" style="margin-bottom: 16px">
-        <n-button type="primary" :loading="calculatingCompensation" @click="handleCalculateCompensation">
-          自动计算赔偿
-        </n-button>
-        <n-button :disabled="!compensationData" @click="handleExportCompensation">
-          导出 Excel
-        </n-button>
-      </n-space>
-
-      <!-- 未计算提示 -->
-      <n-alert v-if="!compensationData" type="info" style="margin-bottom: 16px">
-        填写上方参数后点击「自动计算赔偿」生成费用清单
-      </n-alert>
-
-      <!-- 底部导航按钮 -->
+      <!-- 底部按钮 -->
       <n-divider />
       <n-space justify="space-between">
         <n-button @click="navigateToStep(STEP.UPLOAD)">返回</n-button>
@@ -932,6 +917,25 @@
     </n-card>
 
 
+    <!-- 编辑案件弹窗 -->
+    <n-modal v-model:show="showEditModal" preset="dialog" title="编辑案件" positive-text="保存" negative-text="取消"
+      @positive-click="handleSaveEdit">
+      <n-form label-placement="left" label-width="100" style="margin-top: 12px">
+        <n-form-item label="案件名称">
+          <n-input v-model:value="editForm.case_name" />
+        </n-form-item>
+        <n-form-item label="案件类型">
+          <n-radio-group v-model:value="editForm.case_type">
+            <n-radio value="injury">医疗损害（伤残）</n-radio>
+            <n-radio value="death">医疗损害（死亡）</n-radio>
+          </n-radio-group>
+        </n-form-item>
+        <n-form-item label="是否未成年人（新生儿）">
+          <n-switch v-model:value="editForm.is_minor" />
+        </n-form-item>
+      </n-form>
+    </n-modal>
+
     <!-- 多页文档预览选择抽屉 -->
     <n-drawer v-model:show="showPageDrawer" :width="800" placement="right">
       <n-drawer-content title="页面预览与选择" closable>
@@ -1016,55 +1020,6 @@
       </n-space>
     </n-modal>
     </template><!-- end 案件内工作区 -->
-
-    <!-- ═══ 编辑案件弹窗（全局，不依赖工作区显隐） ═══ -->
-    <n-modal v-model:show="showEditModal" preset="dialog" title="编辑案件" positive-text="保存" negative-text="取消"
-      @positive-click="handleSaveEdit">
-      <n-form label-placement="left" label-width="100" style="margin-top: 12px">
-        <n-form-item label="案件名称">
-          <n-input v-model:value="editForm.case_name" />
-        </n-form-item>
-        <n-form-item label="案件类型">
-          <n-radio-group v-model:value="editForm.case_type">
-            <n-radio value="injury">医疗损害（伤残）</n-radio>
-            <n-radio value="death">医疗损害（死亡）</n-radio>
-          </n-radio-group>
-        </n-form-item>
-        <n-form-item label="是否未成年人（新生儿）">
-          <n-switch v-model:value="editForm.is_minor" />
-        </n-form-item>
-      </n-form>
-    </n-modal>
-
-    <!-- ═══ 分配租户 Modal（仅超管） ═══ -->
-    <n-modal v-model:show="assignTenantModalShow" preset="card" title="分配案件到租户" style="width: 460px">
-      <n-space vertical>
-        <n-text depth="3">
-          案件：{{ assignTenantCase?.case_name }}
-        </n-text>
-        <n-text depth="3" style="font-size: 13px">
-          当前租户：{{ assignTenantCase?.tenant_name || '未分配' }}
-        </n-text>
-        <n-select
-          v-model:value="assignTenantValue"
-          :options="tenantOptions.map(t => ({ label: t.name, value: t.id }))"
-          placeholder="选择目标租户"
-          filterable
-          clearable
-        />
-        <n-alert type="info" :bordered="false">
-          分配后，该案件将归属于目标租户，目标租户的管理员和成员将能看到并操作此案件。
-        </n-alert>
-      </n-space>
-      <template #footer>
-        <n-space justify="end">
-          <n-button @click="assignTenantModalShow = false">取消</n-button>
-          <n-button type="primary" :loading="assignTenantSaving" @click="submitAssignTenant">
-            确认分配
-          </n-button>
-        </n-space>
-      </template>
-    </n-modal>
   </div>
 </template>
 
@@ -1132,62 +1087,13 @@ import type {
   AnalysisResponse,
   PagePreviewResponse,
 } from '@/api/evidence'
-import Step0Preprocess from '@/views/Step0Preprocess.vue'
-import { useAuthStore } from '@/stores/auth'
-import { storeToRefs } from 'pinia'
-import { listTenantNames, type TenantNameItem } from '@/api/client'
 
 const message = useMessage()
 const dialog = useDialog()
 
-// ─── 当前用户（用于超管判断） ───
-const authStore = useAuthStore()
-const { isSuperAdmin } = storeToRefs(authStore)
-
-// ─── 租户列表（超管分配案件用） ───
-const tenantOptions = ref<TenantNameItem[]>([])
-const assignTenantModalShow = ref(false)
-const assignTenantCase = ref<EvidenceCaseListItem | null>(null)
-const assignTenantValue = ref<string | null>(null)
-const assignTenantSaving = ref(false)
-
-async function loadTenantOptions() {
-  if (!isSuperAdmin.value) return
-  try {
-    tenantOptions.value = await listTenantNames()
-  } catch {
-    // 静默失败
-  }
-}
-
-function openAssignTenantModal(row: EvidenceCaseListItem) {
-  assignTenantCase.value = row
-  assignTenantValue.value = row.tenant_id || null
-  assignTenantModalShow.value = true
-}
-
-async function submitAssignTenant() {
-  if (!assignTenantCase.value || !assignTenantValue.value) {
-    message.warning('请选择要分配的租户')
-    return
-  }
-  assignTenantSaving.value = true
-  try {
-    await evidenceApi.updateCase(assignTenantCase.value.id, { tenant_id: assignTenantValue.value })
-    message.success('案件已分配到指定租户')
-    assignTenantModalShow.value = false
-    await loadCaseList(caseListPage.value, caseListPageSize.value)
-  } catch (e: unknown) {
-    message.error((e as Error).message)
-  } finally {
-    assignTenantSaving.value = false
-  }
-}
-
 // ─── 步骤常量 ─────────────────────────────────────────────────────────────────
 
 const STEP = {
-  PREPROCESS: 0,
   UPLOAD: 1,
   COMPENSATION: 2,
   CATALOG: 3,
@@ -1197,23 +1103,9 @@ const STEP = {
 // ─── 状态 ─────────────────────────────────────────────────────────────────────
 
 const showHomePage = ref(true) // 案件首页（独立于步骤条）
-const currentStep = ref<number>(STEP.PREPROCESS)
+const currentStep = ref<number>(STEP.UPLOAD)
 const currentCase = ref<evidenceApi.EvidenceCase | null>(null)
 const showCreateForm = ref(false)
-
-// 步骤0 用的 case id
-const currentCaseId = computed(() => currentCase.value?.id || '')
-
-// 步骤0 完成回调 — 刷新案件信息
-function onStep0Completed() {
-  if (currentCase.value) {
-    evidenceApi.getCase(currentCase.value.id).then(res => {
-      currentCase.value = res
-    }).catch(() => {
-      // 静默忽略
-    })
-  }
-}
 
 // 创建表单
 const form = ref({
@@ -1401,18 +1293,17 @@ const progressStatus = computed(() => {
 
 // ─── 步骤切换 ─────────────────────────────────────────────────────────────
 
-/** 是否可以跳到某步骤（步骤0-4 均可自由切换） */
+/** 是否可以跳到某步骤（只要在案件内即可自由切换 Step 1-4） */
 function canGoStep(step: number): boolean {
   if (!currentCase.value) return false
-  return step >= STEP.PREPROCESS && step <= STEP.ANALYSIS
+  return step >= STEP.UPLOAD && step <= STEP.ANALYSIS
 }
 
 /** n-steps @update:current 回调 — 步骤条点击入口 */
 function handleStepClick(newStep: number) {
-  // n-steps 是 1-based index，STEP 常量是 0-based，需要 -1 转换
-  const step = newStep - 1
-  if (canGoStep(step)) {
-    navigateToStep(step)
+  // n-steps 默认 1-based index，和 STEP 常量一致（UPLOAD=1 ... ANALYSIS=4）
+  if (canGoStep(newStep)) {
+    navigateToStep(newStep)
   }
 }
 
@@ -1445,7 +1336,7 @@ async function navigateToStep(step: number) {
 function handleGoHome() {
   _resetAllState()
   currentCase.value = null
-  currentStep.value = STEP.PREPROCESS
+  currentStep.value = STEP.UPLOAD
   showHomePage.value = true
   isContinuedCase.value = false
   showCreateForm.value = false
@@ -1690,7 +1581,7 @@ async function handleCreate() {
     materials.value = res.materials || []
     syncLawyerInfo(res)
     syncDefendantPhone(res)
-    currentStep.value = STEP.PREPROCESS
+    currentStep.value = STEP.UPLOAD
     showHomePage.value = false
     showCreateForm.value = false
     message.success('案件创建成功')
@@ -2646,13 +2537,7 @@ async function continueCase(caseId: string) {
       processing.value = true
       startProgressPoll(caseId)
     } else {
-      // step0_status != 'completed' 时默认停在步骤0
-      const step0Status = (res.metadata || {}).step0_status
-      if (step0Status && step0Status !== 'completed' && step0Status !== 'skipped') {
-        currentStep.value = STEP.PREPROCESS
-      } else {
-        currentStep.value = STEP.UPLOAD
-      }
+      currentStep.value = STEP.UPLOAD
     }
     message.info('已加载案件：' + res.case_name)
     // 同步律师信息到本地状态
@@ -2763,63 +2648,38 @@ function confirmDeleteCase(row: EvidenceCaseListItem) {
 
 // ─── 表格列 ───────────────────────────────────────────────────────────────────
 
-const caseListColumns = computed(() => {
-  const cols: any[] = [
-    { title: '案件名称', key: 'case_name', minWidth: 180, ellipsis: { tooltip: true } },
-    { title: '类型', key: 'case_type', width: 80, render: (row: EvidenceCaseListItem) => caseTypeLabel(row.case_type) },
-    { title: '状态', key: 'status', width: 100, render: (row: EvidenceCaseListItem) => h(NTag, { type: statusTagType(row.status), size: 'small' }, { default: () => statusLabel(row.status) }) },
-  ]
-  // 超管额外显示租户列
-  if (isSuperAdmin.value) {
-    cols.push({
-      title: '租户',
-      key: 'tenant_name',
-      width: 140,
-      ellipsis: { tooltip: true },
-      render: (row: EvidenceCaseListItem) => row.tenant_name ? h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => row.tenant_name }) : h(NText, { depth: 3 }, { default: () => '未分配' }),
-    })
-  }
-  cols.push(
-    { title: '创建时间', key: 'created_at', width: 150, render: (row: EvidenceCaseListItem) => new Date(row.created_at).toLocaleString() },
-    {
-      title: '操作', key: 'action', width: isSuperAdmin.value ? 320 : 240,
-      render: (row: EvidenceCaseListItem) => {
-        const ACTIVE_STATUSES = ['processing', 'analyzing', 'exporting']
-        const isActive = ACTIVE_STATUSES.includes(row.status)
-        const buttons: ReturnType<typeof h>[] = [
-          h(NButton, { size: 'small', type: 'primary', onClick: () => continueCase(row.id) }, { default: () => '继续' }),
-          h(NButton, { size: 'small', onClick: () => openEditModal(row) }, { default: () => '编辑' }),
-        ]
-        if (isActive) {
-          buttons.push(
-            h(NButton, { size: 'small', type: 'warning', loading: cancellingCase.value === row.id, onClick: () => confirmCancelCase(row) }, { default: () => '停止' }),
-          )
-        }
-        // 超管显示分配按钮
-        if (isSuperAdmin.value) {
-          buttons.push(
-            h(NButton, { size: 'small', type: 'info', ghost: true, onClick: () => openAssignTenantModal(row) }, { default: () => '分配' }),
-          )
-        }
+const caseListColumns = [
+  { title: '案件名称', key: 'case_name', ellipsis: { tooltip: true } },
+  { title: '类型', key: 'case_type', width: 80, render: (row: EvidenceCaseListItem) => caseTypeLabel(row.case_type) },
+  { title: '状态', key: 'status', width: 120, render: (row: EvidenceCaseListItem) => h(NTag, { type: statusTagType(row.status), size: 'small' }, { default: () => statusLabel(row.status) }) },
+  { title: '创建时间', key: 'created_at', width: 160, render: (row: EvidenceCaseListItem) => new Date(row.created_at).toLocaleString() },
+  {
+    title: '操作', key: 'action', width: 260,
+    render: (row: EvidenceCaseListItem) => {
+      const ACTIVE_STATUSES = ['processing', 'analyzing', 'exporting']
+      const isActive = ACTIVE_STATUSES.includes(row.status)
+      const buttons = [
+        h(NButton, { size: 'small', type: 'primary', onClick: () => continueCase(row.id) }, { default: () => '继续' }),
+        h(NButton, { size: 'small', onClick: () => openEditModal(row) }, { default: () => '编辑' }),
+      ]
+      if (isActive) {
         buttons.push(
-          h(NButton, { size: 'small', type: 'error', onClick: () => confirmDeleteCase(row) }, { default: () => '删除' }),
+          h(NButton, { size: 'small', type: 'warning', loading: cancellingCase.value === row.id, onClick: () => confirmCancelCase(row) }, { default: () => '停止' }),
         )
-        return h(NSpace, { size: 'small' }, { default: () => buttons })
-      },
+      }
+      buttons.push(
+        h(NButton, { size: 'small', type: 'error', onClick: () => confirmDeleteCase(row) }, { default: () => '删除' }),
+      )
+      return h(NSpace, { size: 'small' }, { default: () => buttons })
     },
-  )
-  return cols
-})
+  },
+]
 
 // ─── 生命周期 ─────────────────────────────────────────────────────────────────
 
 onMounted(async () => {
   // 页面关闭/刷新时提醒未保存的目录修改
   window.addEventListener('beforeunload', _beforeUnloadHandler)
-  // 加载当前用户信息（超管判断依赖 userInfo.role）
-  await authStore.loadUserInfo()
-  // 超管加载租户选项（用于分配案件）
-  await loadTenantOptions()
   await loadCaseList()
   // 尝试从 sessionStorage 恢复未完成的案件状态（若有）
   const savedCaseId = sessionStorage.getItem('evidence_current_case_id')

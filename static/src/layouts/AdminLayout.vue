@@ -160,18 +160,16 @@ const baseMenuOptions = computed(() => {
   return options
 })
 
-const adminMenuItems = [
-  {
-    label: '管理后台',
-    key: '/admin',
-    icon: renderIcon(SettingsOutline),
-  },
-]
+const adminMenuItem = {
+  label: '管理后台',
+  key: '/admin',
+  icon: renderIcon(SettingsOutline),
+}
 
 // 根据用户角色动态生成菜单（admin 角色才显示管理后台入口）
 const menuOptions = computed(() => {
   const isAdmin = userInfo.value?.role === 'tenant_admin' || userInfo.value?.role === 'super_admin'
-  return isAdmin ? [...baseMenuOptions.value, ...adminMenuItems] : baseMenuOptions.value
+  return isAdmin ? [...baseMenuOptions.value, adminMenuItem] : baseMenuOptions.value
 })
 
 const activeMenu = computed(() => {

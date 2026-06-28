@@ -14,16 +14,12 @@ from celery.signals import worker_ready
 from config.settings import settings
 from config.logging import setup_logging
 
-# 确保所有模型注册到 Base.metadata，否则跨文件 ForeignKey 会报 NoReferencedTableError
-import db.models_auth  # noqa: F401 — 注册 Tenant 表，EvidenceCase.tenant_id FK 依赖它
-import db.models_evidence  # noqa: F401 — 注册 EvidenceCase/Material/Step 表，step0_tasks FK 依赖它
-
 
 celery_app = Celery(
     "scanstruct",
     broker=settings.redis_broker_url_with_auth,
     backend=settings.redis_result_backend_with_auth,
-    include=["worker.tasks", "worker.evidence_tasks", "worker.step0_tasks"],
+    include=["worker.tasks", "worker.evidence_tasks"],
 )
 
 # Celery 配置（SaaS 优化版）

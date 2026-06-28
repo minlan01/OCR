@@ -3,11 +3,12 @@
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ─── 创建案件 ────────────────────────────────────────────────────────────────
@@ -66,8 +67,6 @@ class EvidenceCaseResponse(BaseModel):
     case_type: str
     is_minor: bool
     status: str
-    tenant_id: str | None = None
-    tenant_name: str | None = None
     plaintiff_info: dict[str, Any] = Field(default_factory=dict)
     defendant_info: dict[str, Any] = Field(default_factory=dict)
     catalog_data: dict[str, Any] = Field(default_factory=dict)
@@ -105,8 +104,39 @@ class UpdateCaseRequest(BaseModel):
     case_type: Literal["injury", "death"] | None = Field(default=None, description="案件类型")
     is_minor: bool | None = Field(default=None, description="是否未成年人")
     lawyer_info: list[dict[str, str]] | None = Field(default=None, max_length=2, description="律师信息，格式: [{name, phone}, ...]，最多2个")
-    defendant_phone: str | None = Field(default=None, max_length=50, description="被告联系电话（手动输入）")
-    tenant_id: str | None = Field(default=None, description="分配到的租户ID（仅超管可用）")
+    defendant_phone: str | None = Field(default=None, max_length=20, description="被告联系电话（手动输入）")
+
+    @field_validator("lawyer_info")
+    @classmethod
+    def validate_lawyer_info(cls, v: list[dict[str, str]] | None) -> list[dict[str, str]] | None:
+        if v is None:
+            return v
+        for i, lawyer in enumerate(v):
+            if "name" not in lawyer or not lawyer["name"].strip():
+                raise ValueError(f"律师{i+1}必须包含姓名(name)")
+            if "phone" not in lawyer or not lawyer["phone"].strip():
+                raise ValueError(f"律师{i+1}必须包含电话(phone)")
+            # 验证姓名长度
+            if len(lawyer["name"]) > 20:
+                raise ValueError(f"律师{i+1}姓名不能超过20个字符")
+            # 验证电话格式（中国大陆手机号或座机）
+            phone = lawyer["phone"].strip()
+            if not re.match(r"^1[3-9]\d{9}$|^0\d{2,3}-?\d{6,8}$", phone):
+                raise ValueError(f"律师{i+1}电话格式不正确（应为手机号或座机号）")
+        return v
+
+    @field_validator("defendant_phone")
+    @classmethod
+    def validate_defendant_phone(cls, v: str | None) -> str | None:
+        if v is None or v.strip() == "":
+            return v
+        phone = v.strip()
+        # 允许手机号、座机号、或"未知"
+        if phone == "未知":
+            return phone
+        if not re.match(r"^1[3-9]\d{9}$|^0\d{2,3}-?\d{6,8}$", phone):
+            raise ValueError("电话格式不正确（应为手机号或座机号，如13800138000或010-12345678）")
+        return phone
 
 
 # ─── 清单编辑 ────────────────────────────────────────────────────────────────
@@ -188,8 +218,6 @@ class EvidenceCaseListItem(BaseModel):
     case_type: str
     is_minor: bool
     status: str
-    tenant_id: str | None = None
-    tenant_name: str | None = None
     created_at: datetime
     updated_at: datetime
 

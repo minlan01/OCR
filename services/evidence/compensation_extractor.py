@@ -77,22 +77,13 @@ def extract_from_materials(materials: list) -> tuple[List[FeeItem], HospitalStay
         ocr_text = getattr(mat, 'ocr_text', '') or ''
         filename = getattr(mat, 'original_filename', '') or ''
         mat_id = str(getattr(mat, 'id', ''))
-        fee_detail = getattr(mat, 'fee_detail', None) or {}
 
-        if not ocr_text and not fee_detail:
+        if not ocr_text:
             continue
 
-        # 判断是否为费用类素材：分类是 fee_receipt，或者文件名含费用关键词
-        is_fee_material = cat in ('fee_receipt', 'invoice', 'receipt')
-        if not is_fee_material:
-            # 医保结算单可能被分类为 medical_record，但文件名含"医保结算"
-            fn_ft, _ = detect_fee_type_by_filename(filename)
-            if fn_ft and fn_ft in ('medical_fee', 'hospital_fee', 'outpatient_fee', 'pharmacy_fee', 'nursing_supplies'):
-                is_fee_material = True
-
         # 从费用类素材提取金额
-        if is_fee_material:
-            items = parse_fee_receipt(ocr_text, mat_id, filename, fee_detail)
+        if cat in ('fee_receipt', 'invoice', 'receipt'):
+            items = parse_fee_receipt(ocr_text, mat_id, filename)
             fee_items.extend(items)
 
         # 从病历类素材提取住院天数
@@ -102,28 +93,24 @@ def extract_from_materials(materials: list) -> tuple[List[FeeItem], HospitalStay
                 stay_info.days = days
                 stay_info.source = f"从{filename}提取"
 
-    # 去重：同一费用类型的重复素材（如多份医保结算单是同一份的扫描副本）
-    # 按 (fee_type, amount) 分组，同类型同金额只保留一条
-    seen: dict[str, FeeItem] = {}
-    for item in fee_items:
-        key = f"{item.fee_type}:{item.amount}"
-        if key not in seen:
-            seen[key] = item
-    fee_items = list(seen.values())
-
     logger.info(f"费用提取完成: {len(fee_items)}项费用, 住院{stay_info.days}天")
     return fee_items, stay_info
 
-def parse_fee_receipt(ocr_text: str, material_id: str, filename: str, fee_detail: dict | None = None) -> List[FeeItem]:
-    """从单份费用素材中提取费用
-
-    Args:
-        ocr_text: OCR 识别文本
-        material_id: 素材 ID
-        filename: 原始文件名
-        fee_detail: OCR 结构化提取的费用详情（含 total_amount 等字段）
-    """
+def parse_fee_receipt(ocr_text: str, material_id: str, filename: str) -> List[FeeItem]:
+    """从单份费用素材中提取费用"""
     items: List[FeeItem] = []
+
+    # 提取金额的正则模式（优先匹配大金额合计）
+    amount_patterns: List[tuple[str, str]] = [
+        (r'合\s*计[：:\s]*[¥￥]?\s*([\d,]+\.?\d*)', 'total'),
+        (r'总\s*计[：:\s]*[¥￥]?\s*([\d,]+\.?\d*)', 'total'),
+        (r'费用合计[：:\s]*[¥￥]?\s*([\d,]+\.?\d*)', 'total'),
+        (r'金\s*额[：:\s]*[¥￥]?\s*([\d,]+\.?\d*)', 'item'),
+        (r'个人自付[：:\s]*[¥￥]?\s*([\d,]+\.?\d*)', 'personal'),
+        (r'个人支付[：:\s]*[¥￥]?\s*([\d,]+\.?\d*)', 'personal'),
+        (r'统筹支付[：:\s]*[¥￥]?\s*([\d,]+\.?\d*)', 'insurance'),
+        (r'医保支付[：:\s]*[¥￥]?\s*([\d,]+\.?\d*)', 'insurance'),
+    ]
 
     # 判断费用类型 —— 优先使用文件名识别（更精确），其次 OCR 文本回退
     fn_fee_type, fn_desc = detect_fee_type_by_filename(filename)
@@ -146,51 +133,12 @@ def parse_fee_receipt(ocr_text: str, material_id: str, filename: str, fee_detail
             fee_type = 'pharmacy_fee'
             description = '外购药品费'
 
-    # 策略1: 先尝试从 fee_detail.total_amount 提取（结构化数据更可靠）
-    if fee_detail and isinstance(fee_detail, dict):
-        total_amount = fee_detail.get('total_amount')
-        if total_amount is not None:
-            try:
-                amount = Decimal(str(total_amount))
-                if amount > 0:
-                    items.append(FeeItem(
-                        fee_type=fee_type,
-                        amount=amount,
-                        description=description,
-                        source_material_id=material_id,
-                        source_filename=filename,
-                        ocr_snippet=f"fee_detail.total_amount={total_amount}",
-                    ))
-                    return items  # 结构化数据优先，直接返回
-            except Exception:
-                pass
-
-    # 策略2: 从 OCR 文本中正则匹配 — 支持多行（金额在关键词下一行）
-    # OCR 文本格式拆散到不同行，关键词和金额不在同一行 → 用 \s\n 跨行匹配
-    amount_patterns: List[tuple[str, str]] = [
-        # 医保结算单特有：医疗费用总额 / 费用总额 后跟数字（可能跨行）
-        (r'医疗费用总额[\s\n]*([\d,]+\.?\d*)', 'total'),
-        (r'费用总额[\s\n]*([\d,]+\.?\d*)', 'total'),
-        (r'医疗费总额[\s\n]*([\d,]+\.?\d*)', 'total'),
-        # 通复合计/总计（金额在同行或下一行）
-        (r'合\s*计[\s\n]*[¥￥]?\s*([\d,]+\.?\d*)', 'total'),
-        (r'总\s*计[\s\n]*[¥￥]?\s*([\d,]+\.?\d*)', 'total'),
-        (r'费用合计[\s\n]*[¥￥]?\s*([\d,]+\.?\d*)', 'total'),
-        # 个人自付/统筹支付等（可能跨行）
-        (r'个人自付[\s\n]*[¥￥]?\s*([\d,]+\.?\d*)', 'personal'),
-        (r'个人支付[\s\n]*[¥￥]?\s*([\d,]+\.?\d*)', 'personal'),
-        (r'统筹支付[\s\n]*[¥￥]?\s*([\d,]+\.?\d*)', 'insurance'),
-        (r'医保支付[\s\n]*[¥￥]?\s*([\d,]+\.?\d*)', 'insurance'),
-        # 通用金额后面跟数字
-        (r'金\s*额[\s\n]*[¥￥]?\s*([\d,]+\.?\d*)', 'item'),
-    ]
-
     for pattern, amount_type in amount_patterns:
         for m in re.finditer(pattern, ocr_text):
             amount_str = m.group(1).replace(',', '')
             try:
                 amount = Decimal(amount_str)
-                # 取第一个 > 0 的合计金额作为主金额
+                # 取第一个合计金额作为主金额
                 if amount_type == 'total' and amount > 0:
                     snippet = ocr_text[max(0, m.start()-20):m.end()+20]
                     items.append(FeeItem(
