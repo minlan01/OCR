@@ -42,29 +42,39 @@ process_evidence_full(case_id)
         │  对每个 material：
         ├─→ dispatch_material_ocr(material_id)        [派发器，秒级]
         │       │
+        │       │  下载 PDF 到 OCR_WORK_DIR（一次，路径记入 DB）
         │       │  读总页数 → 按 200 页/批切分
-        │       │  为每批派发：
-        │       ├─→ process_ocr_batch(m_id, 0, 1,   200)   ┐
-        │       ├─→ process_ocr_batch(m_id, 1, 201, 400)   ├─ N 批并行
-        │       └─→ process_ocr_batch(m_id, 49, 9801, 10000) ┘
+        │       │  为每批派发（传本地 PDF 路径）：
+        │       ├─→ process_ocr_batch(m_id, 0, 1,   200, pdf_path)   ┐
+        │       ├─→ process_ocr_batch(m_id, 1, 201, 400, pdf_path)   ├─ N 批并行
+        │       └─→ process_ocr_batch(m_id, 49, 9801, 10000, pdf_path) ┘
         │                  │
-        │                  │  每批：拆页→OCR→写 MinIO pages/page_NNNN.json
+        │                  │  每批：用 fitz 打开 pdf_path 指定页段→OCR→写 MinIO pages/page_NNNN.json
         │                  │  完成后更新进度（已完成的批次 index）
         │                  ▼
         └─→ finalize_material_ocr(material_id)        [收口器]
                 │  检查是否所有批次都完成
                 │  是 → 拼接 full_text.txt + 写 manifest.json
                 │       更新 material.ocr_status=completed
+                │       删除本地 PDF 临时文件
+                │       触发 check_case_ocr_done(case_id)
                 │  否 → 找出缺失/失败批次，重新派发；自身 retry
 ```
 
-### 2.2 三个新 Celery task
+**关键：`process_evidence_full` 不轮询等待**。它派发完所有 material 的 `dispatch_material_ocr.delay()` 后立即返回，不阻塞。最后一个 material 的收口器在 finalize 成功时触发 `check_case_ocr_done.delay(case_id)`，由它检查 case 下所有 material 是否都 `completed`/`failed`，是则推进到分类阶段（调 `_run_classify_pipeline_optimized` + `generate_catalog`）。
+
+这避免了"`process_evidence_full` 轮询 DB 等待期间自身 30 分钟超时撞墙"的问题——派发是秒级返回，超时风险消失。
+
+### 2.2 四个新 Celery task
 
 | Task | 输入 | 职责 | 耗时 | max_retries |
 |---|---|---|---|---|
-| `dispatch_material_ocr` | `material_id` | 读页数、切批、派发批次 task、派发收口 task | <5s | 2 |
-| `process_ocr_batch` | `material_id, batch_index, batch_start, batch_end` | 拆指定页段→OCR→写 MinIO→更新进度 | 30s-2min | 3 |
-| `finalize_material_ocr` | `material_id` | 检查进度、补缺、拼接 full_text、写 manifest、更新 material | 10-60s | 5 |
+| `dispatch_material_ocr` | `material_id` | 下载 PDF 到本地、读页数、切批、派发批次 task、派发收口 task | <30s（含下载） | 2 |
+| `process_ocr_batch` | `material_id, batch_index, batch_start, batch_end, pdf_path` | 用 fitz 打开 pdf_path 指定页段→OCR→写 MinIO→更新进度 | 30s-2min | 3 |
+| `finalize_material_ocr` | `material_id` | 检查进度、补缺、拼接 full_text、写 manifest、更新 material、清理本地 PDF、触发 case 检查 | 10-60s | 5 |
+| `check_case_ocr_done` | `case_id` | 检查 case 下所有 material 是否终态，是则推进分类+目录阶段 | <5s | 3 |
+
+`check_case_ocr_done` 的幂等性：多个 material 同时 finalize 会触发多次，开头检查 case 状态——若已进入 `catalog_ready`/分类中则直接 return；若仍有 material 在 `processing` 则 return（等下一个 finalize 触发）；只有全部终态才推进。
 
 ### 2.3 为什么用"派发器 + 收口器"而不是 Celery chord
 
@@ -84,9 +94,23 @@ process_evidence_full(case_id)
 - 批次 task **不加全局锁**（否则失去并行意义），用 `worker_concurrency=2` 自然限流
 - 新增 Redis 信号量 `ocr_batch_concurrent:{material_id}` 限每材料同时 N 批（默认 4），防止单材料占满整个 worker 池
 
+**信号量设计**（复用 `services/utils/task_concurrency.py` 的 Lua 脚本模式）：
+
+```python
+# acquire（Lua 原子）：INCR key → 若 > limit 则 DECR 并返回失败
+# release：DECR key（不小于 0）
+# key: scanstruct:ocr_batch_concurrent:{material_id}
+# TTL: 7200s（与现有 task_concurrency 一致，兜底 worker 崩溃）
+```
+
+- **acquire 时机**：批次 task 开头（checkpoint 幂等检查之后、实际 OCR 之前）
+- **release 时机**：批次 task 的 `finally` 块（无论成功/失败/重试都释放）
+- **acquire 失败**：批次 task 走 `self.retry(countdown=10)`，短退避后重试获取
+- **TTL 兜底**：worker 崩溃后信号量 2 小时自动过期，不会永久占位
+
 ### 2.6 与现有流程的衔接
 
-- `process_evidence_full` 里 `_run_ocr_pipeline` 改为：对所有 material 调 `dispatch_material_ocr.delay()`，然后**轮询 DB** 等所有 material 的 `ocr_status` 变成 `completed`/`failed`，再进分类阶段
+- `process_evidence_full` 里 `_run_ocr_pipeline` 改为：对所有 material 调 `dispatch_material_ocr.delay()` 后**立即返回**（不轮询）。case 进入分类阶段的触发点移到 `check_case_ocr_done` task
 - `process_single_material_ocr`（单素材重试）改为调 `dispatch_material_ocr.delay(material_id)`，复用同一套分片逻辑
 - 小文件（docx/xlsx/image/页数 < 阈值）走**老路径**（单 task 内 inline），不进分片
 
@@ -101,6 +125,32 @@ else:
 ```
 
 500 页以下保持现状走老路径。500 页以上（含现有 3000 页场景）走分片路径——分片对 3000 页同样适用且更稳，相当于把现有 3000 页能力升级为"任意页数"。
+
+### 2.8 PDF 分发策略（避免重复下载）
+
+派发器下载一次 PDF 到 `OCR_WORK_DIR` 本地路径，各批次 task 共享这个路径（通过 task 参数 `pdf_path` 传入），收口器负责清理。
+
+```
+派发器：
+  1. minio_client.download_file(bucket, key, local_path)  # 流式下载到 OCR_WORK_DIR
+  2. 记录 local_path 到 DB EvidenceStep.step_metadata.pdf_local_path
+  3. fitz.open(local_path).page_count 读总页数
+  4. 切批，每批 process_ocr_batch.delay(material_id, idx, start, end, local_path)
+
+批次 task：
+  1. fitz.open(pdf_path) 打开本地路径（fitz 支持多进程只读打开同一文件）
+  2. 只渲染 [batch_start, batch_end] 页
+
+收口器 finalize 成功后：
+  1. os.unlink(pdf_local_path)  # 清理本地 PDF
+  2. delete_material_ocr 不动 pages/（保留供重试）
+```
+
+**安全性**：
+- `OCR_WORK_DIR` 是磁盘卷（非 tmpfs），多 worker 进程可共享读
+- 派发器失败重试时，若 `pdf_local_path` 已存在且文件大小匹配 MinIO，跳过下载（幂等）
+- 收口器失败重试时，若本地 PDF 已被清理，重新从 MinIO 下载（极端情况，正常路径不会触发）
+- worker 重启后 `OCR_WORK_DIR` 残留文件由现有 `_cleanup_tmp_dir` 的 1 小时过期逻辑兜底清理
 
 ---
 
@@ -160,7 +210,7 @@ evidence/{case_id}/ocr/{material_id}/
 
 ```python
 @celery_app.task(bind=True, name="process_ocr_batch", max_retries=3)
-def process_ocr_batch(self, material_id, batch_index, batch_start, batch_end):
+def process_ocr_batch(self, material_id, batch_index, batch_start, batch_end, pdf_path):
     # 1. 读 MinIO checkpoint，已完成则直接返回（幂等）
     checkpoint = _load_checkpoint(material_id, batch_index)
     if checkpoint and checkpoint["status"] == "completed":
@@ -173,15 +223,14 @@ def process_ocr_batch(self, material_id, batch_index, batch_start, batch_end):
     # 3. 写 checkpoint 占位（status=processing）
     _write_checkpoint(material_id, batch_index, status="processing")
 
-    # 4. 拆页 → OCR → 逐页写 MinIO pages/page_NNNN.json
-    #    用 fitz 只打开 [batch_start, batch_end] 页
+    # 4. 用 fitz 打开 pdf_path 指定页段 → OCR → 逐页写 MinIO pages/page_NNNN.json
     #    每页写完后追加到 checkpoint.pages_written
     try:
         already_written = set(checkpoint.get("pages_written", [])) if checkpoint else set()
         for page_num in range(batch_start, batch_end + 1):
             if page_num in already_written:
                 continue
-            ... ocr ...
+            ... ocr (fitz 打开 pdf_path, 渲染 page_num) ...
             store.write_page(page_num, results)  # 复用现有 EvidenceOCRStore.write_page
             _append_checkpoint_page(material_id, batch_index, page_num)
     except Exception as e:
@@ -199,12 +248,18 @@ def process_ocr_batch(self, material_id, batch_index, batch_start, batch_end):
 
 ### 3.4 `EvidenceOCRStore` 改造
 
-`EvidenceOCRStore` 不再是单 material 一个实例从创建活到 finalize，而是**每批 task 各自创建**，只负责 `write_page`。`finalize` 移到收口器。
+**关键约束：`finalize` 方法保留，不删除**。老路径（小文件 inline + 500 页以下单 task 大文件 offload）继续用 `EvidenceOCRStore` 的 `write_page` + `finalize` 完整流程。现有 `worker/evidence_tasks.py:775-784` 调 `store.finalize()` 的代码不动。
+
+分片路径下，每批 task 各自创建 `EvidenceOCRStore` 实例，**只调 `write_page`**（写 `pages/page_NNNN.json` + 累加本地 text 临时文件）。批次 task 完成后**不调 finalize**，直接销毁实例（`abort` 清理本地临时文件即可，MinIO pages 已写完保留）。
+
+收口器负责 finalize 阶段的工作，但**不通过 `EvidenceOCRStore.finalize`**，而是调新拆出的静态方法：
 
 需要的改造：
-- 拆出 `_write_full_text_and_manifest(full_text_path, full_text_len, preview, summary)` 静态方法，供收口器复用
-- 新增 `load_page_results(material_id, page_num)` 类方法，供 finalize 按页读回拼接
-- 收口器流式拼接 full_text：临时文件累加各页文本 → 上传 MinIO，不全进内存
+- 新增**静态方法** `_write_full_text_and_manifest(bucket, prefix, full_text_path, full_text_len, preview, summary)`：上传 full_text.txt + manifest.json 到指定 MinIO 路径。`EvidenceOCRStore.finalize` 内部也调它（代码复用，行为不变）
+- 新增**类方法** `load_page_text(material_id, page_num)` → `str`：从 MinIO 读 `pages/page_NNNN.json`，提取 `text` 字段。供收口器拼接 full_text 用
+- 收口器流式拼接 full_text：见 §3.5a
+
+**对现有测试的影响**：`test_ocr_storage.py::test_evidence_ocr_store_write_and_finalize` 不受影响（`finalize` 行为不变，只是内部多调一个静态方法）。
 
 ### 3.5 收口器失败处理策略
 
@@ -233,13 +288,75 @@ def finalize_material_ocr(self, material_id):
             "error": f"{len(unrecoverable)} batches failed after max retries",
             "failed_batches": unrecoverable,
         }
+        # 失败也触发 case 检查（让 check_case_ocr_done 判断是否全部终态）
+        check_case_ocr_done.delay(str(material.evidence_case_id))
         return
 
     # 全部完成 → 拼接 full_text + 写 manifest
-    _assemble_full_text(material_id)   # 按 page_NNNN.json 顺序读、拼接、上传
+    _assemble_full_text(material_id)   # 见 §3.5a
     _write_manifest(material_id)
     material.ocr_status = "completed"
+
+    # 清理本地 PDF 临时文件
+    pdf_local_path = progress.get("pdf_local_path")
+    if pdf_local_path:
+        _cleanup_temp_files(pdf_local_path)
+
+    # 触发 case 级检查
+    check_case_ocr_done.delay(str(material.evidence_case_id))
 ```
+
+### 3.5a `_assemble_full_text` 流式拼接策略
+
+10000 页的 `page_NNNN.json` 散落在 MinIO，收口器按页号顺序读回拼接 full_text.txt：
+
+```python
+def _assemble_full_text(material_id):
+    """流式拼接 full_text.txt：并发下载页 JSON → 提取 text → 追加写临时文件 → 上传 MinIO"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    progress = _load_progress(material_id)
+    total_pages = progress["total_pages"]
+
+    work_base = os.getenv("OCR_WORK_DIR") or None
+    fd, tmp_path = tempfile.mkstemp(dir=work_base, suffix=".full_text.txt")
+    os.close(fd)
+
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            # 按页号顺序的写锁 + 并发下载
+            # 用 dict 收集 {page_num: text}，写时按 1..total_pages 顺序遍历
+            page_texts: dict[int, str] = {}
+            CONCURRENT = 10  # 并发下载数，避免 10000 次串行 GET
+
+            def _fetch(page_num):
+                return page_num, EvidenceOCRStore.load_page_text(material_id, page_num)
+
+            with ThreadPoolExecutor(max_workers=CONCURRENT) as pool:
+                futures = {pool.submit(_fetch, p): p for p in range(1, total_pages + 1)}
+                for fut in as_completed(futures):
+                    page_num, text = fut.result()
+                    page_texts[page_num] = text
+
+            # 按页号顺序追加写
+            for p in range(1, total_pages + 1):
+                text = page_texts.get(p, "")
+                if text:
+                    f.write(text)
+                    f.write("\n")
+
+        full_text_len = os.path.getsize(tmp_path)
+        # 复用 EvidenceOCRStore 拆出的静态方法上传 + 写 manifest
+        EvidenceOCRStore._write_full_text_and_manifest(
+            bucket, prefix, tmp_path, full_text_len, preview, summary
+        )
+    finally:
+        _cleanup_temp_files(tmp_path)
+```
+
+- **并发度 10**：10000 页 / 10 并发 ≈ 1000 轮，每轮 ~50ms → ~50s，可接受
+- **内存峰值**：`page_texts` dict 存全部页文本（10000 页约 50-200MB），是收口器唯一内存压力点。若未来需进一步优化，可改为"每下载 N 页就 flush 到临时文件"的滑动窗口，但当前 200MB 在 4GB worker 内存预算内可接受
+- **只取 text 字段**：`load_page_text` 只读 JSON 的 `text`，不读 `blocks`（blocks 留在 pages/ 供后续按需取，不进 full_text）
 
 ### 3.6 三种失败的区分
 
@@ -261,7 +378,22 @@ def finalize_material_ocr(self, material_id):
 ### 3.8 数据一致性兜底
 
 - **MinIO 写页是幂等的**：`page_NNNN.json` 覆盖写，重跑同一页结果一致
-- **checkpoint 写采用 read-modify-write**：并发同批次重跑概率极低（Celery 同 task_id 不会并发），用 MinIO etag 做乐观锁兜底
+- **DB `step_metadata` 进度更新用原子 SQL**：批次完成时不用 read-modify-write，而是用 `jsonb_set` + `||` 数组拼接的原子 UPDATE：
+
+```sql
+UPDATE evidence_steps
+SET step_metadata = jsonb_set(
+    step_metadata,
+    '{completed_batches}',
+    (step_metadata->'completed_batches') || to_jsonb($batch_index::int)
+)
+WHERE case_id = $case_id AND step_name = 'ocr_shard'
+  AND NOT ($batch_index = ANY(SELECT jsonb_array_elements_text(step_metadata->'completed_batches')::int));
+```
+
+`failed_batches` 更新同理用 `||` 拼接。`WHERE NOT ...` 防重复 append。两个批次 task 同时完成时，PostgreSQL 行级锁串行化两个 UPDATE，不会丢记录。
+
+- **MinIO checkpoint 写采用 read-modify-write**：并发同批次重跑概率极低（Celery 同 task_id 不会并发），用 MinIO etag 做乐观锁兜底
 - **full_text 拼接顺序**：finalize 时按 `page_NNNN.json` 的 N 排序，不依赖批次完成顺序
 - **material.ocr_status 状态机**：`processing` 期间任何 finalize 失败都保持 `processing`，只有 finalize 成功才置 `completed`，避免半成品被分类器读到
 
@@ -296,17 +428,44 @@ task_annotations = {
         "time_limit": 360,
     },
     "finalize_material_ocr": {
-        "soft_time_limit": 120,
-        "time_limit": 150,
+        "soft_time_limit": 180,   # 3 分钟，含 10000 页 full_text 拼接
+        "time_limit": 210,
     },
     "dispatch_material_ocr": {
-        "soft_time_limit": 60,
-        "time_limit": 90,
+        "soft_time_limit": 120,   # 2 分钟，含 PDF 下载
+        "time_limit": 150,
+    },
+    "check_case_ocr_done": {
+        "soft_time_limit": 30,
+        "time_limit": 60,
     },
 }
 ```
 
 不调全局 `task_time_limit`，避免影响 scan/analyze/export 等其他 task。
+
+**`visibility_timeout` 必须覆盖最大 task `time_limit`**。现有 `celery_app.py:54` 是 `celery_task_timeout_seconds + 600`（绑定全局超时），但分片 task 用 `task_annotations` 单独配了更短超时，全局绑定方式不再正确。
+
+改为显式计算所有 task 超时的最大值：
+
+```python
+# visibility_timeout 必须 >= 所有 task 的 time_limit 最大值 + buffer
+# 否则长任务会被 Redis 重新派发给另一个 worker，导致同任务双跑
+_max_task_time_limit = max(
+    settings.celery_task_timeout_seconds,  # 全局默认（scan/analyze/export 用）
+    360,  # process_ocr_batch
+    210,  # finalize_material_ocr
+    150,  # dispatch_material_ocr
+    60,   # check_case_ocr_done
+)
+broker_transport_options={
+    "max_connections": 10,
+    "health_check_interval": 30,
+    "visibility_timeout": _max_task_time_limit + 600,
+}
+```
+
+这样无论全局超时怎么调，`visibility_timeout` 始终 >= 任何 task 的硬超时 + 10 分钟 buffer，杜绝双跑。
 
 ---
 
@@ -320,13 +479,14 @@ task_annotations = {
 
 > 放 services 层而非 worker 层，理由：编排逻辑可被单测覆盖（mock Celery task），worker 只做 `delay()` 调用 + DB session 管理。
 
-### 5.2 修改文件（5 个）
+### 5.2 修改文件（6 个）
 
 | 文件 | 改动 |
 |---|---|
-| `services/evidence/ocr_storage.py` | `EvidenceOCRStore` 拆出 `_write_full_text_and_manifest` 静态方法供收口器复用；新增 `load_page_results(material_id, page_num)` 类方法供 finalize 按页读回 |
-| `worker/evidence_tasks.py` | 新增 3 个 `@celery_app.task`：`dispatch_material_ocr`、`process_ocr_batch`、`finalize_material_ocr`；`_run_ocr_pipeline` 改为派发 `dispatch_material_ocr` 后轮询 DB 等所有 material 完成；`process_single_material_ocr` 改为调派发器；`_ocr_single_material` 保留给小文件路径 |
+| `services/evidence/ocr_storage.py` | `EvidenceOCRStore` 拆出 `_write_full_text_and_manifest` 静态方法供收口器复用；新增 `load_page_text(material_id, page_num)` 类方法供 finalize 按页读回 |
+| `worker/evidence_tasks.py` | 新增 4 个 `@celery_app.task`：`dispatch_material_ocr`、`process_ocr_batch`、`finalize_material_ocr`、`check_case_ocr_done`；`_run_ocr_pipeline` 改为派发 `dispatch_material_ocr` 后立即返回（不轮询）；`process_single_material_ocr` 改为调派发器；`_ocr_single_material` 保留给小文件路径 |
 | `config/settings.py` | 新增 6 个配置项 |
+| `worker/celery_app.py` | 新增 `task_annotations`（4 个新 task 的独立超时）；`visibility_timeout` 改为取所有 task `time_limit` 最大值 + buffer |
 | `api/routes/evidence.py` | `retry-ocr` 端点：若材料走过分片且 DB 有进度记录，调 `dispatch_material_ocr` 走续传（只派发缺失批次）而非从头；`progress` 端点：透传 `step_metadata.completed_batches/total_batches` 给前端 |
 | `static/src/views/EvidencePage.vue` | Step 1 进度卡片：分片材料显示 `已完成批次/总批次` 进度条；"重试 OCR"按钮文案分片失败时改为"重试失败批次" |
 
@@ -354,6 +514,11 @@ task_annotations = {
 | `test_cancel_cooperative` | DB 打 cancelled=True → 批次 task 开头检查直接 return |
 | `test_small_file_skip_shard` | 300 页 → 不进分片路径，走 `_ocr_single_material` 老逻辑 |
 | `test_progress_reporting` | 派发器写 total_batches，批次完成更新 completed_batches，前端可读 |
+| `test_dispatch_concurrent_idempotent` | 模拟用户连点两次"重试" → 两个派发器并发 → 第二个检查 DB status=sharding 直接 return，不重复派发批次 |
+| `test_db_progress_atomic_update` | 两个批次 task 同时完成 → 并发调 `_mark_batch_completed` → DB `completed_batches` 同时含两个 index，不丢记录（用 `jsonb_set` + `||` 原子 SQL） |
+| `test_selected_pages_with_shard` | 600 页 PDF + selected_pages=[10,20,30,...,100]（50 页）→ 走分片但只 OCR 选定页，full_text 只含选定页文本 |
+| `test_check_case_ocr_done_idempotent` | case 下 3 个 material，前 2 个 finalize 触发 check → 仍有 processing 直接 return；第 3 个 finalize 触发 check → 全部终态 → 推进分类 |
+| `test_finalize_retry_loop_progress` | 批次一直失败 → 收口器 5 次 retry（每次 countdown=60s）期间 material 保持 `processing` → 第 5 次失败置 `failed` → 前端轮询能看到 `failed_batches` 详情 |
 
 用 mock MinIO + mock Celery task（直接调函数，不真起 worker）。
 
@@ -363,10 +528,12 @@ task_annotations = {
 
 - 构造 600 页 PDF（越过 500 阈值，触发分片，3 批）
 - 用真实 MinIO + mock OCR 引擎（返回固定文本）
-- 跑完整 `dispatch → batch × 3 → finalize` 流程
+- 跑完整 `dispatch → batch × 3 → finalize → check_case_ocr_done` 流程
 - 校验：MinIO 有 600 个 `page_NNNN.json` + 1 个 `full_text.txt` + 1 个 `manifest.json`
 - 校验：DB `material.ocr_status=completed`，`ocr_result.storage=minio`
 - 校验：`get_material_ocr_text` 返回完整 600 页文本
+- 校验：本地 PDF 临时文件已被清理
+- 校验：`check_case_ocr_done` 触发后 case 状态推进到 `catalog_ready`
 
 ### 6.3 断点续传测试（同 e2e 文件）
 
@@ -387,11 +554,14 @@ task_annotations = {
 
 | 风险 | 缓解 |
 |---|---|
-| 批次 task 并发把 worker 池占满，饿死其他 task | `ocr_batch_max_concurrent_per_material=4` Redis 信号量；后续可配 `task_routes` 路由到独立 queue |
+| 批次 task 并发把 worker 池占满，饿死其他 task | `ocr_batch_max_concurrent_per_material=4` Redis 信号量（§2.5）；后续可配 `task_routes` 路由到独立 queue |
 | MinIO 小文件爆炸（10000 页 = 10000 个 page json + 50 个 checkpoint） | 已有 `delete_material_ocr` 清理；finalize 后可删 checkpoints（保留 pages 用于重试） |
-| full_text.txt 拼接 10000 页内存峰值 | finalize 流式拼接：临时文件累加 → 上传 MinIO，不全进内存 |
-| 用户重复点"重试"导致多个派发器并发 | 派发器开头检查 DB 是否已有 `step_name=ocr_shard` 且 status=sharding 的 step，有则直接 return |
+| full_text.txt 拼接 10000 页内存峰值 | §3.5a `_assemble_full_text` 并发 10 下载 + 流式写临时文件；`page_texts` dict 峰值约 200MB，在 4GB worker 预算内 |
+| 用户重复点"重试"导致多个派发器并发 | 派发器开头检查 DB 是否已有 `step_name=ocr_shard` 且 status=sharding 的 step，有则直接 return；有 `test_dispatch_concurrent_idempotent` 测试覆盖 |
 | 分类器读 `get_material_ocr_text` 拉 10000 页全文 → LLM 截断 | 现有 `llm_context_material_detail_limit=12000` 已截断；不在本设计范围，记为后续优化点 |
+| `check_case_ocr_done` 被多个 finalize 同时触发，并发推进分类 | task 开头检查 case 状态，已 `catalog_ready` 则 return；`_run_classify_pipeline_optimized` 本身幂等（覆盖写 `extracted_data`）；有 `test_check_case_ocr_done_idempotent` 测试覆盖 |
+| 收口器 retry 死循环（批次一直失败） | `max_retries=5`，每次 `countdown=60s`，最多 5 分钟；5 次后 material 置 `failed`，前端可读 `failed_batches` 详情手动重试；有 `test_finalize_retry_loop_progress` 测试覆盖 |
+| 本地 PDF 临时文件残留（worker 崩溃后未清理） | 收口器 finalize 成功后清理；`_cleanup_tmp_dir` 的 1 小时过期逻辑兜底；派发器重试时检查文件大小匹配 MinIO 则跳过下载 |
 
 ---
 
