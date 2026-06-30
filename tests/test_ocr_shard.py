@@ -385,3 +385,84 @@ def test_is_material_cancelled_false(monkeypatch):
 def test_is_material_cancelled_no_progress(monkeypatch):
     monkeypatch.setattr(ocr_shard, "load_progress", lambda mid: None)
     assert ocr_shard.is_material_cancelled(MATERIAL_ID) is False
+
+
+# ─── 9. 代码审查修复回归测试 ─────────────────────────────────────────────────
+
+def test_mark_batch_failed_atomic_replace(monkeypatch):
+    """C1 回归：mark_batch_failed 原子替换同 index 旧记录，不丢其他批次记录。
+
+    模拟 failed_batches 已有批 0 的旧记录，写入批 1 失败记录后，
+    批 0 旧记录应被保留，批 1 新记录应被追加。
+    """
+    fake_eng = MagicMock()
+    fake_conn = MagicMock()
+    # mark_batch_failed 用 eng.begin()（事务上下文）
+    fake_eng.begin.return_value.__enter__ = lambda self: fake_conn
+    fake_eng.begin.return_value.__exit__ = lambda *a: None
+    fake_eng.dispose = MagicMock()
+    monkeypatch.setattr(ocr_shard, "_sync_engine", lambda: fake_eng)
+    monkeypatch.setattr(ocr_shard, "_get_case_id_for_material", lambda mid: CASE_ID)
+
+    ocr_shard.mark_batch_failed(MATERIAL_ID, 1, "boom", 2)
+
+    # 应该只执行一次 UPDATE（原子 SQL），没有 SELECT（不走 read-modify-write）
+    assert fake_conn.execute.call_count == 1
+    sql_arg = fake_conn.execute.call_args[0][0]
+    sql_text = str(sql_arg)
+    # 确认是 UPDATE 原子操作（含 jsonb_set + jsonb_agg 过滤）
+    assert "UPDATE evidence_steps" in sql_text
+    assert "jsonb_set" in sql_text
+    assert "jsonb_agg" in sql_text
+
+
+def test_is_finalize_ready_failed_then_completed_no_dead_code(monkeypatch):
+    """M1 回归：unrecoverable_idx 死代码删除后，逻辑仍正确。"""
+    monkeypatch.setattr(ocr_shard.settings, "ocr_batch_max_retries", 3)
+    # 批 2 不可救 + 批 0 已完成（曾失败后成功）
+    progress = {
+        "total_batches": 3,
+        "completed_batches": [0],
+        "failed_batches": [
+            {"index": 0, "error": "old", "retries": 1},  # 已 completed，应忽略
+            {"index": 2, "error": "boom", "retries": 3},  # 不可救
+        ],
+    }
+    monkeypatch.setattr(ocr_shard, "load_progress", lambda mid: progress)
+    state = ocr_shard.is_finalize_ready(MATERIAL_ID)
+    assert state["ready"] is False
+    assert len(state["unrecoverable"]) == 1
+    assert state["unrecoverable"][0]["index"] == 2
+    assert state["retryable"] == []
+    assert state["missing"] == [1]
+
+
+def test_get_case_id_for_material_caching(monkeypatch):
+    """I1 回归：case_id 缓存命中时不查 DB。"""
+    # 清空缓存
+    ocr_shard._case_id_cache.clear()
+    call_count = 0
+
+    def _fake_sync_engine():
+        nonlocal call_count
+        call_count += 1
+        eng = MagicMock()
+        conn = MagicMock()
+        eng.connect.return_value.__enter__ = lambda self: conn
+        eng.connect.return_value.__exit__ = lambda *a: None
+        eng.dispose = MagicMock()
+        row = MagicMock()
+        row.__getitem__ = lambda self, k: CASE_ID
+        conn.execute.return_value.fetchone.return_value = row
+        return eng
+
+    monkeypatch.setattr(ocr_shard, "_sync_engine", _fake_sync_engine)
+
+    # 第一次调用：查 DB + 缓存
+    result1 = ocr_shard._get_case_id_for_material(MATERIAL_ID)
+    assert result1 == CASE_ID
+    assert call_count == 1
+    # 第二次调用：命中缓存，不查 DB
+    result2 = ocr_shard._get_case_id_for_material(MATERIAL_ID)
+    assert result2 == CASE_ID
+    assert call_count == 1  # 仍是 1，没有新增 DB 调用

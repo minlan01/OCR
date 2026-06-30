@@ -218,7 +218,17 @@ def load_progress(material_id: str) -> dict | None:
     }
 
 
+# case_id 缓存：material_id -> case_id（进程内，避免高频查 DB）
+_case_id_cache: dict[str, str] = {}
+_case_id_cache_lock = __import__("threading").Lock()
+
+
 def _get_case_id_for_material(material_id: str) -> str | None:
+    # 优先读缓存
+    with _case_id_cache_lock:
+        cached = _case_id_cache.get(material_id)
+    if cached:
+        return cached
     from sqlalchemy import text
     eng = _sync_engine()
     try:
@@ -229,7 +239,11 @@ def _get_case_id_for_material(material_id: str) -> str | None:
             ).fetchone()
     finally:
         eng.dispose()
-    return str(row[0]) if row and row[0] else None
+    result = str(row[0]) if row and row[0] else None
+    if result:
+        with _case_id_cache_lock:
+            _case_id_cache[material_id] = result
+    return result
 
 
 def write_progress(material_id: str, **fields: Any) -> None:
@@ -330,9 +344,10 @@ def mark_batch_failed(
     error: str,
     retries: int,
 ) -> None:
-    """追加/更新 failed_batches 中该批次的失败记录（read-modify-write，并发低）。
+    """原子更新 failed_batches 中该批次的失败记录。
 
-    失败批次用 {index, error, retries} 结构，收口器据此判断是否可救。
+    用 jsonb 原子操作（与 mark_batch_completed 同模式），避免 read-modify-write
+    并发丢更新：先过滤掉同 index 旧记录，再追加新记录。
     """
     from sqlalchemy import text
     case_id = _get_case_id_for_material(material_id)
@@ -341,28 +356,38 @@ def mark_batch_failed(
     eng = _sync_engine()
     try:
         with eng.begin() as conn:
-            row = conn.execute(
-                text(
-                    "SELECT step_metadata FROM evidence_steps "
-                    "WHERE case_id = :cid AND step_name = :step "
-                    "ORDER BY started_at DESC LIMIT 1"
-                ),
-                {"cid": case_id, "step": STEP_NAME},
-            ).fetchone()
-            if not row:
-                return
-            meta = row[0] or {}
-            failed = list(meta.get("failed_batches") or [])
-            # 替换同 index 的旧记录，或追加新记录
-            failed = [b for b in failed if b.get("index") != batch_index]
-            failed.append({"index": batch_index, "error": error, "retries": retries})
-            meta["failed_batches"] = failed
+            # 原子：jsonb 删除同 index 旧记录 + 追加新记录
+            new_record = json.dumps(
+                {"index": batch_index, "error": error, "retries": retries},
+                ensure_ascii=False,
+            )
             conn.execute(
                 text(
-                    "UPDATE evidence_steps SET step_metadata = :meta "
-                    "WHERE case_id = :cid AND step_name = :step"
+                    """
+                    UPDATE evidence_steps
+                    SET step_metadata = jsonb_set(
+                        step_metadata,
+                        '{failed_batches}',
+                        COALESCE(
+                            (
+                                SELECT jsonb_agg(elem)
+                                FROM jsonb_array_elements(
+                                    step_metadata->'failed_batches'
+                                ) AS elem
+                                WHERE (elem->>'index')::int != :idx
+                            ),
+                            '[]'::jsonb
+                        ) || :new_record::jsonb
+                    )
+                    WHERE case_id = :cid AND step_name = :step
+                    """
                 ),
-                {"meta": json.dumps(meta, ensure_ascii=False), "cid": case_id, "step": STEP_NAME},
+                {
+                    "cid": case_id,
+                    "step": STEP_NAME,
+                    "idx": batch_index,
+                    "new_record": new_record,
+                },
             )
     finally:
         eng.dispose()
@@ -463,7 +488,12 @@ def acquire_batch_slot(material_id: str) -> bool:
 
 
 def release_batch_slot(material_id: str) -> None:
-    """释放批次许可。必须在 finally 块调用。"""
+    """释放批次许可。必须在 finally 块调用。
+
+    与 clear_batch_semaphore 的关系：批次 task 正常完成/失败时 DECR 归还许可；
+    finalize 到达终态时 DELETE 整个 key（兜底清理崩溃残留）。两者不冲突——
+    正常路径 DECR 到 0，finalize DELETE；异常路径 DECR 未执行，finalize DELETE 兜底。
+    """
     limit = settings.ocr_batch_max_concurrent_per_material
     if limit <= 0:
         return
@@ -577,12 +607,13 @@ def dispatch_plan(
     # 幂等检查
     existing = load_progress(material_id)
     if existing and existing.get("status") == STATUS_SHARDING:
-        # 续传：只派发 pending 批次
+        # 续传：从 DB 读 total_pages（避免传入值与记录不一致），只派发 pending 批次
         batches_meta = existing
         total_batches = batches_meta["total_batches"]
+        db_total_pages = batches_meta["total_pages"]
         completed = set(batches_meta["completed_batches"])
         # 重建批次计划，过滤已完成
-        all_batches = plan_batches(total_pages, batches_meta["batch_size"])
+        all_batches = plan_batches(db_total_pages, batches_meta["batch_size"])
         pending = [(i, s, e) for (i, s, e) in all_batches if i not in completed]
         return {
             "batches": pending,
@@ -642,7 +673,6 @@ def is_finalize_ready(material_id: str) -> dict:
         b for b in active_failed
         if int(b.get("retries", 0)) >= max_retries
     ]
-    unrecoverable_idx = {b["index"] for b in unrecoverable}
     retryable = [
         b["index"] for b in active_failed
         if int(b.get("retries", 0)) < max_retries

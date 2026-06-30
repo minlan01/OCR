@@ -774,7 +774,13 @@ def _dispatch_material_ocr_impl(material_id: str) -> None:
         raise
 
 
-@celery_app.task(bind=True, name="process_ocr_batch", max_retries=settings.ocr_batch_max_retries + 5)
+@celery_app.task(
+    bind=True,
+    name="process_ocr_batch",
+    # max_retries = 业务重试(ocr_batch_max_retries=3) + slot 排队余量(5)
+    # slot full 时 countdown=30s 重试，5 轮 = 2.5 分钟覆盖前批完成
+    max_retries=settings.ocr_batch_max_retries + 5,
+)
 def process_ocr_batch(self, material_id: str, batch_index: int, batch_start: int, batch_end: int, pdf_path: str):
     """批次 task：OCR 指定页段 → 逐页写 MinIO → 更新 checkpoint + DB 进度。
 
@@ -803,6 +809,47 @@ def process_ocr_batch(self, material_id: str, batch_index: int, batch_start: int
     # 2. 协作式取消
     if ocr_shard.is_material_cancelled(material_id):
         return {"skipped": "cancelled"}
+
+    # 2.5 检查 pdf_path 存在性（worker 重启后临时文件可能丢失，重新下载）
+    if not os.path.exists(pdf_path):
+        logger.info(f"batch {batch_index} pdf_path missing, re-downloading: {pdf_path}")
+        try:
+            import tempfile as _tempfile
+            from sqlalchemy import create_engine as _create_engine, select
+            from db.models_evidence import EvidenceMaterial
+            from services.storage.minio_client import minio_client
+            eng = _create_engine(
+                settings.database_url_sync,
+                pool_size=1, max_overflow=2, pool_pre_ping=True, pool_recycle=3600,
+            )
+            try:
+                with eng.connect() as conn:
+                    row = conn.execute(
+                        select(
+                            EvidenceMaterial.minio_bucket,
+                            EvidenceMaterial.minio_key,
+                            EvidenceMaterial.original_filename,
+                        ).where(EvidenceMaterial.id == uuid.UUID(material_id))
+                    ).fetchone()
+            finally:
+                eng.dispose()
+            if row and row[0] and row[1]:
+                bucket = row[0] or settings.minio_bucket_raw
+                minio_key = row[1]
+                work_base = os.getenv("OCR_WORK_DIR") or None
+                if work_base:
+                    os.makedirs(work_base, exist_ok=True)
+                fd, pdf_path = _tempfile.mkstemp(dir=work_base, suffix=".pdf")
+                os.close(fd)
+                minio_client.download_file(
+                    bucket=bucket, object_key=minio_key, file_path=pdf_path
+                )
+                logger.info(f"batch {batch_index} re-downloaded PDF: {pdf_path}")
+            else:
+                raise RuntimeError(f"material {material_id} missing minio info")
+        except Exception as e:
+            logger.error(f"batch {batch_index} re-download failed: {e}")
+            raise self.retry(exc=e, countdown=30)
 
     # 3. 信号量限流（单材料最多 N 批并发）
     if not ocr_shard.acquire_batch_slot(material_id):
@@ -836,12 +883,11 @@ def process_ocr_batch(self, material_id: str, batch_index: int, batch_start: int
             # 批次 task 不调 finalize，只保留 MinIO pages
             store.abort_text_only()
 
-        # 6. 标记批次完成
-        already_written = list((checkpoint or {}).get("pages_written") or [])
+        # 6. 标记批次完成（pages_written 直接写本批全页，不合并旧记录避免重复）
         ocr_shard.write_checkpoint(
             case_id, material_id, batch_index,
             status="completed", start=batch_start, end=batch_end,
-            pages_written=list(range(batch_start, batch_end + 1)) + already_written,
+            pages_written=list(range(batch_start, batch_end + 1)),
         )
         ocr_shard.mark_batch_completed(material_id, batch_index)
         return {"material_id": material_id, "batch_index": batch_index, "status": "completed"}
