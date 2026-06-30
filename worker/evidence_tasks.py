@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from loguru import logger
 
@@ -256,7 +258,25 @@ def _do_process_evidence_full(self, case_id: str):
 
         # Step 1: OCR 全部材料（并发）
         ocr_result = _run_ocr_pipeline(case_id)
-        logger.info(f"OCR done for {case_id}: processed={ocr_result.get('processed')}, errors={len(ocr_result.get('errors', []))}")
+        logger.info(
+            f"OCR done for {case_id}: processed={ocr_result.get('processed')}, "
+            f"sharded={ocr_result.get('sharded')}, "
+            f"errors={len(ocr_result.get('errors', []))}"
+        )
+
+        # 若有材料走分片路径，分类/目录阶段由 check_case_ocr_done task 触发，
+        # 这里立即返回（避免 process_evidence_full 自身轮询等待撞 30min 超时墙）
+        if ocr_result.get("sharded"):
+            logger.info(
+                f"case {case_id}: {ocr_result['sharded']} material(s) sharded, "
+                f"classify/catalog deferred to check_case_ocr_done task"
+            )
+            return {
+                "case_id": case_id,
+                "status": "processing",
+                "ocr_summary": ocr_result,
+                "classify_summary": {"deferred": True},
+            }
 
         # Step 2: 分类+提取（使用合并后的批量函数）
         classify_result = _run_classify_pipeline_optimized(case_id)
@@ -482,13 +502,48 @@ def export_evidence_bundle(self, case_id: str):
 
 @celery_app.task(bind=True, name="process_single_material_ocr", max_retries=2)
 def process_single_material_ocr(self, material_id: str):
-    """重试单个素材的 OCR 识别"""
+    """重试单个素材的 OCR 识别
+
+    分片改造：若材料为 PDF（可能走分片），委托 dispatch_material_ocr 统一处理——
+    dispatch 内部读页数后决定走分片还是 inline 回退。已有分片进度的材料走续传。
+    """
     logger.info(f"Single material OCR retry started: material_id={material_id}")
 
     try:
         uuid.UUID(material_id)
     except ValueError:
         return {"material_id": material_id, "status": "failed", "error": "Invalid material_id format"}
+
+    # 检查是否已有分片进度（续传）或是 PDF（可能需分片）→ 委托派发器
+    from services.evidence import ocr_shard
+    from db.models_evidence import EvidenceMaterial
+    from sqlalchemy import select, create_engine
+
+    is_pdf = False
+    has_shard_progress = ocr_shard.load_progress(material_id) is not None
+    if not has_shard_progress:
+        eng = create_engine(
+            settings.database_url_sync,
+            pool_size=1, max_overflow=2, pool_pre_ping=True, pool_recycle=3600,
+        )
+        try:
+            with eng.connect() as conn:
+                row = conn.execute(
+                    select(EvidenceMaterial.file_type).where(
+                        EvidenceMaterial.id == uuid.UUID(material_id)
+                    )
+                ).fetchone()
+                is_pdf = bool(row and row[0] == "pdf")
+        finally:
+            eng.dispose()
+
+    if has_shard_progress or is_pdf:
+        # 走分片路径（dispatch 内部读页数后决定真分片还是 inline 回退）
+        from worker.evidence_tasks import dispatch_material_ocr
+        dispatch_material_ocr.delay(material_id)
+        return {"material_id": material_id, "status": "dispatched"}
+
+    # 非 PDF 且无分片进度 → 走原 inline 路径
 
     async def _process():
         from sqlalchemy import select
@@ -593,16 +648,384 @@ def process_single_material_ocr(self, material_id: str):
 
 # ─── 内部管线函数 ────────────────────────────────────────────────────────────
 
+# ─── 大 PDF 分片 OCR 4 个 task ──────────────────────────────────────────────
+
+@celery_app.task(bind=True, name="dispatch_material_ocr", max_retries=2)
+def dispatch_material_ocr(self, material_id: str):
+    """派发器：下载 PDF 到本地、读页数、切批、派发批次 task、派发收口 task。
+
+    秒级返回，不轮询。失败/重试时幂等（已有 status=sharding 的 step 直接续传）。
+    """
+    from services.evidence import ocr_shard
+
+    logger.info(f"dispatch_material_ocr: material_id={material_id}")
+    try:
+        uuid.UUID(material_id)
+    except ValueError:
+        return {"material_id": material_id, "status": "failed", "error": "Invalid material_id"}
+
+    try:
+        _dispatch_material_ocr_impl(material_id)
+        return {"material_id": material_id, "status": "dispatched"}
+    except Exception as e:
+        logger.error(f"dispatch_material_ocr failed: {material_id} | {e}")
+        if self.request.retries >= self.max_retries:
+            _set_material_ocr_status(material_id, "failed", {"error": str(e)})
+        raise self.retry(exc=e)
+
+
+def _dispatch_material_ocr_impl(material_id: str) -> None:
+    """派发器实际逻辑（同步）。"""
+    import os
+    import tempfile
+    import fitz
+
+    from db.models_evidence import EvidenceMaterial
+    from sqlalchemy import select
+    from services.storage.minio_client import minio_client
+    from services.evidence import ocr_shard
+
+    # 查 material 元信息（同步引擎）
+    from sqlalchemy import create_engine
+    eng = create_engine(
+        settings.database_url_sync,
+        pool_size=1, max_overflow=2, pool_pre_ping=True, pool_recycle=3600,
+    )
+    try:
+        with eng.connect() as conn:
+            row = conn.execute(
+                select(
+                    EvidenceMaterial.id,
+                    EvidenceMaterial.evidence_case_id,
+                    EvidenceMaterial.original_filename,
+                    EvidenceMaterial.file_type,
+                    EvidenceMaterial.minio_bucket,
+                    EvidenceMaterial.minio_key,
+                    EvidenceMaterial.selected_pages,
+                ).where(EvidenceMaterial.id == uuid.UUID(material_id))
+            ).fetchone()
+    finally:
+        eng.dispose()
+
+    if not row:
+        raise RuntimeError(f"Material not found: {material_id}")
+
+    case_id = str(row[1])
+    filename = row[2] or "upload.pdf"
+    file_type = row[3]
+    bucket = row[4] or settings.minio_bucket_raw
+    minio_key = row[5]
+    selected_pages = list(row[6] or [])
+
+    if ocr_shard.is_material_cancelled(material_id):
+        logger.info(f"dispatch: material {material_id} cancelled, skip")
+        return
+
+    # 下载 PDF 到本地（流式落盘，不进内存）
+    work_base = os.getenv("OCR_WORK_DIR") or None
+    if work_base:
+        os.makedirs(work_base, exist_ok=True)
+    suffix = os.path.splitext(filename)[1] or ".pdf"
+    fd, local_path = tempfile.mkstemp(dir=work_base, suffix=suffix)
+    os.close(fd)
+
+    try:
+        # 幂等：若 local_path 已存在且大小匹配 MinIO，跳过下载
+        if not (os.path.exists(local_path) and os.path.getsize(local_path) > 0):
+            minio_client.download_file(
+                bucket=bucket, object_key=minio_key, file_path=local_path
+            )
+
+        # 读总页数
+        doc = fitz.open(local_path)
+        total_pages = doc.page_count
+        doc.close()
+
+        if not ocr_shard.should_shard(file_type, total_pages):
+            # 小文件/非 PDF，回退老路径
+            logger.info(f"dispatch: {material_id} not shard-worthy ({file_type}, {total_pages}p), fallback to inline")
+            _ocr_single_material(material_id)
+            return
+
+        # 切批 + 初始化/续传进度
+        plan = ocr_shard.dispatch_plan(
+            material_id=material_id,
+            case_id=case_id,
+            pdf_local_path=local_path,
+            total_pages=total_pages,
+            selected_pages=selected_pages or None,
+        )
+
+        # 派发批次 task
+        from worker.evidence_tasks import process_ocr_batch
+        for batch_idx, b_start, b_end in plan["batches"]:
+            process_ocr_batch.delay(
+                material_id, batch_idx, b_start, b_end, local_path
+            )
+
+        # 派发收口 task（收口器发现缺批会自身 retry + 重派）
+        from worker.evidence_tasks import finalize_material_ocr
+        finalize_material_ocr.delay(material_id)
+    except Exception:
+        try:
+            os.unlink(local_path)
+        except OSError:
+            pass
+        raise
+
+
+@celery_app.task(bind=True, name="process_ocr_batch", max_retries=settings.ocr_batch_max_retries + 5)
+def process_ocr_batch(self, material_id: str, batch_index: int, batch_start: int, batch_end: int, pdf_path: str):
+    """批次 task：OCR 指定页段 → 逐页写 MinIO → 更新 checkpoint + DB 进度。
+
+    幂等：开头读 checkpoint，已 completed 直接返回。
+    """
+    from services.evidence import ocr_shard
+
+    logger.info(
+        f"process_ocr_batch: material={material_id} batch={batch_index} "
+        f"pages=[{batch_start}-{batch_end}]"
+    )
+    try:
+        uuid.UUID(material_id)
+    except ValueError:
+        return {"material_id": material_id, "status": "failed", "error": "Invalid material_id"}
+
+    case_id = ocr_shard._get_case_id_for_material(material_id)
+    if not case_id:
+        return {"material_id": material_id, "status": "failed", "error": "case not found"}
+
+    # 1. 幂等检查
+    checkpoint = ocr_shard.load_checkpoint(case_id, material_id, batch_index)
+    if checkpoint and checkpoint.get("status") == "completed":
+        return {"skipped": "already_completed"}
+
+    # 2. 协作式取消
+    if ocr_shard.is_material_cancelled(material_id):
+        return {"skipped": "cancelled"}
+
+    # 3. 信号量限流（单材料最多 N 批并发）
+    if not ocr_shard.acquire_batch_slot(material_id):
+        logger.info(f"batch {batch_index} slot full, retry in 30s")
+        # countdown=30 覆盖前批完成时间（OCR 200 页约 60-90s，留余量）；
+        # max_retries 限总等待轮数，finalize 会重派未完成的批次
+        raise self.retry(countdown=30)
+
+    # 4. 写 checkpoint 占位
+    ocr_shard.write_checkpoint(
+        case_id, material_id, batch_index,
+        status="processing", start=batch_start, end=batch_end,
+    )
+
+    try:
+        # 5. OCR + 逐页写 MinIO
+        from services.evidence.ocr_storage import EvidenceOCRStore
+        from services.complaint.ocr_service import ocr_pdf_page_range
+
+        store = EvidenceOCRStore(case_id, material_id, settings.minio_bucket_result)
+        store.set_meta("pdf_ocr_shard_batch", batch_index=batch_index)
+        try:
+            ocr_pdf_page_range(
+                pdf_path=pdf_path,
+                filename=f"batch_{batch_index}.pdf",
+                start_page=batch_start,
+                end_page=batch_end,
+                store=store,
+            )
+        finally:
+            # 批次 task 不调 finalize，只保留 MinIO pages
+            store.abort_text_only()
+
+        # 6. 标记批次完成
+        already_written = list((checkpoint or {}).get("pages_written") or [])
+        ocr_shard.write_checkpoint(
+            case_id, material_id, batch_index,
+            status="completed", start=batch_start, end=batch_end,
+            pages_written=list(range(batch_start, batch_end + 1)) + already_written,
+        )
+        ocr_shard.mark_batch_completed(material_id, batch_index)
+        return {"material_id": material_id, "batch_index": batch_index, "status": "completed"}
+
+    except Exception as e:
+        retries = self.request.retries + 1
+        ocr_shard.write_checkpoint(
+            case_id, material_id, batch_index,
+            status="failed", start=batch_start, end=batch_end,
+            error=str(e), retries=retries,
+        )
+        ocr_shard.mark_batch_failed(material_id, batch_index, str(e), retries)
+        logger.error(f"batch {batch_index} failed (retry {retries}): {e}")
+        raise self.retry(exc=e)
+    finally:
+        ocr_shard.release_batch_slot(material_id)
+
+
+@celery_app.task(bind=True, name="finalize_material_ocr", max_retries=5)
+def finalize_material_ocr(self, material_id: str):
+    """收口器：检查进度、补缺、拼接 full_text、写 manifest、更新 material、清理本地 PDF。
+
+    失败/缺批则重新派发 + 自身 retry。
+    """
+    from services.evidence import ocr_shard
+
+    logger.info(f"finalize_material_ocr: material_id={material_id}")
+    try:
+        uuid.UUID(material_id)
+    except ValueError:
+        return {"material_id": material_id, "status": "failed", "error": "Invalid material_id"}
+
+    if ocr_shard.is_material_cancelled(material_id):
+        return {"skipped": "cancelled"}
+
+    try:
+        case_id = ocr_shard._get_case_id_for_material(material_id)
+        if not case_id:
+            return {"material_id": material_id, "status": "failed", "error": "case not found"}
+
+        ocr_shard.set_progress_status(material_id, ocr_shard.STATUS_FINALIZING)
+
+        state = ocr_shard.is_finalize_ready(material_id)
+
+        # 有可救批次（缺失或 retries < max）→ 重新派发 + 自身 retry
+        if state["missing"] or state["retryable"]:
+            from worker.evidence_tasks import process_ocr_batch
+            prog = ocr_shard.load_progress(material_id)
+            pdf_local_path = prog.get("pdf_local_path") if prog else None
+            batches = ocr_shard.plan_batches(
+                prog["total_pages"] if prog else 0,
+                prog["batch_size"] if prog else None,
+            )
+            batch_map = {i: (s, e) for i, s, e in batches}
+            for idx in state["missing"] + state["retryable"]:
+                if idx in batch_map and pdf_local_path:
+                    s, e = batch_map[idx]
+                    process_ocr_batch.delay(material_id, idx, s, e, pdf_local_path)
+            logger.info(
+                f"finalize {material_id}: missing={state['missing']} retryable={state['retryable']}, retry in {settings.ocr_finalize_retry_countdown}s"
+            )
+            raise self.retry(countdown=settings.ocr_finalize_retry_countdown)
+
+        # 不可救批次 → material 标 failed
+        if state["unrecoverable"]:
+            summary = ocr_shard.mark_material_failed(
+                material_id,
+                error=f"{len(state['unrecoverable'])} batches failed after max retries",
+                failed_batches=state["unrecoverable"],
+            )
+            _set_material_ocr_status(material_id, "failed", summary)
+            # 失败也触发 case 检查
+            ocr_shard.clear_batch_semaphore(material_id)  # Bug 7: 终态清理信号量
+            check_case_ocr_done.delay(case_id)
+            return {"material_id": material_id, "status": "failed"}
+
+        # 全部完成 → 拼接 full_text + 写 manifest
+        summary = ocr_shard.finalize_assemble_and_manifest(material_id, case_id)
+        _set_material_ocr_status(material_id, "completed", summary)
+
+        # 清理本地 PDF
+        prog = ocr_shard.load_progress(material_id)
+        if prog and prog.get("pdf_local_path"):
+            ocr_shard.cleanup_temp_files(prog["pdf_local_path"])
+
+        # 清理信号量（Bug 7：终态时主动清理，避免崩溃残留阻塞重试）
+        ocr_shard.clear_batch_semaphore(material_id)
+
+        # 触发 case 级检查
+        check_case_ocr_done.delay(case_id)
+        return {"material_id": material_id, "status": "completed"}
+
+    except Exception as e:
+        logger.error(f"finalize_material_ocr failed: {material_id} | {e}")
+        if self.request.retries >= self.max_retries:
+            _set_material_ocr_status(
+                material_id, "failed", {"error": f"finalize exhausted retries: {e}"}
+            )
+            ocr_shard.clear_batch_semaphore(material_id)  # Bug 7: 耗尽重试也清理
+            case_id_fallback = ocr_shard._get_case_id_for_material(material_id)
+            if case_id_fallback:
+                check_case_ocr_done.delay(case_id_fallback)
+        raise self.retry(exc=e, countdown=settings.ocr_finalize_retry_countdown)
+
+
+@celery_app.task(bind=True, name="check_case_ocr_done", max_retries=3)
+def check_case_ocr_done(self, case_id: str):
+    """检查 case 下所有 material 是否终态，是则推进分类+目录阶段。幂等。"""
+    from services.evidence import ocr_shard
+
+    logger.info(f"check_case_ocr_done: case_id={case_id}")
+    try:
+        uuid.UUID(case_id)
+    except ValueError:
+        return {"case_id": case_id, "status": "failed", "error": "Invalid case_id"}
+
+    try:
+        # 已推进过则直接返回（幂等）
+        if ocr_shard.case_already_advanced(case_id):
+            return {"case_id": case_id, "status": "already_advanced"}
+
+        if not ocr_shard.case_all_materials_terminal(case_id):
+            # 仍有 material 在 processing，等下一个 finalize 触发
+            return {"case_id": case_id, "status": "waiting"}
+
+        # 全部终态 → 推进分类 + 目录
+        logger.info(f"case {case_id} all materials terminal, advancing to classify+catalog")
+        classify_result = _run_classify_pipeline_optimized(case_id)
+        from services.evidence.catalog_generator import generate_catalog
+        catalog_data = generate_catalog(case_id)
+        _update_case_status(case_id, "catalog_ready")
+        return {
+            "case_id": case_id,
+            "status": "completed",
+            "classify_summary": classify_result,
+            "total_items": catalog_data.get("total_items", 0),
+        }
+    except Exception as e:
+        logger.error(f"check_case_ocr_done failed: {case_id} | {e}")
+        raise self.retry(exc=e)
+
+
+def _set_material_ocr_status(material_id: str, status: str, ocr_result: dict) -> None:
+    """更新 material.ocr_status + ocr_result（独立同步 DB 连接）。"""
+    from sqlalchemy import text, create_engine
+    eng = create_engine(
+        settings.database_url_sync,
+        pool_size=1, max_overflow=2, pool_pre_ping=True, pool_recycle=3600,
+    )
+    try:
+        with eng.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE evidence_materials SET ocr_status = :status, "
+                    "ocr_result = :result WHERE id = :mid"
+                ),
+                {
+                    "status": status,
+                    "result": json.dumps(ocr_result, ensure_ascii=False),
+                    "mid": material_id,
+                },
+            )
+    finally:
+        eng.dispose()
+
+
+# ─── 内部管线函数（原有） ────────────────────────────────────────────────────
+
 def _run_ocr_pipeline(case_id: str) -> dict:
-    """执行 OCR 识别管线（engine 在 async 内部创建，避免 event loop 绑定冲突）"""
+    """执行 OCR 识别管线（engine 在 async 内部创建，避免 event loop 绑定冲突）
+
+    分片改造：对 file_type==pdf 且页数 > ocr_shard_threshold_pages 的材料，
+    调 dispatch_material_ocr.delay() 后立即返回（不轮询）。这类材料的分类触发
+    移到 check_case_ocr_done task。小文件/非 PDF 走原 inline 路径。
+    """
     from db.models_evidence import EvidenceCase, EvidenceStep, EvidenceMaterial
 
-    summary = {"case_id": case_id, "status": "completed", "processed": 0, "errors": []}
+    summary = {"case_id": case_id, "status": "completed", "processed": 0, "errors": [], "sharded": 0}
 
     async def _pipeline():
         from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
         from sqlalchemy import select
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        import fitz
 
         _engine = _create_worker_engine()
         _factory = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
@@ -634,12 +1057,37 @@ def _run_ocr_pipeline(case_id: str) -> dict:
                     await db.commit()
                     return summary
 
+                # 拆分：分片材料 vs inline 材料
+                shard_materials: list[EvidenceMaterial] = []
+                inline_materials: list[EvidenceMaterial] = []
+                for m in materials:
+                    if m.file_type == "pdf" and m.minio_bucket and m.minio_key:
+                        # 读页数判断是否分片（轻量，仅读 page_count）
+                        try:
+                            # 先从 MinIO 拉 PDF 头部读页数开销大，这里用 file_size 粗估不可靠；
+                            # 改为：所有 PDF 都交给 dispatch_material_ocr，由它读页数后决定走分片还是 inline 回退
+                            shard_materials.append(m)
+                        except Exception:
+                            inline_materials.append(m)
+                    else:
+                        inline_materials.append(m)
+
+                # 分片材料：派发后立即返回，不阻塞
+                from worker.evidence_tasks import dispatch_material_ocr
+                for m in shard_materials:
+                    # 标 processing，避免被后续重复派发
+                    m.ocr_status = "processing"
+                    dispatch_material_ocr.delay(str(m.id))
+                    summary["sharded"] += 1
+                await db.commit()
+
+                # inline 材料：走原 ThreadPoolExecutor 路径
                 def _process_one(mid: str):
                     return _ocr_single_material(mid)
 
-                mat_ids = [str(m.id) for m in materials]
+                inline_ids = [str(m.id) for m in inline_materials]
                 with ThreadPoolExecutor(max_workers=2) as pool:
-                    futures = {pool.submit(_process_one, mid): mid for mid in mat_ids}
+                    futures = {pool.submit(_process_one, mid): mid for mid in inline_ids}
                     for future in as_completed(futures):
                         try:
                             res = future.result()
@@ -681,7 +1129,12 @@ def _ocr_single_material(material_id: str) -> dict:
     import asyncio
 
     from db.models_evidence import EvidenceMaterial
-    from services.complaint.ocr_service import ocr_upload
+    from services.complaint.ocr_service import ocr_upload_path
+    from services.evidence.ocr_storage import (
+        EvidenceOCRStore,
+        delete_material_ocr,
+        persist_inline_ocr,
+    )
     from services.storage.minio_client import minio_client
 
     material_uuid = uuid.UUID(material_id)
@@ -713,47 +1166,105 @@ def _ocr_single_material(material_id: str) -> dict:
                         return {"success": True}
 
                     if material.minio_bucket and material.minio_key:
-                        file_bytes = minio_client.download_bytes(
-                            bucket=material.minio_bucket,
-                            object_key=material.minio_key,
-                        )
                         filename = material.original_filename or "upload"
                         selected = material.selected_pages  # JSONB list[int] | None
 
-                        # 判断是否需要选择性 OCR
-                        if (
-                            selected
-                            and len(selected) > 0
-                            and material.file_type == "pdf"
-                        ):
-                            # 只 OCR 选定页面
-                            ocr_result = _ocr_pdf_selected_pages(
-                                file_bytes, filename, selected
+                        # 重跑前清理旧 OCR 产物（MinIO 逐页文件）
+                        delete_material_ocr(material)
+
+                        # 流式下载到磁盘临时文件（OCR_WORK_DIR），不把整份大 PDF 读进内存，
+                        # 保证 3000 页大文件也不会撑爆 worker 内存。
+                        import os as _os
+                        import tempfile as _tempfile
+                        _work_base = _os.getenv("OCR_WORK_DIR") or None
+                        if _work_base:
+                            _os.makedirs(_work_base, exist_ok=True)
+                        _suffix = _os.path.splitext(filename)[1] or ""
+                        _fd, _local_path = _tempfile.mkstemp(dir=_work_base, suffix=_suffix)
+                        _os.close(_fd)
+
+                        store: EvidenceOCRStore | None = None
+                        try:
+                            minio_client.download_file(
+                                bucket=material.minio_bucket,
+                                object_key=material.minio_key,
+                                file_path=_local_path,
                             )
-                        else:
-                            ocr_result = ocr_upload(file_bytes, filename)
 
-                        ocr_text = ocr_result.get("full_text", "")
-                        block_count = ocr_result.get("block_count", 0)
+                            # PDF/图片 OCR 逐页写入 MinIO；docx/xlsx 等小文档仍 inline
+                            _use_store = material.file_type in ("pdf", "image")
+                            if _use_store:
+                                store = EvidenceOCRStore(
+                                    str(material.evidence_case_id),
+                                    str(material.id),
+                                    material.minio_bucket,
+                                )
 
-                        material.ocr_text = ocr_text
-                        material.ocr_result = ocr_result
-                        material.page_count = ocr_result.get("page_count")
+                            # 判断是否需要选择性 OCR
+                            if (
+                                selected
+                                and len(selected) > 0
+                                and material.file_type == "pdf"
+                            ):
+                                if store:
+                                    store.set_meta(
+                                        "pdf_ocr_selected",
+                                        selected_pages=selected,
+                                    )
+                                ocr_result = _ocr_pdf_selected_pages(
+                                    _local_path, filename, selected, store=store
+                                )
+                            else:
+                                ocr_result = ocr_upload_path(
+                                    _local_path, filename, store=store
+                                )
+
+                            if store is not None and ocr_result.get("offloaded"):
+                                if store.page_count > 0:
+                                    ocr_text, ocr_summary = store.finalize()
+                                else:
+                                    store.abort()
+                                    ocr_text, ocr_summary = persist_inline_ocr(ocr_result)
+                            else:
+                                if store is not None:
+                                    store.abort()
+                                ocr_text, ocr_summary = persist_inline_ocr(ocr_result)
+
+                            block_count = ocr_summary.get("block_count", 0)
+                            full_text_len = ocr_summary.get("full_text_length", len(ocr_text))
+
+                            material.ocr_text = ocr_text
+                            material.ocr_result = ocr_summary
+                            material.page_count = ocr_summary.get("page_count")
+                        except Exception:
+                            if store is not None:
+                                store.abort()
+                            raise
+                        finally:
+                            try:
+                                _os.unlink(_local_path)
+                            except OSError:
+                                pass
 
                         # ── OCR 返回空结果时标记为 failed（允许重试） ──
                         # 排除 docx/xlsx 等格式化文档（它们用结构化提取而非图像OCR）
                         _struct_suffixes = {".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt"}
                         _fn_lower = filename.lower()
                         is_struct_doc = any(_fn_lower.endswith(s) for s in _struct_suffixes)
-                        if not ocr_text.strip() and block_count == 0 and not is_struct_doc:
+                        if (
+                            not ocr_text.strip()
+                            and block_count == 0
+                            and full_text_len == 0
+                            and not is_struct_doc
+                        ):
                             logger.warning(
                                 f"OCR returned empty result for '{filename}' "
-                                f"(source_type={ocr_result.get('source_type')}), "
+                                f"(source_type={ocr_summary.get('source_type')}), "
                                 f"marking as failed to allow retry"
                             )
                             material.ocr_status = "failed"
                             material.ocr_result = {
-                                **ocr_result,
+                                **ocr_summary,
                                 "error": "OCR returned empty text - possible rate limit or image quality issue",
                             }
                         else:
@@ -782,13 +1293,17 @@ def _ocr_single_material(material_id: str) -> dict:
 
 
 def _ocr_pdf_selected_pages(
-    pdf_bytes: bytes, filename: str, selected_pages: list[int]
+    pdf_path: str | Path,
+    filename: str,
+    selected_pages: list[int],
+    store: Any | None = None,
 ) -> dict:
     """只 OCR PDF 中的选定页面（1-based 页码列表）
 
-    使用 fitz 提取指定页 → 转图片 → OCR
+    从磁盘文件打开 PDF（不把整份 PDF 读进内存），提取指定页 → 转图片 → OCR。
+    临时图片放在磁盘卷(OCR_WORK_DIR)而非内存型 tmpfs(/tmp)。
     """
-    import io
+    import os
     import tempfile
     from pathlib import Path
 
@@ -798,14 +1313,18 @@ def _ocr_pdf_selected_pages(
         f"Selective OCR for {filename}: pages {selected_pages}"
     )
 
+    work_base = os.getenv("OCR_WORK_DIR") or None
+    if work_base:
+        Path(work_base).mkdir(parents=True, exist_ok=True)
+
     all_text_parts: list[str] = []
     all_blocks: list[dict] = []
     total_pages = 0
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
+    with tempfile.TemporaryDirectory(dir=work_base) as tmp_dir:
         tmp_path = Path(tmp_dir)
 
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        doc = fitz.open(str(pdf_path))
         total_pages = len(doc)
 
         # 提取选定页面为图片
@@ -842,21 +1361,39 @@ def _ocr_pdf_selected_pages(
         processor = OCRBatchProcessor()
         ocr_summary = processor.process_pages(image_paths, tmp_path / "ocr")
 
+        sorted_selected = sorted(set(selected_pages))
+        block_count = 0
         for page_data in ocr_summary.get("pages", []):
-            # 恢复原始页码
             idx = page_data.get("page", 0) - 1
             real_page = (
-                sorted(set(selected_pages))[idx]
-                if idx < len(sorted(set(selected_pages)))
+                sorted_selected[idx]
+                if idx < len(sorted_selected)
                 else page_data.get("page", 0)
             )
-            for r in page_data.get("results", []):
-                all_blocks.append({
-                    "text": r.get("text", ""),
-                    "confidence": r.get("confidence", 0),
-                    "page": real_page,
-                })
-                all_text_parts.append(r.get("text", ""))
+            results = page_data.get("results", [])
+            if store is not None:
+                store.write_page(real_page, results)
+                block_count += len(results)
+            else:
+                for r in results:
+                    all_blocks.append({
+                        "text": r.get("text", ""),
+                        "confidence": r.get("confidence", 0),
+                        "page": real_page,
+                    })
+                    all_text_parts.append(r.get("text", ""))
+
+    if store is not None:
+        return {
+            "full_text": "",
+            "blocks": [],
+            "block_count": block_count,
+            "page_count": total_pages,
+            "selected_pages": selected_pages,
+            "pages_ocr": len(image_paths),
+            "source_type": "pdf_ocr_selected",
+            "offloaded": True,
+        }
 
     return {
         "full_text": "\n".join(all_text_parts),
@@ -1004,8 +1541,10 @@ def _run_classify_pipeline_optimized(case_id: str) -> dict:
                     await db.commit()
                     return summary
 
-                # 批量分类+提取
-                items = [(str(m.id), m.ocr_text or "") for m in materials]
+                from services.evidence.ocr_storage import get_material_ocr_text
+
+                # 批量分类+提取（offload 材料从 MinIO 加载全文）
+                items = [(str(m.id), get_material_ocr_text(m)) for m in materials]
                 batch_results = classify_and_extract_batch(items, case_type)
 
                 # 构建 material_id → material 对象的映射
