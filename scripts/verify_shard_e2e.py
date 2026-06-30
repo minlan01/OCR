@@ -14,21 +14,57 @@ import requests
 from pathlib import Path
 
 API_BASE = "http://localhost:8900"
-# 从环境变量读 API Key / Tenant（开发模式可空）
-API_KEY = ""
-TENANT_ID = ""
+# 开发环境 .env 的 API_KEY 为空但 JWT_SECRET_KEY 非空 → 中间件不放行；
+# 验证脚本通过注册接口自助拿 JWT access_token，走 Bearer 认证。
+# 以下仅用于本验证脚本的临时账号（每次运行新建 tenant + user）。
+VERIFY_EMAIL = f"verify+{uuid.uuid4().hex[:8]}@example.com"
+VERIFY_PASSWORD = "verify-smoke-123456"
+VERIFY_TENANT_NAME = "ShardVerify"
+# 允许通过环境变量覆盖（便于复跑用同一账号）
+import os
+VERIFY_EMAIL = os.environ.get("VERIFY_EMAIL", VERIFY_EMAIL)
+VERIFY_PASSWORD = os.environ.get("VERIFY_PASSWORD", VERIFY_PASSWORD)
+VERIFY_TENANT_NAME = os.environ.get("VERIFY_TENANT_NAME", VERIFY_TENANT_NAME)
+
+# 运行时填充
+_ACCESS_TOKEN: str | None = None
+
+
+def _login_or_register() -> str:
+    """注册一个验证专用账号拿 JWT access_token（注册接口公开）。"""
+    r = requests.post(
+        f"{API_BASE}/api/v1/auth/register",
+        json={
+            "tenant_name": VERIFY_TENANT_NAME,
+            "email": VERIFY_EMAIL,
+            "password": VERIFY_PASSWORD,
+            "display_name": "Shard Verify",
+        },
+        headers={"Accept": "application/json"},
+        timeout=30,
+    )
+    if r.status_code == 409:
+        # 已存在 → 登录
+        r = requests.post(
+            f"{API_BASE}/api/v1/auth/login",
+            json={"email": VERIFY_EMAIL, "password": VERIFY_PASSWORD},
+            headers={"Accept": "application/json"},
+            timeout=30,
+        )
+    r.raise_for_status()
+    token = r.json()["access_token"]
+    return token
 
 
 def _headers():
     h = {"Accept": "application/json"}
-    if API_KEY:
-        h["X-API-Key"] = API_KEY
-    if TENANT_ID:
-        h["X-Tenant-Id"] = TENANT_ID
+    if _ACCESS_TOKEN:
+        h["Authorization"] = f"Bearer {_ACCESS_TOKEN}"
     return h
 
 
 def main(pdf_path: str) -> int:
+    global _ACCESS_TOKEN
     pdf = Path(pdf_path)
     assert pdf.exists() and pdf.is_file(), f"PDF not found: {pdf_path}"
 
@@ -39,10 +75,17 @@ def main(pdf_path: str) -> int:
     print(f"[1/6] PDF: {pdf} ({total_pages} pages)")
     assert total_pages > 500, f"页数 {total_pages} 未超分片阈值 500"
 
-    # 2. 建 case
+    # 1.5 获取 JWT token（开发环境 JWT_SECRET 非空 → 中间件不放行，需 Bearer 认证）
+    _ACCESS_TOKEN = _login_or_register()
+    print(f"      auth: logged in as {VERIFY_EMAIL}")
+
+    # 2. 建 case（字段：case_name / case_type=death，余世贵死亡案件素材）
     r = requests.post(
-        f"{API_BASE}/api/evidence/cases",
-        json={"title": f"分片验证-{uuid.uuid4().hex[:8]}"},
+        f"{API_BASE}/api/v1/evidence/cases",
+        json={
+            "case_name": f"分片验证-{uuid.uuid4().hex[:8]}",
+            "case_type": "death",
+        },
         headers=_headers(),
         timeout=30,
     )
@@ -54,7 +97,7 @@ def main(pdf_path: str) -> int:
     with pdf.open("rb") as f:
         files = {"files": (pdf.name, f, "application/pdf")}
         r = requests.post(
-            f"{API_BASE}/api/evidence/cases/{case_id}/upload",
+            f"{API_BASE}/api/v1/evidence/cases/{case_id}/upload",
             files=files,
             headers=_headers(),
             timeout=600,
@@ -67,7 +110,7 @@ def main(pdf_path: str) -> int:
 
     # 4. 触发 process
     r = requests.post(
-        f"{API_BASE}/api/evidence/cases/{case_id}/process",
+        f"{API_BASE}/api/v1/evidence/cases/{case_id}/process",
         json={},
         headers=_headers(),
         timeout=30,
@@ -75,25 +118,32 @@ def main(pdf_path: str) -> int:
     r.raise_for_status()
     print(f"[4/6] process triggered: {r.json()}")
 
-    # 5. 轮询 progress
+    # 5. 轮询 progress（completed_batches 已是 int，无需 len）
     deadline = time.time() + 1800  # 30 分钟上限
     last_batches = None
     case_status = None
+    batch_timeline = []  # 记录批次完成时刻
+    poll_start = time.time()
     while time.time() < deadline:
         r = requests.get(
-            f"{API_BASE}/api/evidence/cases/{case_id}/progress",
+            f"{API_BASE}/api/v1/evidence/cases/{case_id}/progress",
             headers=_headers(),
             timeout=30,
         )
         r.raise_for_status()
         prog = r.json()
-        case_status = prog.get("case_status") or prog.get("status")
+        case_status = prog.get("status") or prog.get("case_status")
         shard = prog.get("ocr_shard_progress")
         if shard:
-            completed = len(shard.get("completed_batches") or [])
+            completed = shard.get("completed_batches")
+            if isinstance(completed, list):
+                completed = len(completed)
+            completed = completed or 0
             total_b = shard.get("total_batches") or 0
             if completed != last_batches:
-                print(f"      分片进度: {completed}/{total_b} 批, case_status={case_status}")
+                elapsed = int(time.time() - poll_start)
+                print(f"      分片进度: {completed}/{total_b} 批, case_status={case_status}, +{elapsed}s")
+                batch_timeline.append((completed, total_b, elapsed, case_status))
                 last_batches = completed
         if case_status in ("catalog_ready", "analyzing", "analysis_done", "completed"):
             print(f"[5/6] case advanced to {case_status}")
