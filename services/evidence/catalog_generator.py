@@ -17,6 +17,12 @@ from typing import Any
 from loguru import logger
 
 from services.evidence.classifier import CATEGORY_ORDER, CATEGORY_NAMES
+from services.evidence.ocr_storage import get_material_ocr_text
+
+
+def _catalog_ocr_text(material) -> str:
+    """清单项 OCR 文本（offload 时从 MinIO 加载全文）。"""
+    return get_material_ocr_text(material)
 
 
 def generate_catalog(case_id: str) -> dict[str, Any]:
@@ -254,7 +260,7 @@ def _build_four_layer_item(
         "fee_detail": material.fee_detail,
         "raw_extracted": extracted,
         # OCR 原文（用于 word_generator 的正则补充提取）
-        "ocr_text": material.ocr_text or "",
+        "ocr_text": _catalog_ocr_text(material),
     }
 
 

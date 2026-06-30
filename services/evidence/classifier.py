@@ -1092,6 +1092,7 @@ def classify_material(material_id: str) -> None:
 
     from db.models_evidence import EvidenceMaterial, EvidenceCase
     from db.session import get_session_factory, run_in_worker
+    from services.evidence.ocr_storage import get_material_ocr_text
     from sqlalchemy import select
 
     material_uuid = uuid.UUID(material_id)
@@ -1106,7 +1107,8 @@ def classify_material(material_id: str) -> None:
                 return
 
             # 无OCR文本 → 跳过
-            if not material.ocr_text or not material.ocr_text.strip():
+            ocr_text = get_material_ocr_text(material)
+            if not ocr_text or not ocr_text.strip():
                 material.auto_category = "other_evidence"
                 material.category_confidence = 0.1
                 material.effective_category = "other_evidence"
@@ -1122,7 +1124,7 @@ def classify_material(material_id: str) -> None:
 
             # ── Step A: 分类（OCR文本优先，文件名兜底） ──
             category, confidence = classify_with_filename_fallback(
-                material.ocr_text, material.original_filename, case_type
+                ocr_text, material.original_filename, case_type
             )
 
             material.auto_category = category
@@ -1133,7 +1135,7 @@ def classify_material(material_id: str) -> None:
                 material.effective_category = material.manual_category
 
             # ── Step B: 四层结构化提取 ──
-            extracted = extract_structured_info(material.ocr_text, case_type)
+            extracted = extract_structured_info(ocr_text, case_type)
             material.extracted_data = extracted
 
             # ── Step C: 从四层数据生成清单标题和证明目的 ──

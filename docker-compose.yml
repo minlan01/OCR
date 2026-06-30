@@ -65,6 +65,15 @@ x-common-env: &common-env
   SKIP_CLASSIFY: ${SKIP_CLASSIFY:-true}
   MAX_RETRY_COUNT: ${MAX_RETRY_COUNT:-3}
   RETENTION_DAYS: ${RETENTION_DAYS:-30}
+  # OCR 临时工作目录：放在磁盘(overlay fs)而非内存型 tmpfs(/tmp)，
+  # 避免 500 页大 PDF 拆页时撑满 tmpfs 触发 OOM
+  OCR_WORK_DIR: ${OCR_WORK_DIR:-/app/.ocr_work}
+  # ── 大 PDF 分片 OCR ──
+  OCR_SHARD_THRESHOLD_PAGES: ${OCR_SHARD_THRESHOLD_PAGES:-500}
+  OCR_BATCH_PAGE_SIZE: ${OCR_BATCH_PAGE_SIZE:-200}
+  OCR_BATCH_MAX_CONCURRENT_PER_MATERIAL: ${OCR_BATCH_MAX_CONCURRENT_PER_MATERIAL:-4}
+  OCR_FINALIZE_RETRY_COUNTDOWN: ${OCR_FINALIZE_RETRY_COUNTDOWN:-60}
+  OCR_BATCH_MAX_RETRIES: ${OCR_BATCH_MAX_RETRIES:-3}
 
 services:
   postgres:
@@ -93,9 +102,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
         reservations:
-          memory: 256M
+          memory: 192M
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scanstruct} -d ${POSTGRES_DB:-scanstruct}"]
       interval: 10s
@@ -122,7 +131,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 192M
+          memory: 128M
         reservations:
           memory: 64M
     healthcheck:
@@ -149,9 +158,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
         reservations:
-          memory: 256M
+          memory: 192M
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
@@ -177,6 +186,7 @@ services:
     volumes:
       - scanstruct_templates:/app/template_output
       - ./logs/api:/app/logs
+      - scanstruct_ocrwork:/app/.ocr_work:rw
     tmpfs:
       - /tmp:size=512M
     depends_on:
@@ -190,10 +200,10 @@ services:
       resources:
         limits:
           cpus: '1.5'
-          memory: 1500M
+          memory: 1000M
         reservations:
           cpus: '0.5'
-          memory: 512M
+          memory: 384M
     restart: unless-stopped
     networks:
       - scanstruct-net
@@ -225,6 +235,7 @@ services:
       LLM_CONTEXT_MERGED_LIMIT: ${LLM_CONTEXT_MERGED_LIMIT:-60000}
       LLM_CONTEXT_SLOT_LIMIT: ${LLM_CONTEXT_SLOT_LIMIT:-15000}
       LOG_DIR: /app/logs
+      PDF_RENDER_MAX_WORKERS: ${PDF_RENDER_MAX_WORKERS:-2}
     depends_on:
       postgres:
         condition: service_healthy
@@ -234,6 +245,7 @@ services:
         condition: service_healthy
     volumes:
       - ./logs/worker:/app/logs
+      - scanstruct_ocrwork:/app/.ocr_work:rw
     tmpfs:
       - /tmp:size=1G
     # SaaS: 4核8G 优化 — 限制 CPU 和内存
@@ -241,10 +253,12 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 4G
+          memory: 2500M
         reservations:
           cpus: '1.0'
           memory: 1G
+    # memswap_limit 需放在顶层（compose v2 不允许在 deploy.resources.limits 下）
+    memswap_limit: 3125M   # memory × 1.25，给 pixmap 尖峰留弹性，超出才 OOM-kill
     restart: unless-stopped
     networks:
       - scanstruct-net
@@ -272,6 +286,7 @@ services:
       BAILIAN_OCR_MAX_CONCURRENT: ${BAILIAN_OCR_MAX_CONCURRENT:-3}
       BAILIAN_TEXT_MAX_CONCURRENT: ${BAILIAN_TEXT_MAX_CONCURRENT:-2}
       LOG_DIR: /app/logs
+      PDF_RENDER_MAX_WORKERS: ${PDF_RENDER_MAX_WORKERS:-2}
     depends_on:
       postgres:
         condition: service_healthy
@@ -281,16 +296,18 @@ services:
         condition: service_healthy
     volumes:
       - ./logs/worker-backup:/app/logs
+      - scanstruct_ocrwork:/app/.ocr_work:rw
     tmpfs:
       - /tmp:size=1G
     deploy:
       resources:
         limits:
           cpus: '1.5'
-          memory: 3G
+          memory: 2000M
         reservations:
           cpus: '0.5'
           memory: 512M
+    memswap_limit: 2500M   # memory × 1.25，给 pixmap 尖峰留弹性
     restart: unless-stopped
     networks:
       - scanstruct-net
@@ -336,6 +353,9 @@ volumes:
     external: true
   scanstruct_templates:
     name: ocrscanstruct_scanstruct_templates
+    external: true
+  scanstruct_ocrwork:
+    name: ocrscanstruct_scanstruct_ocrwork
     external: true
 
 networks:

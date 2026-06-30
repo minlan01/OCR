@@ -128,6 +128,8 @@ def create_export_bundle(case_id: str) -> str:
                 result = await db.execute(stmt)
                 return result.scalars().all()
 
+        from services.evidence.ocr_storage import get_material_ocr_text
+
         materials = run_in_worker(_fetch_materials())
         material_files: dict[str, tuple[str, str, bytes]] = {}
         ocr_texts: dict[str, str] = {}
@@ -142,8 +144,9 @@ def create_export_bundle(case_id: str) -> str:
                     mat.file_type or "unknown",
                     file_bytes,
                 )
-                if mat.ocr_text:
-                    ocr_texts[str(mat.id)] = mat.ocr_text
+                ocr_full = get_material_ocr_text(mat)
+                if ocr_full:
+                    ocr_texts[str(mat.id)] = ocr_full
             except Exception as e:
                 logger.warning(f"Failed to download material {mat.id} for bundle: {e}")
 

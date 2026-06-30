@@ -300,6 +300,24 @@
             <span v-if="step.duration_ms">（{{ (step.duration_ms / 1000).toFixed(1) }}s）</span>
           </n-text>
         </n-space>
+
+        <!-- 大 PDF 分片进度 -->
+        <div v-if="ocrShardProgress && ocrShardProgress.total_batches > 0" style="margin-top: 12px">
+          <n-text depth="3" style="font-size: 12px">
+            大 PDF 分片 OCR：{{ ocrShardProgress.completed_batches }}/{{ ocrShardProgress.total_batches }} 批次已完成
+            <span v-if="ocrShardProgress.failed_batches > 0" style="color: #d03050">
+              （{{ ocrShardProgress.failed_batches }} 批失败）
+            </span>
+            <span v-if="ocrShardProgress.cancelled" style="color: #f0a020">（已取消）</span>
+          </n-text>
+          <n-progress
+            type="line"
+            :percentage="ocrShardProgress.total_batches ? Math.round((ocrShardProgress.completed_batches / ocrShardProgress.total_batches) * 100) : 0"
+            :show-indicator="true"
+            :status="ocrShardProgress.failed_batches > 0 ? 'error' : 'success'"
+            style="margin-top: 4px"
+          />
+        </div>
       </n-card>
 
       <template #action>
@@ -953,6 +971,23 @@
             </span>
           </n-alert>
 
+          <div
+            v-if="previewTotalPages > previewPageSize"
+            style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px"
+          >
+            <n-text depth="3" style="font-size: 12px">
+              共 {{ previewTotalPages }} 页，当前第
+              {{ (previewPage - 1) * previewPageSize + 1 }}–{{ Math.min(previewPage * previewPageSize, previewTotalPages) }} 页
+            </n-text>
+            <n-pagination
+              :page="previewPage"
+              :page-size="previewPageSize"
+              :item-count="previewTotalPages"
+              :disabled="pagePreviewLoading"
+              @update:page="loadPreviewPage"
+            />
+          </div>
+
           <div style="display: flex; flex-wrap: wrap; gap: 12px">
             <div
               v-for="pg in pagePreviewData.pages"
@@ -1068,6 +1103,7 @@ import {
   NSelect,
   NTooltip,
   NInputNumber,
+  NPagination,
 } from 'naive-ui'
 import {
   CloudUploadOutline,
@@ -1124,6 +1160,7 @@ const retryingMaterialId = ref<string | null>(null)
 const showProgress = ref(false)
 const progressPercent = ref(0)
 const progressSteps = ref<evidenceApi.StepResponse[]>([])
+const ocrShardProgress = ref<evidenceApi.OcrShardProgress | null>(null)
 let progressPollTimer: ReturnType<typeof setInterval> | null = null
 
 // 目录
@@ -1201,6 +1238,10 @@ const pagePreviewData = ref<PagePreviewResponse | null>(null)
 const pageSelectedSet = ref<Set<number>>(new Set())
 const savingPageSelection = ref(false)
 let pagePreviewMaterialId = ''
+// 分页加载（支持 3000 页大 PDF，避免一次性渲染全部缩略图）
+const previewPage = ref(1)
+const previewPageSize = ref(50)
+const previewTotalPages = ref(0)
 
 // 状态重置（案件切换时调用）
 function _resetAllState() {
@@ -1517,6 +1558,7 @@ function startProgressPoll(caseId: string) {
       const p = await evidenceApi.getProgress(caseId)
       progressPercent.value = Math.round(p.progress_percent)
       progressSteps.value = p.steps
+      ocrShardProgress.value = p.ocr_shard_progress || null
 
       // 同步刷新材料列表获取最新 OCR/分类状态
       try {
@@ -1831,15 +1873,44 @@ async function openPagePreview(mat: MaterialResponse) {
   showPageDrawer.value = true
   pagePreviewData.value = null
   pageSelectedSet.value = new Set()
+  previewPage.value = 1
+  previewTotalPages.value = 0
 
   try {
-    const res = await evidenceApi.previewMaterialPages(currentCase.value.id, mat.id)
+    const res = await evidenceApi.previewMaterialPages(
+      currentCase.value.id,
+      mat.id,
+      1,
+      previewPageSize.value
+    )
     pagePreviewData.value = res
-    // 恢复已选中的页面
+    previewTotalPages.value = res.total_pages
+    // 恢复已选中的页面（选择跨分页保持）
     pageSelectedSet.value = new Set(res.selected_pages || [])
   } catch (e: unknown) {
     message.error('加载预览失败：' + (e as Error).message)
     showPageDrawer.value = false
+  } finally {
+    pagePreviewLoading.value = false
+  }
+}
+
+// 切换预览分页（仅加载该页的缩略图，已选页码跨页保持不变）
+async function loadPreviewPage(page: number) {
+  if (!currentCase.value || !pagePreviewMaterialId) return
+  previewPage.value = page
+  pagePreviewLoading.value = true
+  try {
+    const res = await evidenceApi.previewMaterialPages(
+      currentCase.value.id,
+      pagePreviewMaterialId,
+      page,
+      previewPageSize.value
+    )
+    pagePreviewData.value = res
+    previewTotalPages.value = res.total_pages
+  } catch (e: unknown) {
+    message.error('加载预览失败：' + (e as Error).message)
   } finally {
     pagePreviewLoading.value = false
   }
@@ -1856,8 +1927,12 @@ function togglePageSelection(pageNum: number) {
 }
 
 function selectAllPages() {
-  if (!pagePreviewData.value) return
-  pageSelectedSet.value = new Set(pagePreviewData.value.pages.map(p => p.page))
+  // 全选整份文档的所有页（不仅当前分页），跨分页保持
+  const total = previewTotalPages.value || (pagePreviewData.value?.total_pages ?? 0)
+  if (total <= 0) return
+  const all = new Set<number>()
+  for (let p = 1; p <= total; p++) all.add(p)
+  pageSelectedSet.value = all
 }
 
 function clearPageSelection() {

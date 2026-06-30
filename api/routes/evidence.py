@@ -503,147 +503,139 @@ async def upload_materials(
                     detail=f"文件过大: {file.filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
                 )
 
-        file_type = _detect_file_type(file.filename or "")
-        # 文件类型白名单校验（含音频）
-        ALLOWED_TYPES = {"pdf", "image", "docx", "xlsx", "audio"}
-        if file_type not in ALLOWED_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"不支持的文件类型: {file.filename}（仅支持 PDF/图片/Word/Excel/音频）",
-            )
+            file_type = _detect_file_type(file.filename or "")
+            # 文件类型白名单校验（含音频）
+            ALLOWED_TYPES = {"pdf", "image", "docx", "xlsx", "audio"}
+            if file_type not in ALLOWED_TYPES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"不支持的文件类型: {file.filename}（仅支持 PDF/图片/Word/Excel/音频）",
+                )
 
-        # 扩展名校验（使用 settings.allowed_extensions）
-        ext = Path(file.filename or "").suffix.lower()
-        if ext not in settings.allowed_extensions and file_type not in ("image", "docx", "xlsx", "audio"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"不支持的文件扩展名: {ext}（允许: {', '.join(settings.allowed_extensions)}）",
-            )
+            # 扩展名校验（使用 settings.allowed_extensions）
+            ext = Path(file.filename or "").suffix.lower()
+            if ext not in settings.allowed_extensions and file_type not in ("image", "docx", "xlsx", "audio"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"不支持的文件扩展名: {ext}（允许: {', '.join(settings.allowed_extensions)}）",
+                )
 
-        # 文件魔数校验（防止扩展名伪装攻击）
-        magic_head = await file.read(8)
-        await file.seek(0)
-        MAGIC_NUMBERS = {
-            "pdf": [b"%PDF"],
-            "docx": [b"PK\x03\x04"],  # zip 格式
-            "xlsx": [b"PK\x03\x04"],
-            "image_jpg": [b"\xff\xd8\xff"],
-            "image_png": [b"\x89PNG\r\n\x1a\n"],
-            "image_gif": [b"GIF87a", b"GIF89a"],
-            "image_bmp": [b"BM"],
-            "image_webp": [b"RIFF"],
-            "image_tiff": [b"II*\x00", b"MM\x00*"],
-        }
-        magic_ok = False
-        if file_type == "pdf":
-            magic_ok = any(magic_head.startswith(m) for m in MAGIC_NUMBERS["pdf"])
-        elif file_type in ("docx", "xlsx"):
-            magic_ok = any(magic_head.startswith(m) for m in MAGIC_NUMBERS["docx"])
-        elif file_type == "image":
-            for key in ("image_jpg", "image_png", "image_gif", "image_bmp", "image_webp", "image_tiff"):
-                if any(magic_head.startswith(m) for m in MAGIC_NUMBERS[key]):
-                    magic_ok = True
-                    break
-        elif file_type == "audio":
-            # 音频格式多样，仅做扩展名校验
-            magic_ok = True
-        if not magic_ok:
-            raise HTTPException(
-                status_code=400,
-                detail=f"文件内容与扩展名不符（可能被篡改）: {file.filename}",
-            )
+            # 文件魔数校验（防止扩展名伪装攻击）
+            magic_head = await file.read(8)
+            await file.seek(0)
+            MAGIC_NUMBERS = {
+                "pdf": [b"%PDF"],
+                "docx": [b"PK\x03\x04"],  # zip 格式
+                "xlsx": [b"PK\x03\x04"],
+                "image_jpg": [b"\xff\xd8\xff"],
+                "image_png": [b"\x89PNG\r\n\x1a\n"],
+                "image_gif": [b"GIF87a", b"GIF89a"],
+                "image_bmp": [b"BM"],
+                "image_webp": [b"RIFF"],
+                "image_tiff": [b"II*\x00", b"MM\x00*"],
+            }
+            magic_ok = False
+            if file_type == "pdf":
+                magic_ok = any(magic_head.startswith(m) for m in MAGIC_NUMBERS["pdf"])
+            elif file_type in ("docx", "xlsx"):
+                magic_ok = any(magic_head.startswith(m) for m in MAGIC_NUMBERS["docx"])
+            elif file_type == "image":
+                for key in ("image_jpg", "image_png", "image_gif", "image_bmp", "image_webp", "image_tiff"):
+                    if any(magic_head.startswith(m) for m in MAGIC_NUMBERS[key]):
+                        magic_ok = True
+                        break
+            elif file_type == "audio":
+                # 音频格式多样，仅做扩展名校验
+                magic_ok = True
+            if not magic_ok:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"文件内容与扩展名不符（可能被篡改）: {file.filename}",
+                )
 
-        original_filename = file.filename or "upload"
-        minio_key = f"evidence/{case_id}/{uuid.uuid4()}_{quote(original_filename)}"
-        content_type = file.content_type or "application/octet-stream"
+            original_filename = file.filename or "upload"
+            minio_key = f"evidence/{case_id}/{uuid.uuid4()}_{quote(original_filename)}"
+            content_type = file.content_type or "application/octet-stream"
 
-        # 根据文件大小选择上传方式
-        file_size_actual: int
-        try:
-            if file.size and file.size >= MULTIPART_THRESHOLD:
-                # 大文件：流式上传（内存恒定 = 一个分片大小）
-                # 先保存到临时文件，再 fput_object
-                import tempfile
-                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-                    tmp_path = tmp.name
-                    while True:
-                        chunk = await file.read(50 * 1024 * 1024)  # 50MB chunks
-                        if not chunk:
-                            break
-                        tmp.write(chunk)
-                    file_size_actual = tmp.tell()
-
-                if file_size_actual > settings.max_upload_size:
-                    import os
-                    os.unlink(tmp_path)
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
-                    )
-
-                try:
-                    minio_client.upload_file(
+            # 上传方式：非音频文件一律流式落盘到磁盘临时目录再分片上传，
+            # 内存恒定（= 一个读取块大小），不随文件大小/页数增长（支持 3000 页大 PDF）。
+            # 临时文件放磁盘卷(OCR_WORK_DIR)，避免大文件撑满 API 容器的内存型 tmpfs(/tmp)。
+            file_size_actual: int
+            try:
+                if file_type == "audio":
+                    # 音频文件：通常不大，读取到内存后上传
+                    content = await file.read()
+                    file_size_actual = len(content)
+                    if file_size_actual > settings.max_upload_size:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
+                        )
+                    minio_client.upload_bytes(
                         bucket=EVIDENCE_MINIO_BUCKET,
                         object_key=minio_key,
-                        file_path=tmp_path,
+                        data=content,
                         content_type=content_type,
                     )
-                finally:
+                else:
                     import os
-                    os.unlink(tmp_path)
-            elif file_type == "audio":
-                # 音频文件：读取到内存（通常不大），流式上传
-                content = await file.read()
-                file_size_actual = len(content)
-                if file_size_actual > settings.max_upload_size:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
-                    )
-                minio_client.upload_bytes(
-                    bucket=EVIDENCE_MINIO_BUCKET,
-                    object_key=minio_key,
-                    data=content,
-                    content_type=content_type,
-                )
-            else:
-                # 小文件：原有方式
-                content = await file.read()
-                file_size_actual = len(content)
-                if file_size_actual > settings.max_upload_size:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"文件过大: {original_filename}（最大允许 {settings.max_upload_size // (1024*1024)} MB）",
-                    )
-                minio_client.upload_bytes(
-                    bucket=EVIDENCE_MINIO_BUCKET,
-                    object_key=minio_key,
-                    data=content,
-                    content_type=content_type,
-                )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"MinIO upload failed for evidence case {case_id}: {type(e).__name__}: {e}")
-            raise HTTPException(status_code=500, detail="File storage failed")
+                    import tempfile
+                    work_base = os.getenv("OCR_WORK_DIR") or None
+                    if work_base:
+                        os.makedirs(work_base, exist_ok=True)
+                    max_size = settings.max_upload_size
+                    tmp_path = None
+                    try:
+                        with tempfile.NamedTemporaryFile(dir=work_base, delete=False, suffix=ext) as tmp:
+                            tmp_path = tmp.name
+                            file_size_actual = 0
+                            while True:
+                                chunk = await file.read(16 * 1024 * 1024)  # 16MB 块，内存恒定
+                                if not chunk:
+                                    break
+                                file_size_actual += len(chunk)
+                                if file_size_actual > max_size:
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail=f"文件过大: {original_filename}（最大允许 {max_size // (1024*1024)} MB）",
+                                    )
+                                tmp.write(chunk)
 
-        # 音频文件 OCR 状态标记为 not_applicable
-        ocr_status = "not_applicable" if file_type == "audio" else "pending"
+                        minio_client.upload_file(
+                            bucket=EVIDENCE_MINIO_BUCKET,
+                            object_key=minio_key,
+                            file_path=tmp_path,
+                            content_type=content_type,
+                        )
+                    finally:
+                        if tmp_path:
+                            try:
+                                os.unlink(tmp_path)
+                            except OSError:
+                                pass
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"MinIO upload failed for evidence case {case_id}: {type(e).__name__}: {e}")
+                raise HTTPException(status_code=500, detail="File storage failed")
 
-        material = EvidenceMaterial(
-            evidence_case_id=case_id,
-            original_filename=original_filename,
-            file_type=file_type,
-            minio_bucket=EVIDENCE_MINIO_BUCKET,
-            minio_key=minio_key,
-            file_size=file_size_actual,
-            ocr_status=ocr_status,
-        )
-        db.add(material)
-        await db.flush()
-        await db.refresh(material)
-        uploaded.append(material)
-        uploaded_minio_keys.append(minio_key)  # 标记为已成功（供回滚清理）
+            # 音频文件 OCR 状态标记为 not_applicable
+            ocr_status = "not_applicable" if file_type == "audio" else "pending"
+
+            material = EvidenceMaterial(
+                evidence_case_id=case_id,
+                original_filename=original_filename,
+                file_type=file_type,
+                minio_bucket=EVIDENCE_MINIO_BUCKET,
+                minio_key=minio_key,
+                file_size=file_size_actual,
+                ocr_status=ocr_status,
+            )
+            db.add(material)
+            await db.flush()
+            await db.refresh(material)
+            uploaded.append(material)
+            uploaded_minio_keys.append(minio_key)  # 标记为已成功（供回滚清理）
 
     except Exception:
         # 批量上传中途失败：清理已上传的 MinIO 孤儿对象，避免存储泄漏
@@ -765,6 +757,23 @@ async def get_progress(
         except Exception:
             queue_position = None
 
+    # ── 分片 OCR 进度（若有 ocr_shard step） ──
+    ocr_shard_progress = None
+    for s in steps:
+        if s.step_name == "ocr_shard":
+            meta = s.step_metadata or {}
+            completed = list(meta.get("completed_batches") or [])
+            failed = list(meta.get("failed_batches") or [])
+            total = int(meta.get("total_batches") or 0)
+            ocr_shard_progress = {
+                "total_batches": total,
+                "completed_batches": len(completed),
+                "failed_batches": len(failed),
+                "status": meta.get("status", "sharding"),
+                "cancelled": bool(meta.get("cancelled", False)),
+            }
+            break
+
     return ProgressResponse(
         case_id=str(case_id),
         status=case.status,
@@ -774,6 +783,7 @@ async def get_progress(
         progress_percent=progress_percent,
         queue_position=queue_position,
         steps=[_build_step_out(s) for s in steps],
+        ocr_shard_progress=ocr_shard_progress,
     )
 
 
@@ -945,6 +955,9 @@ async def delete_material(
     # 清理 MinIO 存储文件
     try:
         from services.storage.minio_client import minio_client
+        from services.evidence.ocr_storage import delete_material_ocr
+
+        delete_material_ocr(material)
         bucket = material.minio_bucket or EVIDENCE_MINIO_BUCKET
         key = material.minio_key
         if key:
@@ -968,7 +981,11 @@ async def retry_material_ocr(
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
-    """重试单个素材的 OCR 识别"""
+    """重试单个素材的 OCR 识别
+
+    分片改造：若材料已走过分片（DB 有 ocr_shard step），保留 MinIO pages
+    供断点续传，仅重新派发缺失批次；否则走原 inline 重试。
+    """
     await _check_case_exists(case_id, db, tenant_id)
 
     stmt = select(EvidenceMaterial).where(
@@ -980,7 +997,32 @@ async def retry_material_ocr(
     if not material:
         raise HTTPException(status_code=404, detail="Material not found")
 
-    # 重置 OCR 状态为 pending，以便重新处理
+    # 检查是否已有分片进度（决定是否走续传）
+    from services.evidence import ocr_shard
+    has_shard_progress = ocr_shard.load_progress(str(material_id)) is not None
+
+    if has_shard_progress:
+        # 续传：不删 MinIO pages（保留已完成批次），清失败标记，重派派发器（只派发缺失批次）
+        material.ocr_status = "processing"
+        material.ocr_text = None
+        material.ocr_result = {}
+        material.auto_category = None
+        material.effective_category = None
+        material.category_confidence = None
+        material.extracted_data = {}
+        await db.flush()
+
+        from worker.evidence_tasks import dispatch_material_ocr
+        task = dispatch_material_ocr.delay(str(material_id))
+        logger.info(
+            f"Retrying (resume) sharded OCR for material {material_id}, task_id={task.id}"
+        )
+        return MessageResponse(message=f"分片 OCR 续传已启动，任务ID: {task.id}")
+
+    # 无分片进度 → 走原 inline 重试（删旧产物 + 全量重跑）
+    from services.evidence.ocr_storage import delete_material_ocr
+
+    delete_material_ocr(material)
     material.ocr_status = "pending"
     material.ocr_text = None
     material.ocr_result = {}
@@ -990,7 +1032,7 @@ async def retry_material_ocr(
     material.extracted_data = {}
     await db.flush()
 
-    # 触发异步处理任务
+    # 触发异步处理任务（process_single_material_ocr 内部会判断是否走分片）
     from worker.evidence_tasks import process_single_material_ocr
     task = process_single_material_ocr.delay(str(material_id))
 
@@ -1006,14 +1048,18 @@ async def preview_material_pages(
     request: Request,
     case_id: uuid.UUID,
     material_id: uuid.UUID,
+    page: int = Query(default=1, ge=1, description="页码（从 1 开始），按 page_size 分页渲染"),
+    page_size: int = Query(default=50, ge=1, le=200, description="每页渲染的缩略图数量"),
     db: AsyncSession = Depends(get_db),
     tenant_id: uuid.UUID | None = Depends(get_tenant_filter),
 ):
-    """预览多页文档的全部页面（缩略图）
+    """预览多页文档（缩略图，分页返回）
 
-    返回每页的 base64 JPEG 缩略图、页码和尺寸，
-    用于人工或自动定位目标页。
-    支持 PDF 格式；图片格式返回单页；DOCX 暂不支持。
+    为支持 3000 页超大 PDF：
+    - 文件流式落盘到磁盘临时目录（OCR_WORK_DIR），不把整份 PDF 读进内存；
+    - 仅渲染 [ (page-1)*page_size , page*page_size ) 范围内的页，避免一次性
+      渲染数千张缩略图打爆 API 内存与响应体积。
+    返回 total_pages 为文档实际总页数，前端据此分页加载。
     """
     import base64
 
@@ -1028,7 +1074,70 @@ async def preview_material_pages(
     if not material:
         raise HTTPException(status_code=404, detail="Material not found")
 
-    # 从 MinIO 获取文件
+    pages: list[dict] = []
+
+    if material.file_type == "pdf":
+        import os
+        import tempfile
+        import fitz
+
+        from services.storage.minio_client import minio_client
+
+        work_base = os.getenv("OCR_WORK_DIR") or None
+        if work_base:
+            os.makedirs(work_base, exist_ok=True)
+        fd, local_path = tempfile.mkstemp(dir=work_base, suffix=".pdf")
+        os.close(fd)
+        try:
+            try:
+                minio_client.download_file(
+                    material.minio_bucket or EVIDENCE_MINIO_BUCKET,
+                    material.minio_key,
+                    local_path,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
+
+            try:
+                with fitz.open(local_path) as doc:
+                    total_pages = doc.page_count
+                    start = (page - 1) * page_size
+                    end = min(start + page_size, total_pages)
+                    zoom = 0.3  # 缩略图 30% 缩放
+                    mat = fitz.Matrix(zoom, zoom)
+
+                    for i in range(start, end):
+                        pg = doc[i]
+                        pix = pg.get_pixmap(matrix=mat, alpha=False)
+                        thumb_bytes = pix.tobytes("jpeg", jpg_quality=50)
+                        b64 = base64.b64encode(thumb_bytes).decode("ascii")
+                        pages.append({
+                            "page": i + 1,
+                            "width": pix.width,
+                            "height": pix.height,
+                            "thumbnail_b64": b64,
+                        })
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"PDF rendering failed: {e}")
+        finally:
+            try:
+                os.unlink(local_path)
+            except OSError:
+                pass
+
+        return {
+            "material_id": str(material_id),
+            "file_type": material.file_type,
+            "total_pages": total_pages,
+            "page": page,
+            "page_size": page_size,
+            "selected_pages": material.selected_pages or [],
+            "pages": pages,
+        }
+
+    # 非 PDF：单页/不支持类型，体积小，直接读取字节
     try:
         from services.storage.minio_client import minio_client
         file_bytes = minio_client.download_bytes(
@@ -1038,40 +1147,14 @@ async def preview_material_pages(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
 
-    pages: list[dict] = []
-
-    if material.file_type == "pdf":
-        import fitz
-        try:
-            with fitz.open(stream=file_bytes, filetype="pdf") as doc:
-                zoom = 0.3  # 缩略图 30% 缩放
-                mat = fitz.Matrix(zoom, zoom)
-
-                for i in range(len(doc)):
-                    page = doc[i]
-                    pix = page.get_pixmap(matrix=mat)
-                    thumb_bytes = pix.tobytes("jpeg", jpg_quality=50)
-                    b64 = base64.b64encode(thumb_bytes).decode("ascii")
-
-                    pages.append({
-                        "page": i + 1,
-                        "width": pix.width,
-                        "height": pix.height,
-                        "thumbnail_b64": b64,
-                    })
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"PDF rendering failed: {e}")
-
-    elif material.file_type in ("image", "jpg", "jpeg", "png"):
+    if material.file_type in ("image", "jpg", "jpeg", "png"):
         from PIL import Image as PILImage
         try:
             img = PILImage.open(io.BytesIO(file_bytes))
-            # 缩略图
             img.thumbnail((300, 400), PILImage.LANCZOS)
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=60)
             b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-
             pages.append({
                 "page": 1,
                 "width": img.width,
@@ -1082,7 +1165,6 @@ async def preview_material_pages(
             raise HTTPException(status_code=500, detail=f"Image processing failed: {e}")
 
     elif material.file_type in ("docx", "doc"):
-        # DOCX 暂不支持预览
         pages.append({
             "page": 1,
             "width": 0,
@@ -1103,6 +1185,8 @@ async def preview_material_pages(
         "material_id": str(material_id),
         "file_type": material.file_type,
         "total_pages": len(pages),
+        "page": 1,
+        "page_size": page_size,
         "selected_pages": material.selected_pages or [],
         "pages": pages,
     }
@@ -1306,6 +1390,7 @@ async def download_materials_pdf(
         import asyncio
         from services.evidence.pdf_generator import generate_catalog_pdf_inline
         from services.storage.minio_client import minio_client
+        from services.evidence.ocr_storage import get_material_ocr_text
 
         catalog_data = case.catalog_data or {}
 
@@ -1332,8 +1417,9 @@ async def download_materials_pdf(
                     file_bytes,
                 )
                 # 收集OCR文本（扫描件PDF无原生文本层时用于位置估算）
-                if mat.ocr_text:
-                    ocr_texts[str(mat.id)] = mat.ocr_text
+                ocr_full = get_material_ocr_text(mat)
+                if ocr_full:
+                    ocr_texts[str(mat.id)] = ocr_full
             except Exception as e:
                 logger.warning(f"Failed to download material {mat.id}: {e}")
 
@@ -1878,6 +1964,7 @@ async def download_bundle(
     try:
         from services.evidence.pdf_generator import generate_catalog_pdf_inline
         from services.storage.minio_client import minio_client as _mc
+        from services.evidence.ocr_storage import get_material_ocr_text
 
         # 获取所有素材
         materials_result = await db.execute(
@@ -1901,8 +1988,9 @@ async def download_bundle(
                     mat.file_type or "unknown",
                     file_bytes,
                 )
-                if mat.ocr_text:
-                    ocr_texts[str(mat.id)] = mat.ocr_text
+                ocr_full = get_material_ocr_text(mat)
+                if ocr_full:
+                    ocr_texts[str(mat.id)] = ocr_full
             except Exception as e:
                 logger.warning(f"Failed to download material {mat.id} for bundle: {e}")
 

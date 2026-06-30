@@ -45,7 +45,8 @@ class Settings(BaseSettings):
     api_port: int = 8900
     api_workers: int = 1
     api_key: SecretStr = SecretStr("")  # 生产环境必须设置，开发环境可空
-    max_upload_size: int = 500 * 1024 * 1024  # 单文件上传最大 500 MB
+    # 单文件上传最大 3 GB（支持 3000 页大 PDF；全程流式落盘，内存恒定）
+    max_upload_size: int = 3 * 1024 * 1024 * 1024
     max_batch_upload_size: int = 5 * 1024 * 1024 * 1024  # 批量上传最大 5 GB（多文件合计）
     allowed_extensions: list[str] = [".pdf", ".mp3", ".wav", ".m4a", ".amr", ".aac"]  # 允许上传的文件扩展名
 
@@ -96,12 +97,30 @@ class Settings(BaseSettings):
     ocr_max_pages: int = 200
     ocr_max_file_size: int = 52_428_800  # 50 MB
     ocr_batch_size: int = 100
+    # 大文档 OCR：逐页存 MinIO，DB 只留摘要（见 services/evidence/ocr_storage.py）
+    ocr_offload_enabled: bool = True
+    ocr_text_db_preview_chars: int = 8000
+    ocr_offload_min_pages: int = 1
+    ocr_offload_min_chars: int = 32768
+    ocr_offload_min_blocks: int = 500
     ocr_confidence_threshold: float = 0.70
     ocr_confidence_threshold_numeric: float = 0.85  # 金额/数字字段阈值
     ocr_confidence_retry_threshold: float = 0.50   # 低于此值触发二次识别
     ocr_cache_enabled: bool = True                 # Redis缓存OCR结果
     ocr_cache_ttl: int = 86400                     # 缓存有效期(秒), 默认24h
     ocr_region_retry_min_conf: float = 0.40        # 区域裁剪重识最低置信度
+
+    # ==================== 大 PDF 分片 OCR ====================
+    # 触发分片的页数阈值；以下走单 task 老路径，以上走派发器+批次+收口器三段式
+    ocr_shard_threshold_pages: int = 500
+    # 每个批次 task 处理的页数
+    ocr_batch_page_size: int = 200
+    # 单材料同时允许并行跑的批次数（Redis 信号量限流，0=不限）
+    ocr_batch_max_concurrent_per_material: int = 4
+    # 收口器重试 countdown（秒）
+    ocr_finalize_retry_countdown: int = 60
+    # 批次最大重试次数（覆盖 Celery 默认 3，给云端 OCR 更多机会）
+    ocr_batch_max_retries: int = 3
 
     # ==================== 百炼 OCR (阿里云 DashScope) ====================
     bailian_api_key: SecretStr = SecretStr("")

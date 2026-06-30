@@ -60,6 +60,7 @@ class OCRBatchProcessor:
         self,
         page_images: list[Path],
         output_dir: Path,
+        page_offset: int = 0,
     ) -> dict:
         """
         流式处理所有页面图片（含 Redis 缓存）
@@ -139,7 +140,7 @@ class OCRBatchProcessor:
 
         # 组装结果
         for j, results in enumerate(cached_results):
-            page_num = j + 1
+            page_num = page_offset + j + 1
             confidence_avg = 0.0
             if results:
                 confidence_avg = sum(r.get("confidence", 0) for r in results) / len(results)

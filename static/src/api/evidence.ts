@@ -86,6 +86,14 @@ export interface EvidenceCaseListResponse {
   total: number
 }
 
+export interface OcrShardProgress {
+  total_batches: number
+  completed_batches: number
+  failed_batches: number
+  status: string
+  cancelled: boolean
+}
+
 export interface ProgressResponse {
   case_id: string
   status: string
@@ -93,7 +101,9 @@ export interface ProgressResponse {
   total_steps: number
   completed_steps: number
   progress_percent: number
+  queue_position: number | null
   steps: StepResponse[]
+  ocr_shard_progress: OcrShardProgress | null
 }
 
 export interface CatalogGroup {
@@ -323,17 +333,22 @@ export interface PagePreviewResponse {
   material_id: string
   file_type: string
   total_pages: number
+  page: number
+  page_size: number
   selected_pages: number[]
   pages: PagePreview[]
 }
 
-/** 第一步：预览多页文档全部页面（缩略图） */
+/** 第一步：预览多页文档（缩略图，分页加载，支持 3000 页大 PDF） */
 export async function previewMaterialPages(
   caseId: string,
-  materialId: string
+  materialId: string,
+  page = 1,
+  pageSize = 50
 ): Promise<PagePreviewResponse> {
   return api.get<PagePreviewResponse>(
-    `/evidence/cases/${caseId}/materials/${materialId}/pages/preview`
+    `/evidence/cases/${caseId}/materials/${materialId}/pages/preview` +
+      `?page=${page}&page_size=${pageSize}`
   )
 }
 

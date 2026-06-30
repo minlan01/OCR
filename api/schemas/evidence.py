@@ -165,6 +165,11 @@ class ProgressResponse(BaseModel):
     progress_percent: float = 0.0
     queue_position: int | None = Field(default=None, description="排队位置（null=不在排队, 0=正在处理, >0=前面有N人）")
     steps: list[StepResponse] = Field(default_factory=list)
+    # 大 PDF 分片进度（仅当 case 有 ocr_shard step 时填充）
+    ocr_shard_progress: dict | None = Field(
+        default=None,
+        description="分片 OCR 进度：{total_batches, completed_batches, failed_batches, status}",
+    )
 
 
 # ─── 清单响应 ────────────────────────────────────────────────────────────────

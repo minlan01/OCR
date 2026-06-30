@@ -88,6 +88,31 @@ class LocalStorageClient:
         except OSError as e:
             logger.warning(f"Local delete failed (non-critical): {bucket}/{object_key} | {e}")
 
+    def delete_prefix(self, bucket: str, prefix: str) -> int:
+        """删除 bucket 下指定前缀的所有对象（兼容 MinioClient 接口）。"""
+        root = self._bucket_dir(bucket) / prefix
+        if not root.exists():
+            return 0
+        deleted = 0
+        try:
+            if root.is_file():
+                root.unlink()
+                return 1
+            for item in sorted(root.rglob("*"), reverse=True):
+                if item.is_file():
+                    item.unlink()
+                    deleted += 1
+                elif item.is_dir():
+                    shutil.rmtree(str(item), ignore_errors=True)
+                    deleted += 1
+            if root.is_dir():
+                shutil.rmtree(str(root), ignore_errors=True)
+        except OSError as e:
+            logger.warning(f"Local delete_prefix failed: {bucket}/{prefix} | {e}")
+        if deleted:
+            logger.info(f"Local deleted {deleted} objects under {bucket}/{prefix}")
+        return deleted
+
     def object_exists(self, bucket: str, object_key: str) -> bool:
         return (self._bucket_dir(bucket) / object_key).exists()
 

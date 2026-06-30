@@ -55,11 +55,11 @@ async def get_db() -> AsyncSession:
     async with async_session_factory() as session:
         try:
             yield session
-            # 仅在 session 有 pending changes 时才 commit（避免纯 GET 请求产生 WAL）
+            # flush() 会把 new 对象转为 persistent，导致 session.new 变空；
+            # 因此用 in_transaction() 判断是否有未提交的事务即可，
+            # 由业务代码自行决定是否 flush/commit（写操作应显式 commit）
             if session.in_transaction() and session.is_active:
-                # 检查是否有 dirty/new/deleted 对象
-                if session.dirty or session.new or session.deleted:
-                    await session.commit()
+                await session.commit()
         except Exception:
             await session.rollback()
             raise

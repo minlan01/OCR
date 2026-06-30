@@ -69,12 +69,14 @@ def extract_from_materials(materials: list) -> tuple[List[FeeItem], HospitalStay
     Returns:
         (费用列表, 住院天数信息)
     """
+    from services.evidence.ocr_storage import get_material_ocr_text
+
     fee_items: List[FeeItem] = []
     stay_info = HospitalStayInfo()
 
     for mat in materials:
         cat = getattr(mat, 'effective_category', '') or ''
-        ocr_text = getattr(mat, 'ocr_text', '') or ''
+        ocr_text = get_material_ocr_text(mat)
         filename = getattr(mat, 'original_filename', '') or ''
         mat_id = str(getattr(mat, 'id', ''))
 

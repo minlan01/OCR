@@ -19,6 +19,7 @@ from config.logging import setup_logging
 from db.session import init_db, drop_db, engine
 from db.models import ScanTask, TaskStep, ScanFile  # 注册模型
 from db.models_evidence import EvidenceCase, EvidenceMaterial, EvidenceStep, EvidenceRequirement  # 注册证据模型
+from db.models_auth import Tenant, User  # 注册租户/用户模型（scan_tasks.tenant_id 外键依赖）
 from sqlalchemy import text
 from loguru import logger
 

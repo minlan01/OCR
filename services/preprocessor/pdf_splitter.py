@@ -186,14 +186,17 @@ class PDFSplitter:
             end_page = total_pages
         end_page = min(end_page, total_pages)
 
-        use_jpeg = self.output_format in ("jpeg", "jpg") or (
-            self.output_format == "auto" and settings.ocr_engine_type in ("bailian", "dashscope", "qwen")
-        )
+        # OCR 不需要无损 PNG：默认输出 JPEG（体积仅为 PNG 的 1/3~1/8），
+        # 大幅降低 500 页大 PDF 拆图时的磁盘/tmpfs 占用。仅当显式指定 png 时才输出 PNG。
+        use_jpeg = self.output_format != "png"
 
         total_to_process = end_page - (start_page - 1)
         image_paths: list[Optional[Path]] = [None] * total_to_process
 
-        with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 4, 8)) as pool:
+        # 限制 fitz 渲染并发：默认 2（与 worker_concurrency=2 匹配，避免
+        # 2 子进程 × 8 线程 = 16 路并发 pixmap 渲染触发 OOM）
+        _max_render_workers = max(1, int(os.getenv("PDF_RENDER_MAX_WORKERS", "2")))
+        with ThreadPoolExecutor(max_workers=_max_render_workers) as pool:
             futures = {}
             for page_idx, page_num in enumerate(range(start_page - 1, end_page)):
                 f = pool.submit(
@@ -219,7 +222,7 @@ class PDFSplitter:
         extracted_count = sum(1 for p in image_paths if p is not None and "extracted" in str(getattr(p, '_extracted', '')))
         logger.info(
             f"PDF split: {pdf_path.name} -> {len(result)} pages "
-            f"(parallel {min(os.cpu_count() or 4, 8)} workers, dpi={self.dpi}, "
+            f"(parallel {_max_render_workers} workers, dpi={self.dpi}, "
             f"prefer_extract={prefer_extract})"
         )
         return result
